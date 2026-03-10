@@ -2,404 +2,299 @@
 
 This guide walks you through setting up the entire system from scratch.
 
-**Estimated time:** 2-3 hours
+**Estimated time:** 1-2 hours
 
 ---
 
 ## Hardware Required
 
-- **BeagleBone Blue** - Main robot controller
-- **Raspberry Pi 5** - Vision system (already set up with cat_track)
-- **iPhone** - Control interface (iOS 14+)
-- **Xbox Controller** (optional) - Manual control
-- **2-wheel balancing robot chassis** - With motors and encoders
-- **Jumper wires** - For UART connection
-- **Battery** - For BeagleBone (2S-3S LiPo recommended)
+- **BeagleBone Blue** — Main robot controller
+- **iPhone** — Control interface (iOS 17+)
+- **FrSky R-XSR receiver** (optional) — SBUS RC input
+- **Jumper T16 or compatible transmitter** (optional) — RC control
+- **NPN transistor (2N3904) + 10kΩ resistor** — SBUS signal inverter
+- **Xbox controller** (optional) — Manual control via USB
+- **Raspberry Pi 5 with vision system** (optional) — Object tracking input over UART
+- **2-wheel balancing robot chassis** — With DC motors and quadrature encoders
+- **2S–3S LiPo battery** — For BeagleBone and motors
 
 ---
 
-## Part 1: BeagleBone Setup (30 minutes)
+## Part 1: BeagleBone Setup (20 minutes)
 
 ### 1.1 Install librobotcontrol
 
-If not already installed:
-
 ```bash
-cd ~
-git clone https://github.com/beagleboard/librobotcontrol.git
-cd librobotcontrol/library
-make
-sudo make install
-sudo ldconfig
+sudo apt update
+sudo apt install librobotcontrol librobotcontrol-dev
 ```
 
 **Verify:**
 ```bash
 rc_version
-# Should print version info
 ```
 
 ### 1.2 Install Node.js
 
 ```bash
-# Install Node.js 14+ (if not present)
-curl -fsSL https://deb.nodesource.com/setup_14.x | sudo -E bash -
-sudo apt-get install -y nodejs
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt install -y nodejs
 
-# Verify
-node --version  # Should be v14+
+node --version   # Should be v18+
 npm --version
 ```
 
-### 1.3 Copy balance_bot Code
+### 1.3 Clone balance_bot
 
 ```bash
-# Create directory in librobotcontrol
-cd ~/librobotcontrol
-mkdir -p balance_bot
+git clone https://github.com/yourusername/balance_bot.git
 cd balance_bot
-
-# Copy all files from this package:
-# - include/
-# - src/
-# - Makefile
-# - README.md
-
-# Or clone from GitHub (once pushed):
-# git clone https://github.com/yourusername/balance_bot.git
 ```
 
-### 1.4 Build balance_bot
+### 1.4 Build
 
 ```bash
-cd ~/librobotcontrol/balance_bot
 make
 
-# You should see:
+# Should output:
 # ✅ Build complete: bin/balance_bot
 ```
 
 ### 1.5 Test (Without iPhone)
 
 ```bash
-sudo ./bin/balance_bot
+sudo ./bin/balance_bot -i none
 
-# You should see:
-# [INFO] Initializing balance_bot
+# Should output:
+# ╔══════════════════════════════════════╗
+# ║         balance_bot v1.0             ║
+# ╚══════════════════════════════════════╝
 # [INFO] IMU initialized
 # [INFO] Motors initialized
-# ...
-# Ready! Press MODE to arm.
+# System ready! Press MODE button to arm.
 ```
 
 Press **Ctrl+C** to exit.
 
 ---
 
-## Part 2: Node.js Server Setup (15 minutes)
+## Part 2: Node.js WebSocket Bridge (10 minutes)
 
-### 2.1 Create Server Directory
-
-```bash
-cd ~
-mkdir cat-follower-server
-cd cat-follower-server
-```
-
-### 2.2 Initialize npm
+### 2.1 Install Dependencies
 
 ```bash
-npm init -y
+cd balance_bot/server
+npm install
 ```
 
-### 2.3 Install Dependencies
-
-```bash
-npm install express ws
-```
-
-### 2.4 Create server.js
-
-```bash
-nano server.js
-```
-
-Paste the Node.js server code (provided separately in `server.js`).
-
-Save and exit (Ctrl+X, Y, Enter).
-
-### 2.5 Test Server
+### 2.2 Test Server
 
 ```bash
 node server.js
 
 # Should output:
-# Cat Follower Server running on port 8080
-# IPC connected to balance_bot
+# WebSocket server running on port 8675
+# Waiting for balance_bot socket...
 ```
 
-Keep this running in a separate terminal or use `pm2`:
-
-```bash
-# Optional: Install pm2 for auto-restart
-sudo npm install -g pm2
-pm2 start server.js --name cat-follower
-pm2 save
-pm2 startup
-```
+Keep this running in a second terminal, or use systemd (see Part 5).
 
 ---
 
 ## Part 3: Hardware Connections (15 minutes)
 
-### 3.1 UART Connection (RPi5 ↔ BeagleBone)
+### 3.1 SBUS Wiring (if using RC receiver)
 
-Connect with jumper wires:
+The R-XSR outputs inverted SBUS (active-low). A single NPN transistor re-inverts the signal before the BeagleBone UART RX pin.
 
 ```
-RPi5 Header          BeagleBone Blue
------------          ---------------
-Pin 8  (GPIO14 TX) → UART1 RX (Pin P9.26)
-Pin 10 (GPIO15 RX) → UART1 TX (Pin P9.24) [optional]
-Pin 6  (GND)       → GND
+R-XSR SBUS out → 2N3904 base (via 10kΩ)
+2N3904 collector → BeagleBone P9.26 (UART1 RX) with 10kΩ pull-up to 3.3V
+2N3904 emitter  → GND
+R-XSR 5V / GND  → BeagleBone 5V / GND
 ```
 
-**Important:** Both devices are 3.3V - safe to connect directly.
-
-### 3.2 Verify UART
-
-On BeagleBone:
+**Verify SBUS is being received:**
 ```bash
-# Should see cat data streaming
-sudo cat /dev/ttyS1
-
-# Output should look like:
-# CAT,0.30,-0.15,0.87
-# CAT,0.31,-0.14,0.88
-# ...
+sudo ./bin/balance_bot -i sbus -d sbus
+# SBUS block should show live channel values
 ```
 
-If you see nothing, check:
-- Wiring
-- cat_track is running on RPi5
-- Correct UART pins
+### 3.2 Object Tracking Input (optional — RPi5 or similar)
 
-### 3.3 Xbox Controller (Optional)
+Connect vision system UART TX to BeagleBone UART1 RX (P9.26):
 
+```
+Vision system TX → BeagleBone P9.26 (UART1 RX)
+GND              → GND
+```
+
+Both devices are 3.3V — safe to connect directly (no inverter needed for UART).
+
+The robot expects newline-delimited position frames:
+```
+CAT,0.30,-0.15,0.87
+```
+
+### 3.3 Xbox Controller (optional)
+
+Plug into BeagleBone USB and verify:
 ```bash
-# Plug Xbox controller into BeagleBone USB
-
-# Verify device node
 ls /dev/input/js*
 # Should show: /dev/input/js0
 ```
 
 ---
 
-## Part 4: iPhone App Setup (30 minutes)
+## Part 4: iPhone App Setup (20 minutes)
 
-### 4.1 Install Xcode
+### 4.1 Open Project
 
-On your Mac:
-1. Install Xcode from App Store (if not installed)
-2. Open Xcode
-3. Install command line tools if prompted
+```
+Xcode → Open → BBotTuneHUD.xcodeproj
+```
 
-### 4.2 Open Project
+### 4.2 Configure Signing
 
-1. Unzip `CatFollowerApp.zip` (provided separately)
-2. Double-click `CatFollowerApp.xcodeproj`
-3. Wait for dependencies to load
+1. Select project in navigator
+2. Select target **BBotTuneHUD**
+3. Signing & Capabilities → select your Apple ID team
+4. Set bundle identifier: `com.yourname.BBotTuneHUD`
 
-### 4.3 Configure Signing
-
-1. Select project in left sidebar
-2. Select target "CatFollowerApp"
-3. Go to "Signing & Capabilities"
-4. Select your Apple ID team
-5. Change bundle identifier if needed (e.g., `com.yourname.catfollower`)
-
-### 4.4 Build and Install
+### 4.3 Build and Install
 
 1. Connect iPhone via USB
-2. Select iPhone as target device (top toolbar)
-3. Click ▶️ Build and Run
-4. On iPhone: Trust the developer (Settings → General → Device Management)
-5. App should launch
+2. Select iPhone as target device
+3. **⌘R** to build and run
+4. On iPhone: trust the developer if prompted
+   - Settings → General → VPN & Device Management → trust your Apple ID
 
 ---
 
-## Part 5: Network Configuration (10 minutes)
+## Part 5: Network Configuration (5 minutes)
 
 All devices must be on the same WiFi network.
 
-### 5.1 Find IP Addresses
+### 5.1 Find BeagleBone IP
 
-**BeagleBone:**
 ```bash
 hostname -I
-# Note the IP, e.g., 192.168.1.100
+# e.g. 192.168.1.100
 ```
 
-**RPi5:**
+### 5.2 Test WebSocket Bridge
+
+From a browser or curl on your Mac:
 ```bash
-hostname -I  
-# Note the IP, e.g., 192.168.1.139
+curl http://192.168.1.100:8675
+# Should respond (even if not a valid WebSocket upgrade)
 ```
-
-### 5.2 Test Connectivity
-
-From iPhone, open Safari and navigate to:
-- `http://192.168.1.139:5000` - Should show cat_track video
-- `http://192.168.1.100:8080` - Should show Node.js server
-
-If these don't work:
-- Check WiFi connection
-- Check firewall settings
-- Verify services are running
 
 ### 5.3 Configure iPhone App
 
-1. Open CatFollowerApp
-2. Tap Settings (gear icon)
+1. Open **BBotTuneHUD**
+2. Tap **Settings** tab
 3. Enter BeagleBone IP: `192.168.1.100`
-4. Enter RPi5 IP: `192.168.1.139`
-5. Tap "Connect"
+4. Tap **Reconnect**
 
 You should see:
 - ✅ Connected status
-- Live video stream
-- Real-time telemetry
+- ✅ Live telemetry (battery, loop Hz, armed state)
 
 ---
 
-## Part 6: First Run (30 minutes)
+## Part 6: Systemd Auto-Start (optional)
 
-### 6.1 Start All Services
+### 6.1 Install Service Units
 
-**Terminal 1 - balance_bot:**
 ```bash
-cd ~/librobotcontrol/balance_bot
-sudo ./bin/balance_bot
+sudo cp systemd/balance_bot.service /etc/systemd/system/
+sudo cp systemd/balance_bot_server.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable balance_bot balance_bot_server
 ```
 
-**Terminal 2 - Node.js server:**
+### 6.2 Start Services
+
 ```bash
-cd ~/cat-follower-server
-node server.js
-# OR if using pm2:
-pm2 start server.js
+sudo systemctl start balance_bot
+sudo systemctl start balance_bot_server
 ```
 
-**RPi5 - cat_track (should already be running):**
+### 6.3 Verify
+
 ```bash
-# Verify it's running
-ps aux | grep cat_track
+systemctl status balance_bot
+systemctl status balance_bot_server
 ```
 
-**iPhone:**
-- Launch CatFollowerApp
-- Connect to BeagleBone
+### 6.4 View Logs
 
-### 6.2 Initial Balance Test
+```bash
+journalctl -u balance_bot -f
+journalctl -u balance_bot_server -f
+```
 
-**SAFETY FIRST:**
-- Place robot on soft surface
-- Keep hands clear of wheels
-- Have MODE button accessible
+---
 
-**Steps:**
+## Part 7: First Balance Test (30 minutes)
 
-1. **Check robot is upright** - Hold it vertically
-2. **iPhone app:**
-   - Go to PID Tuning screen
-   - Verify D1_balance is enabled
-   - Verify D2_drive is disabled
-   - Verify D3_steering is disabled
-3. **Press MODE button** on BeagleBone to ARM
-   - Green LED should light
-   - iPhone should show "ARMED"
-4. **Gently release robot**
-   - It should attempt to balance
-   - If it falls, press MODE to disarm
+### 7.1 Start Services
 
-### 6.3 Tuning Balance
+**If not using systemd:**
 
-If robot falls or oscillates badly:
+```bash
+# Terminal 1
+sudo ./bin/balance_bot -i sbus    # or -i none, -i xbox
 
-1. **Reduce Kp:**
-   - iPhone app → PID Tuning
-   - D1_balance
-   - Slide Kp down to 30
-   - Try again
+# Terminal 2
+cd server && node server.js
+```
 
-2. **Adjust Kd:**
-   - If oscillating: Increase Kd to 6-7
-   - If sluggish: Decrease Kd to 3-4
+**If using systemd:**
+```bash
+sudo systemctl start balance_bot balance_bot_server
+```
 
-3. **Iterate:**
-   - Small changes
-   - Test each time
-   - Use iPhone app's real-time graph to see response
+### 7.2 IMU Zero
 
-### 6.4 Add Steering
+1. Place robot upright on flat ground
+2. Open **BBotTuneHUD** → **IMU** tab
+3. Tap **Zero display at current angles**
+4. 3D cube should sit level
+
+### 7.3 Arm
+
+**Via RC transmitter:**
+- Kill switch (CH6/SB) → fully high
+- Arm switch (CH5/SA) → fully high
+
+**Via iPhone app (no controller needed):**
+- Control tab → tap **ARM**
+- Rejected if lean angle > ~14°
+
+Green LED on BeagleBone confirms armed state.
+
+### 7.4 Tune Balance PID
+
+Start with conservative gains and work up:
+
+| Gain | Starting value | Direction |
+|------|---------------|-----------|
+| Kp | 30.0 | Increase until it oscillates, then back off |
+| Kd | 4.0 | Increase to damp oscillation |
+| Ki | 0.0 | Add small amount last to remove steady-state error |
+
+1. **PID Tuning** tab → select **D1: Balance**
+2. Adjust sliders → tap **Send**
+3. Changes take effect immediately — no restart needed
+4. Watch live response in telemetry
+
+### 7.5 Add Steering
 
 Once balance is stable:
-
-1. Enable D3_steering in iPhone app
-2. Arm robot
-3. Use Xbox controller or iPhone app to command small turns
-4. Tune steering PID if needed
-
-### 6.5 Test Cat Following
-
-1. Enable "Cat Follow" mode in iPhone app
-2. Place cat in view of RPi5 camera
-3. Robot should track cat's position
-4. iPhone app should show cat overlay on video
-
----
-
-## Part 7: Auto-Start on Boot (Optional)
-
-### 7.1 Create systemd Service
-
-```bash
-sudo nano /etc/systemd/system/balance_bot.service
-```
-
-Paste:
-```ini
-[Unit]
-Description=Balance Bot Control System
-After=network.target
-
-[Service]
-Type=simple
-User=debian
-WorkingDirectory=/home/debian/librobotcontrol/balance_bot
-ExecStart=/home/debian/librobotcontrol/balance_bot/bin/balance_bot
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable:
-```bash
-sudo systemctl enable balance_bot
-sudo systemctl start balance_bot
-```
-
-### 7.2 Auto-Start Node.js
-
-```bash
-cd ~/cat-follower-server
-pm2 start server.js
-pm2 save
-pm2 startup  # Follow instructions
-```
+1. Enable **D3: Steering** in PID Tuning tab
+2. Use RC transmitter right stick or iPhone to command turns
 
 ---
 
@@ -407,27 +302,20 @@ pm2 startup  # Follow instructions
 
 ### "Failed to initialize IMU"
 
-**Causes:**
-- IMU not calibrated
-- I2C bus conflict
-
-**Solutions:**
 ```bash
-# Calibrate IMU
+# Calibrate accelerometer (run once on flat surface)
+rc_calibrate_accel
+
+# Calibrate gyro
 rc_calibrate_gyro
 
-# Check I2C
+# Check I2C bus
 sudo i2cdetect -r -y 2
 # Should show device at 0x68
 ```
 
 ### "Motor init failed"
 
-**Causes:**
-- PRU firmware not loaded
-- Motor driver fault
-
-**Solutions:**
 ```bash
 # Check PRU firmware
 ls /lib/firmware/am335x-pru*
@@ -438,123 +326,76 @@ rc_test_motors
 
 ### "No telemetry in iPhone app"
 
-**Causes:**
-- Node.js server not running
-- balance_bot not creating socket
-- Firewall blocking
-
-**Solutions:**
 ```bash
 # Check socket exists
 ls -la /tmp/balance_bot.sock
 
-# Check Node.js is running
-ps aux | grep node
+# Check Node.js bridge is running
+systemctl status balance_bot_server
 
-# Check for errors in Node.js
-node server.js
-# Look for connection errors
+# Run bridge manually to see errors
+cd balance_bot/server && node server.js
 ```
 
-### "Video not showing in iPhone app"
+### "SBUS not receiving"
 
-**Causes:**
-- cat_track not running
-- Wrong RPi5 IP address
-- Network connectivity
-
-**Solutions:**
 ```bash
-# Test video directly in browser
-# On Mac: open http://192.168.1.139:5000
+# Test SBUS live
+sudo ./bin/balance_bot -i sbus -d sbus
 
-# Check cat_track is running on RPi5
-ssh rp5@192.168.1.139
-ps aux | grep cat_track
+# Check UART device
+ls /dev/ttyO*
+
+# Verify baud rate — SBUS requires 115200 8E2 inverted
+# Confirm inverter circuit wiring (2N3904 + 10kΩ pull-up)
 ```
 
 ### "Robot won't balance"
 
-**Common issues:**
-
-1. **Motors backwards:**
-   - Swap motor wires
-   - Or invert in code
-
+1. **Motors backwards** — swap motor wires or negate duty in code
 2. **IMU orientation wrong:**
    ```bash
-   # Test IMU orientation
    rc_test_dmp
-   # Tilt robot, verify angles match
+   # Tilt robot forward — theta should increase positively
    ```
-
-3. **Kp too low:**
-   - Increase gradually until it balances
-
+3. **Kp too low** — increase in steps of 5
 4. **Encoders not working:**
    ```bash
    rc_test_encoders_eqep
-   # Rotate wheels, verify counts change
+   # Rotate wheels — verify counts change
    ```
 
----
+### Useful Test Commands
 
-## Next Steps
-
-Once basic balance works:
-
-1. **Tune PID gains** for smooth performance
-2. **Test cat following** mode
-3. **Try Xbox controller** manual control
-4. **Experiment with debug features** in iPhone app
-5. **Save tuned PID values** to pidconfig.txt
-
----
-
-## Getting Help
-
-**Logs to check:**
 ```bash
-# balance_bot output
-sudo ./bin/balance_bot
-
-# Node.js server
-node server.js  # Run in foreground to see logs
-
-# System logs
-journalctl -u balance_bot -f
-```
-
-**Useful test commands:**
-```bash
-rc_test_dmp          # Test IMU
-rc_test_motors       # Test motors
-rc_test_encoders_eqep # Test encoders
-rc_test_buttons      # Test buttons
-rc_test_dsm          # Test Xbox/DSM input
+rc_test_dmp              # IMU angles live
+rc_test_motors           # Drive motors
+rc_test_encoders_eqep    # Encoder counts
+rc_test_buttons          # MODE / PAUSE buttons
+rc_test_adc              # Battery voltage
 ```
 
 ---
 
-## Success Checklist
+## Setup Checklist
 
-- [ ] librobotcontrol installed
-- [ ] Node.js installed
-- [ ] balance_bot compiles
-- [ ] Node.js server runs
-- [ ] UART connected and receiving cat data
-- [ ] iPhone app installed and connects
-- [ ] Video stream visible in iPhone app
-- [ ] Telemetry updates in real-time
-- [ ] Robot balances when armed
-- [ ] PID tuning works from iPhone
-- [ ] Cat following works (if using RPi5)
-- [ ] Xbox controller works (if connected)
+- [ ] librobotcontrol installed and `rc_version` works
+- [ ] Node.js v18+ installed
+- [ ] `make` succeeds
+- [ ] `balance_bot -i none` runs without errors
+- [ ] Node.js bridge connects to socket
+- [ ] BBotTuneHUD connects and shows telemetry
+- [ ] IMU angles visible in 3D tab
+- [ ] Robot arms via app or RC transmitter
+- [ ] Robot attempts to balance
+- [ ] PID changes from app take effect live
+- [ ] SBUS channels visible (if using RC)
+- [ ] Systemd services start on boot (if configured)
 
 ---
 
 ## You're Done! 🎉
 
-Your balance_bot system is now fully operational with iPhone app control!
+Your balance_bot is running with full iPhone telemetry and live PID tuning.
 
-Enjoy your self-balancing, cat-following robot!
+**Tip:** Save your tuned PID values to `pidconfig.txt` so they persist across reboots.
