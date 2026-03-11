@@ -242,8 +242,8 @@ static int parse_json_command(const char* json_cmd) {
     // {"type":"arm","value":true}  or  {"type":"arm","value":false}
     if (strstr(json_cmd, "\"type\":\"arm\"")) {
         if (strstr(json_cmd, "\"value\":true")) {
-            if (fabsf(state.theta) > 14.0f) {
-                LOG_WARN("iPhone ARM REJECTED — angle too large (%.1f deg)", state.theta);
+            if (fabsf(state.theta - state.theta_offset) > 14.0f) {
+                LOG_WARN("iPhone ARM REJECTED — angle too large (%.1f deg, offset=%.1f)", state.theta, state.theta_offset);
                 return -1;
             }
             state.armed = 1;

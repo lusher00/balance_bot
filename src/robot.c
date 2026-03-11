@@ -253,8 +253,8 @@ void robot_run(void) {
 
             static int prev_sbus_arm = 0;
             if (arm == 2 && prev_sbus_arm < 2 && kill == 2) {
-                if (fabsf(state.theta) > 14.0f) {
-                    LOG_WARN("SBUS ARM REJECTED — angle too large (%.1f deg)", state.theta);
+                if (fabsf(state.theta - state.theta_offset) > 14.0f) {
+                    LOG_WARN("SBUS ARM REJECTED — angle too large (%.1f deg, offset=%.1f)", state.theta, state.theta_offset);
                 } else {
                     state.armed = 1;
                     motor_hal_standby(0);
