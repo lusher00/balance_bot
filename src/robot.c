@@ -23,33 +23,36 @@ static uint64_t telemetry_counter = 0;
 static uint64_t last_telemetry_broadcast = 0;
 
 // Motor duty tracking (for telemetry)
-static float last_left_duty = 0.0f;
+static float last_left_duty  = 0.0f;
 static float last_right_duty = 0.0f;
 
-// Motor output handoff: ISR writes these, main loop applies them to hardware.
-// volatile so the compiler doesn't optimize away cross-context reads/writes.
+// Motor output handoff: ISR writes, main loop applies to hardware.
+// volatile prevents compiler optimizing away cross-context reads/writes.
 static volatile float pending_left_duty  = 0.0f;
 static volatile float pending_right_duty = 0.0f;
 static volatile int   motor_output_ready = 0;
 
 /**
- * @brief IMU interrupt callback (runs at SAMPLE_RATE_HZ)
+ * @brief IMU interrupt callback — runs at SAMPLE_RATE_HZ.
+ *
+ * Kept minimal: read angles from the already-populated DMP struct,
+ * run PID, hand off outputs to main loop via pending_* variables.
+ * No I/O, no UART, no blocking calls.
  */
 static void imu_interrupt(void) {
-    // Apply mounting transform to get pitch/yaw in robot frame.
-    // mpu_data is already populated by the DMP before this callback fires —
-    // no additional I2C reads needed here.
-    imu_transform_t imu_transformed;
-    imu_config_apply_transform(&mpu_data, &imu_transformed, &g_imu_config);
+    // mpu_data is populated by the DMP library before this callback fires.
+    // Apply mounting transform to get angles in robot frame (degrees).
+    imu_transform_t t;
+    imu_config_apply_transform(&mpu_data, &t, &g_imu_config);
 
-    state.theta     = imu_transformed.pitch;      // deg
-    state.theta_dot = imu_transformed.pitch_dot;  // deg/s
-    state.psi       = imu_transformed.yaw;        // deg
+    state.theta     = t.pitch;      // deg
+    state.theta_dot = t.pitch_dot;  // deg/s
+    state.psi       = t.yaw;        // deg
 
     if (!state.armed) return;
 
-    // PID — references and encoder positions are maintained by the main loop.
-    float balance_output = 0.0f;
+    // PID — setpoints and encoder positions are maintained by the main loop.
+    float balance_output  = 0.0f;
     float steering_output = 0.0f;
 
     if (g_debug_config.controllers.D1_balance) {
@@ -65,20 +68,21 @@ static void imu_interrupt(void) {
         steering_output = state.steering;
     }
 
-    float left_duty  = rc_saturate_float(&(float){balance_output - steering_output}, -1.0f, 1.0f);
-    float right_duty = rc_saturate_float(&(float){balance_output + steering_output}, -1.0f, 1.0f);
+    float left_duty  = balance_output - steering_output;
+    float right_duty = balance_output + steering_output;
+    rc_saturate_float(&left_duty,  -1.0f, 1.0f);
+    rc_saturate_float(&right_duty, -1.0f, 1.0f);
 
-    // Hand off to main loop — motor write happens there, not in the ISR.
+    // Hand off to main loop — no motor I/O in the ISR.
     pending_left_duty  = left_duty;
     pending_right_duty = right_duty;
     motor_output_ready = 1;
 }
 
 /**
- * @brief Pause button callback
+ * @brief Pause button — cycle operating mode
  */
 static void on_pause_press(void) {
-    // Cycle through modes
     switch (state.mode) {
         case MODE_BALANCE:
             state.mode = MODE_EXT_INPUT;
@@ -97,11 +101,11 @@ static void on_pause_press(void) {
 }
 
 /**
- * @brief Mode button callback (arm/disarm)
+ * @brief Mode button release — toggle arm/disarm
  */
 static void on_mode_release(void) {
     state.armed = !state.armed;
-    
+
     if (state.armed) {
         LOG_INFO("ARMED");
         rc_led_set(RC_LED_GREEN, 1);
@@ -111,8 +115,6 @@ static void on_mode_release(void) {
         rc_led_set(RC_LED_GREEN, 0);
         motor_hal_standby(1);
         motor_hal_set_both(0.0f, 0.0f);
-        
-        // Reset PIDs
         pid_reset(&balance_pid);
         pid_reset(&steering_pid);
     }
@@ -122,49 +124,45 @@ static void on_mode_release(void) {
  * @brief Initialize robot hardware and control system
  */
 int robot_init(void) {
-    // Kill any existing process
-    if (rc_kill_existing_process(2.0) < -2) {
+    if (rc_kill_existing_process(2.0) < -2)
         return -1;
-    }
-    
-    // Enable signal handler
+
     if (rc_enable_signal_handler() == -1) {
         fprintf(stderr, "ERROR: Failed to start signal handler\n");
         return -1;
     }
 
-// Initialize ADC for battery reading
-if (rc_adc_init() < 0) {
-    LOG_WARN("ADC init failed - battery readings unavailable");
-}
-    
-    // Initialize PIDs
-    pid_init(&balance_pid, BALANCE_KP, BALANCE_KI, BALANCE_KD, DT);
-    pid_init(&steering_pid, STEERING_KP, STEERING_KI, STEERING_KD, DT);
+    if (rc_adc_init() < 0)
+        LOG_WARN("ADC init failed — battery readings unavailable");
 
-imu_config_load(&g_imu_config);
-imu_config_print(&g_imu_config);    
+    // PIDs
+    pid_init(&balance_pid,  BALANCE_KP,  BALANCE_KI,  BALANCE_KD,  DT);
+    pid_init(&steering_pid, STEERING_KP, STEERING_KI, STEERING_KD, DT);
     LOG_INFO("PID Controllers:");
-    LOG_INFO("  D1_balance: Kp=%.1f Ki=%.1f Kd=%.1f", BALANCE_KP, BALANCE_KI, BALANCE_KD);
+    LOG_INFO("  D1_balance:  Kp=%.1f Ki=%.1f Kd=%.1f", BALANCE_KP,  BALANCE_KI,  BALANCE_KD);
     LOG_INFO("  D3_steering: Kp=%.1f Ki=%.1f Kd=%.1f", STEERING_KP, STEERING_KI, STEERING_KD);
-    
-    // Initialize IMU
+
+    // IMU config
+    imu_config_load(&g_imu_config);
+    imu_config_print(&g_imu_config);
+
+    // IMU / DMP
     LOG_INFO("Initializing IMU...");
     rc_mpu_config_t mpu_config = rc_mpu_default_config();
-    mpu_config.dmp_sample_rate = SAMPLE_RATE_HZ;
+    mpu_config.dmp_sample_rate      = SAMPLE_RATE_HZ;
     mpu_config.dmp_fetch_accel_gyro = 1;
-    
+
     if (rc_mpu_initialize_dmp(&mpu_data, mpu_config) < 0) {
         fprintf(stderr, "ERROR: IMU initialization failed\n");
         return -1;
     }
     rc_mpu_set_dmp_callback(&imu_interrupt);
-    
-    // Motor HAL is initialised by main() before robot_init() is called
-    
-    // Initialize buttons
+
+    // Motor HAL initialized by main() before robot_init()
+
+    // Buttons
     LOG_INFO("Initializing buttons...");
-    if (rc_button_init(RC_BTN_PIN_PAUSE, RC_BTN_POLARITY_NORM_HIGH, 
+    if (rc_button_init(RC_BTN_PIN_PAUSE, RC_BTN_POLARITY_NORM_HIGH,
                        RC_BTN_DEBOUNCE_DEFAULT_US) == -1) {
         fprintf(stderr, "ERROR: Pause button init failed\n");
         return -1;
@@ -174,39 +172,38 @@ imu_config_print(&g_imu_config);
         fprintf(stderr, "ERROR: Mode button init failed\n");
         return -1;
     }
-    
     rc_button_set_callbacks(RC_BTN_PIN_PAUSE, on_pause_press, NULL);
-    rc_button_set_callbacks(RC_BTN_PIN_MODE, NULL, on_mode_release);
-    
-    // Initialize LEDs
+    rc_button_set_callbacks(RC_BTN_PIN_MODE,  NULL, on_mode_release);
+
+    // LEDs
     rc_led_set(RC_LED_GREEN, 0);
-    rc_led_set(RC_LED_RED, 0);
-    
-    // Initialize robot state
-    state.mode = MODE_BALANCE;
-    state.armed = 0;
-    state.theta_ref = 0.0f;
+    rc_led_set(RC_LED_RED,   0);
+
+    // Initial state
+    state.mode         = MODE_BALANCE;
+    state.armed        = 0;
+    state.theta_ref    = 0.0f;
     state.theta_offset = 0.0f;
-    state.steering = 0.0f;
-    
-    // Create PID file
+    state.steering     = 0.0f;
+
     rc_make_pid_file();
-    
     rc_set_state(RUNNING);
-    
+
     LOG_INFO("Robot initialized successfully");
     return 0;
 }
 
 /**
- * @brief Main control loop
+ * @brief Main control loop (~100 Hz)
  */
 void robot_run(void) {
     uint64_t loop_counter = 0;
-    
+
     while (rc_get_state() != EXITING) {
-        // ── Motor write (from last ISR PID output) ────────────────────────
-        // Do this first to minimize latency from ISR to hardware.
+
+        // ── Motor write ───────────────────────────────────────────────────
+        // First thing each iteration — minimizes latency from ISR PID output
+        // to hardware.  Motor I/O (UART for RoboClaw) lives here, not in ISR.
         if (motor_output_ready) {
             float l = pending_left_duty;
             float r = pending_right_duty;
@@ -215,12 +212,15 @@ void robot_run(void) {
             last_left_duty  = l;
             last_right_duty = r;
         }
+
+        // ── Encoder read ──────────────────────────────────────────────────
+        // Kept out of ISR: may be I2C (eQEP) or blocking UART (RoboClaw).
         int left_ticks  = motor_hal_encoder_read(MOTOR_LEFT);
         int right_ticks = motor_hal_encoder_read(MOTOR_RIGHT);
         state.phi_left  = left_ticks  * (360.0f / ENCODER_TICKS_PER_REV);  // deg
         state.phi_right = right_ticks * (360.0f / ENCODER_TICKS_PER_REV);  // deg
 
-        // ── Input sources → theta_ref / steering ─────────────────────────
+        // ── Input sources → theta_ref / steering ──────────────────────────
         if (state.mode == MODE_EXT_INPUT) {
             input_packet_t pkt;
             if (uart_input_get(&pkt)) {
@@ -236,12 +236,11 @@ void robot_run(void) {
         xbox_update();
         sbus_update();
 
-        // ── SBUS → robot state mapping ────────────────────────────────────
+        // ── SBUS arming / drive commands ──────────────────────────────────
         if (sbus_is_connected()) {
-            int kill = sbus_get_kill();   /* 0=low(kill) 1=mid(kill) 2=high(run) */
-            int arm  = sbus_get_arm();    /* 0=low(disarm) 1=mid 2=high(armed)   */
+            int kill = sbus_get_kill();  // 0=kill 1=kill 2=run
+            int arm  = sbus_get_arm();   // 0=disarm 1=mid 2=armed
 
-            // Kill switch or failsafe: force immediate disarm if not fully high
             if (kill < 2 && state.armed) {
                 state.armed = 0;
                 motor_hal_standby(1);
@@ -249,21 +248,18 @@ void robot_run(void) {
                 pid_reset(&balance_pid);
                 pid_reset(&steering_pid);
                 rc_led_set(RC_LED_GREEN, 0);
-                LOG_WARN("SBUS kill switch active — DISARMED");
+                LOG_WARN("SBUS kill switch — DISARMED");
             }
 
-            // Arm on rising edge to pos 2; disarm on any drop below 2
             static int prev_sbus_arm = 0;
             if (arm == 2 && prev_sbus_arm < 2 && kill == 2) {
-                // Reject arm if tilted too far
                 if (fabsf(state.theta) > 14.0f) {
-                    LOG_WARN("SBUS: ARM REJECTED — angle too large (%.1f deg)",
-                             state.theta);
+                    LOG_WARN("SBUS ARM REJECTED — angle too large (%.1f deg)", state.theta);
                 } else {
                     state.armed = 1;
                     motor_hal_standby(0);
                     rc_led_set(RC_LED_GREEN, 1);
-                    LOG_INFO("SBUS: ARMED (theta=%.2f deg)", state.theta);
+                    LOG_INFO("SBUS ARMED (theta=%.2f deg)", state.theta);
                 }
             } else if (arm < 2 && prev_sbus_arm == 2) {
                 state.armed = 0;
@@ -272,11 +268,10 @@ void robot_run(void) {
                 pid_reset(&balance_pid);
                 pid_reset(&steering_pid);
                 rc_led_set(RC_LED_GREEN, 0);
-                LOG_INFO("SBUS: DISARMED");
+                LOG_INFO("SBUS DISARMED");
             }
             prev_sbus_arm = arm;
 
-            // Drive commands — sbus_get_drive/turn return 0 when kill/disarmed
             if (state.armed && state.mode == MODE_BALANCE) {
                 state.theta_ref = sbus_get_drive() * MAX_THETA_REF;
                 state.steering  = sbus_get_turn()  * MAX_STEERING;
@@ -284,54 +279,47 @@ void robot_run(void) {
         }
         // ─────────────────────────────────────────────────────────────────
 
-        // Saturate references (interrupt reads these, so do it here before next ISR)
+        // Saturate references before the next ISR reads them
         rc_saturate_float(&state.theta_ref, -MAX_THETA_REF, MAX_THETA_REF);
         rc_saturate_float(&state.steering,  -MAX_STEERING,   MAX_STEERING);
 
-        // Update telemetry data
+        // ── Telemetry & display ───────────────────────────────────────────
         telemetry_update();
 
-        // Update motor duty in telemetry (tracked from IMU interrupt)
-        g_telemetry_data.motors.left_duty = last_left_duty;
+        g_telemetry_data.motors.left_duty  = last_left_duty;
         g_telemetry_data.motors.right_duty = last_right_duty;
-        
-        // Broadcast telemetry at configured rate
-        uint64_t now = rc_nanos_since_boot() / 1000000;  // Convert to ms
-        uint64_t telemetry_interval = 1000 / g_debug_config.rates.pid_states;  // ms
-        
+
+        uint64_t now = rc_nanos_since_boot() / 1000000;  // ms
+        uint64_t telemetry_interval = 1000 / g_debug_config.rates.pid_states;
+
         if (now - last_telemetry_broadcast >= telemetry_interval) {
             ipc_broadcast_telemetry();
             last_telemetry_broadcast = now;
             telemetry_counter++;
         }
-        
-        // Signal display thread to redraw
+
         display_update();
-        
+
         loop_counter++;
-        rc_usleep(10000);  // 10ms sleep (100 Hz main loop)
+        rc_usleep(10000);  // 10 ms -> ~100 Hz main loop
     }
 }
 
 /**
- * @brief Cleanup robot
+ * @brief Cleanup robot hardware
  */
 void robot_cleanup(void) {
     LOG_INFO("Cleaning up robot...");
-    
-    // Disarm and stop motors
+
     motor_hal_set_both(0.0f, 0.0f);
     motor_hal_cleanup();
     rc_mpu_power_off();
-    
-    // Turn off LEDs
+
     rc_led_set(RC_LED_GREEN, 0);
-    rc_led_set(RC_LED_RED, 0);
-    
-    // Remove PID file
+    rc_led_set(RC_LED_RED,   0);
+
     rc_remove_pid_file();
-    
     rc_set_state(EXITING);
-    
+
     LOG_INFO("Robot cleanup complete");
 }
