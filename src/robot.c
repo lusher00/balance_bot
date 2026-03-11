@@ -26,88 +26,52 @@ static uint64_t last_telemetry_broadcast = 0;
 static float last_left_duty = 0.0f;
 static float last_right_duty = 0.0f;
 
+// Motor output handoff: ISR writes these, main loop applies them to hardware.
+// volatile so the compiler doesn't optimize away cross-context reads/writes.
+static volatile float pending_left_duty  = 0.0f;
+static volatile float pending_right_duty = 0.0f;
+static volatile int   motor_output_ready = 0;
+
 /**
  * @brief IMU interrupt callback (runs at SAMPLE_RATE_HZ)
  */
 static void imu_interrupt(void) {
+    // Apply mounting transform to get pitch/yaw in robot frame.
+    // mpu_data is already populated by the DMP before this callback fires —
+    // no additional I2C reads needed here.
+    imu_transform_t imu_transformed;
+    imu_config_apply_transform(&mpu_data, &imu_transformed, &g_imu_config);
+
+    state.theta     = imu_transformed.pitch;      // deg
+    state.theta_dot = imu_transformed.pitch_dot;  // deg/s
+    state.psi       = imu_transformed.yaw;        // deg
+
     if (!state.armed) return;
-    
-    // Read IMU data
-    rc_mpu_read_accel(&mpu_data);
-    rc_mpu_read_gyro(&mpu_data);
-    
-    // Update robot state
-imu_transform_t imu_transformed;
-imu_config_apply_transform(&mpu_data, &imu_transformed, &g_imu_config);
 
-state.theta = imu_transformed.pitch;
-state.theta_dot = imu_transformed.pitch_dot;
-state.psi = imu_transformed.yaw;    
-
-    state.phi = mpu_data.dmp_TaitBryan[TB_ROLL_Y];         // Roll
-    
-    // Read encoders
-    int left_ticks = motor_hal_encoder_read(MOTOR_LEFT);
-    int right_ticks = motor_hal_encoder_read(MOTOR_RIGHT);
-    state.phi_left = left_ticks * 2.0 * M_PI / ENCODER_TICKS_PER_REV;
-    state.phi_right = right_ticks * 2.0 * M_PI / ENCODER_TICKS_PER_REV;
-    
-    // External UART packet input mode
-    if (state.mode == MODE_EXT_INPUT) {
-        input_packet_t pkt;
-        if (uart_input_get(&pkt)) {
-            state.ext_input = pkt;
-            /* y drives forward lean, x drives steering.
-             * Tune these scale factors to taste. */
-            state.theta_ref = -pkt.y * MAX_THETA_REF;
-            state.steering  =  pkt.x * MAX_STEERING;
-        } else {
-            /* No signal — hold still */
-            state.theta_ref = 0.0f;
-            state.steering  = 0.0f;
-        }
-    }
-    
-    // Manual mode (Xbox) - handled in main loop
-    // theta_ref and steering set by xbox_update()
-    
-    // Saturate references
-    rc_saturate_float(&state.theta_ref, -MAX_THETA_REF, MAX_THETA_REF);
-    rc_saturate_float(&state.steering, -MAX_STEERING, MAX_STEERING);
-    
-    // PID Controllers
+    // PID — references and encoder positions are maintained by the main loop.
     float balance_output = 0.0f;
     float steering_output = 0.0f;
-    
-    // D1: Balance controller (REQUIRED)
+
     if (g_debug_config.controllers.D1_balance) {
-        balance_output = pid_update(&balance_pid, state.theta_ref, state.theta);
+        balance_output = pid_update(&balance_pid,
+                                    state.theta_ref + state.theta_offset,
+                                    state.theta);
     }
-    
-    // D3: Steering controller
+
     if (g_debug_config.controllers.D3_steering) {
-        // Use encoder difference for steering feedback
         float phi_diff = (state.phi_left - state.phi_right) / 2.0f;
         steering_output = pid_update(&steering_pid, state.steering, phi_diff);
     } else {
-        // Direct steering command
         steering_output = state.steering;
     }
-    
-    // Motor mixing
-    float left_duty = balance_output - steering_output;
-    float right_duty = balance_output + steering_output;
-    
-    // Saturate
-    rc_saturate_float(&left_duty, -1.0f, 1.0f);
-    rc_saturate_float(&right_duty, -1.0f, 1.0f);
-    
-    // Send to motors
-    motor_hal_set_both(left_duty, right_duty);
-    
-    // Track for telemetry
-    last_left_duty = left_duty;
-    last_right_duty = right_duty;
+
+    float left_duty  = rc_saturate_float(&(float){balance_output - steering_output}, -1.0f, 1.0f);
+    float right_duty = rc_saturate_float(&(float){balance_output + steering_output}, -1.0f, 1.0f);
+
+    // Hand off to main loop — motor write happens there, not in the ISR.
+    pending_left_duty  = left_duty;
+    pending_right_duty = right_duty;
+    motor_output_ready = 1;
 }
 
 /**
@@ -222,6 +186,7 @@ imu_config_print(&g_imu_config);
     state.mode = MODE_BALANCE;
     state.armed = 0;
     state.theta_ref = 0.0f;
+    state.theta_offset = 0.0f;
     state.steering = 0.0f;
     
     // Create PID file
@@ -240,11 +205,35 @@ void robot_run(void) {
     uint64_t loop_counter = 0;
     
     while (rc_get_state() != EXITING) {
-        // Update telemetry data
-        telemetry_update();
-        // Detect XBox controller
+        // ── Motor write (from last ISR PID output) ────────────────────────
+        // Do this first to minimize latency from ISR to hardware.
+        if (motor_output_ready) {
+            float l = pending_left_duty;
+            float r = pending_right_duty;
+            motor_output_ready = 0;
+            motor_hal_set_both(l, r);
+            last_left_duty  = l;
+            last_right_duty = r;
+        }
+        int left_ticks  = motor_hal_encoder_read(MOTOR_LEFT);
+        int right_ticks = motor_hal_encoder_read(MOTOR_RIGHT);
+        state.phi_left  = left_ticks  * (360.0f / ENCODER_TICKS_PER_REV);  // deg
+        state.phi_right = right_ticks * (360.0f / ENCODER_TICKS_PER_REV);  // deg
+
+        // ── Input sources → theta_ref / steering ─────────────────────────
+        if (state.mode == MODE_EXT_INPUT) {
+            input_packet_t pkt;
+            if (uart_input_get(&pkt)) {
+                state.ext_input = pkt;
+                state.theta_ref = -pkt.y * MAX_THETA_REF;
+                state.steering  =  pkt.x * MAX_STEERING;
+            } else {
+                state.theta_ref = 0.0f;
+                state.steering  = 0.0f;
+            }
+        }
+
         xbox_update();
-        // Read SBUS frame if connected
         sbus_update();
 
         // ── SBUS → robot state mapping ────────────────────────────────────
@@ -267,15 +256,14 @@ void robot_run(void) {
             static int prev_sbus_arm = 0;
             if (arm == 2 && prev_sbus_arm < 2 && kill == 2) {
                 // Reject arm if tilted too far
-                if (fabsf(state.theta) > 0.25f) {
+                if (fabsf(state.theta) > 14.0f) {
                     LOG_WARN("SBUS: ARM REJECTED — angle too large (%.1f deg)",
-                             state.theta * RAD_TO_DEG);
+                             state.theta);
                 } else {
                     state.armed = 1;
                     motor_hal_standby(0);
                     rc_led_set(RC_LED_GREEN, 1);
-                    LOG_INFO("SBUS: ARMED (theta=%.2f deg)",
-                             state.theta * RAD_TO_DEG);
+                    LOG_INFO("SBUS: ARMED (theta=%.2f deg)", state.theta);
                 }
             } else if (arm < 2 && prev_sbus_arm == 2) {
                 state.armed = 0;
@@ -295,6 +283,14 @@ void robot_run(void) {
             }
         }
         // ─────────────────────────────────────────────────────────────────
+
+        // Saturate references (interrupt reads these, so do it here before next ISR)
+        rc_saturate_float(&state.theta_ref, -MAX_THETA_REF, MAX_THETA_REF);
+        rc_saturate_float(&state.steering,  -MAX_STEERING,   MAX_STEERING);
+
+        // Update telemetry data
+        telemetry_update();
+
         // Update motor duty in telemetry (tracked from IMU interrupt)
         g_telemetry_data.motors.left_duty = last_left_duty;
         g_telemetry_data.motors.right_duty = last_right_duty;

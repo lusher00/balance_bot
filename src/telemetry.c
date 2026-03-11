@@ -41,24 +41,23 @@ static void update_encoder_telemetry(void) {
     int32_t left_ticks = rc_encoder_read(1);
     int32_t right_ticks = rc_encoder_read(2);
     
-    // Calculate position in radians
-    g_telemetry_data.encoders.left_ticks = left_ticks;
+    g_telemetry_data.encoders.left_ticks  = left_ticks;
     g_telemetry_data.encoders.right_ticks = right_ticks;
-    g_telemetry_data.encoders.left_rad = left_ticks * 2.0 * M_PI / ENCODER_TICKS_PER_REV;
-    g_telemetry_data.encoders.right_rad = right_ticks * 2.0 * M_PI / ENCODER_TICKS_PER_REV;
+    g_telemetry_data.encoders.left_rad    = left_ticks  * (360.0f / ENCODER_TICKS_PER_REV);  // now deg
+    g_telemetry_data.encoders.right_rad   = right_ticks * (360.0f / ENCODER_TICKS_PER_REV);  // now deg
     
-    // Calculate velocity (rad/s)
+    // Calculate velocity (deg/s)
     uint64_t now_us = rc_nanos_since_boot() / 1000;
     if (prev_timestamp_us > 0) {
-        float dt = (now_us - prev_timestamp_us) / 1000000.0;
-        if (dt > 0.0001) {  // Avoid division by zero
-            int32_t left_delta = left_ticks - prev_left_ticks;
+        float dt = (now_us - prev_timestamp_us) / 1000000.0f;
+        if (dt > 0.0001f) {
+            int32_t left_delta  = left_ticks  - prev_left_ticks;
             int32_t right_delta = right_ticks - prev_right_ticks;
             
-            g_telemetry_data.encoders.left_vel = 
-                (left_delta * 2.0 * M_PI / ENCODER_TICKS_PER_REV) / dt;
-            g_telemetry_data.encoders.right_vel = 
-                (right_delta * 2.0 * M_PI / ENCODER_TICKS_PER_REV) / dt;
+            g_telemetry_data.encoders.left_vel  =
+                (left_delta  * (360.0f / ENCODER_TICKS_PER_REV)) / dt;
+            g_telemetry_data.encoders.right_vel =
+                (right_delta * (360.0f / ENCODER_TICKS_PER_REV)) / dt;
         }
     }
     
@@ -286,9 +285,9 @@ void telemetry_print_summary(void) {
     
     if (g_debug_config.telemetry.imu_attitude) {
         printf("IMU: θ=%.2f° φ=%.2f° ψ=%.2f°\n",
-               g_telemetry_data.imu.theta * 180.0 / M_PI,
-               g_telemetry_data.imu.phi * 180.0 / M_PI,
-               g_telemetry_data.imu.psi * 180.0 / M_PI);
+               g_telemetry_data.imu.theta,
+               g_telemetry_data.imu.phi,
+               g_telemetry_data.imu.psi);
         printf("QUAT: w=%.4f x=%.4f y=%.4f z=%.4f\n",
                g_telemetry_data.imu.qw,
                g_telemetry_data.imu.qx,
@@ -297,7 +296,7 @@ void telemetry_print_summary(void) {
     }
     
     if (g_debug_config.telemetry.encoders) {
-        printf("Encoders: L=%d(%.2frad,%.2frad/s) R=%d(%.2frad,%.2frad/s)\n",
+        printf("Encoders: L=%d(%.1fdeg,%.1fdeg/s) R=%d(%.1fdeg,%.1fdeg/s)\n",
                g_telemetry_data.encoders.left_ticks,
                g_telemetry_data.encoders.left_rad,
                g_telemetry_data.encoders.left_vel,

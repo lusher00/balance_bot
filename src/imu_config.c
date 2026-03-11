@@ -195,34 +195,32 @@ void imu_config_apply_transform(const rc_mpu_data_t* raw,
         raw->dmp_TaitBryan[TB_YAW_Z]     // IMU Z rotation
     };
     
-    // Map to robot axes
-    // Robot pitch = IMU Y-axis rotation
-    // Robot yaw = IMU X-axis rotation  
-    // Robot roll = IMU Z-axis rotation
-    transformed->pitch = raw_angles[config->orientation.pitch_axis] * 
-                        config->orientation.pitch_sign - 
-                        config->offsets.pitch_offset;
-    
-    transformed->yaw = raw_angles[config->orientation.yaw_axis] * 
-                      config->orientation.yaw_sign - 
-                      config->offsets.yaw_offset;
-    
-    transformed->roll = raw_angles[config->orientation.roll_axis] * 
-                       config->orientation.roll_sign - 
-                       config->offsets.roll_offset;
-    
-    // Angular rates (gyro data)
-    transformed->pitch_dot = raw->gyro[config->orientation.pitch_axis] * DEG_TO_RAD * 
-                             config->orientation.pitch_sign - 
+    // Map to robot axes and convert rad→deg for angles.
+    // dmp_TaitBryan is in radians; gyro is already in deg/s.
+    transformed->pitch = (raw_angles[config->orientation.pitch_axis] *
+                         config->orientation.pitch_sign -
+                         config->offsets.pitch_offset) * RAD_TO_DEG;
+
+    transformed->yaw   = (raw_angles[config->orientation.yaw_axis] *
+                         config->orientation.yaw_sign -
+                         config->offsets.yaw_offset) * RAD_TO_DEG;
+
+    transformed->roll  = (raw_angles[config->orientation.roll_axis] *
+                         config->orientation.roll_sign -
+                         config->offsets.roll_offset) * RAD_TO_DEG;
+
+    // Angular rates — gyro is deg/s natively, just apply sign and offset
+    transformed->pitch_dot = raw->gyro[config->orientation.pitch_axis] *
+                             config->orientation.pitch_sign -
                              config->offsets.gyro_y_offset;
-    
-    transformed->yaw_dot = raw->gyro[config->orientation.yaw_axis] * DEG_TO_RAD * 
-                          config->orientation.yaw_sign - 
-                          config->offsets.gyro_x_offset;
-    
-    transformed->roll_dot = raw->gyro[config->orientation.roll_axis] * DEG_TO_RAD * 
-                           config->orientation.roll_sign - 
-                           config->offsets.gyro_z_offset;
+
+    transformed->yaw_dot   = raw->gyro[config->orientation.yaw_axis] *
+                             config->orientation.yaw_sign -
+                             config->offsets.gyro_x_offset;
+
+    transformed->roll_dot  = raw->gyro[config->orientation.roll_axis] *
+                             config->orientation.roll_sign -
+                             config->offsets.gyro_z_offset;
     
     // Raw accelerometer (for reference)
     transformed->accel_x = raw->accel[0];
@@ -250,10 +248,10 @@ void imu_config_calibrate(const rc_mpu_data_t* raw, imu_config_t* config) {
     config->offsets.roll_offset = raw->dmp_TaitBryan[config->orientation.roll_axis] * 
                                  config->orientation.roll_sign;
     
-    // Gyro drift (average over time, not instant)
-    config->offsets.gyro_x_offset = raw->gyro[0] * DEG_TO_RAD;
-    config->offsets.gyro_y_offset = raw->gyro[1] * DEG_TO_RAD;
-    config->offsets.gyro_z_offset = raw->gyro[2] * DEG_TO_RAD;
+    // Gyro drift (average over time, not instant) — gyro is already deg/s
+    config->offsets.gyro_x_offset = raw->gyro[0];
+    config->offsets.gyro_y_offset = raw->gyro[1];
+    config->offsets.gyro_z_offset = raw->gyro[2];
     
     config->calibrated = true;
     
@@ -277,18 +275,18 @@ void imu_config_print(const imu_config_t* config) {
     printf("  Robot roll  ← IMU %c-axis rotation (sign: %.0f)\n", 
            'X' + config->orientation.roll_axis, config->orientation.roll_sign);
     
-    printf("\nAngle offsets:\n");
-    printf("  Pitch: %.4f rad (%.2f°)\n", 
+    printf("\nAngle offsets (stored in rad, applied to raw DMP):\n");
+    printf("  Pitch: %.4f rad (%.2f deg)\n",
            config->offsets.pitch_offset, config->offsets.pitch_offset * RAD_TO_DEG);
-    printf("  Yaw:   %.4f rad (%.2f°)\n", 
+    printf("  Yaw:   %.4f rad (%.2f deg)\n",
            config->offsets.yaw_offset, config->offsets.yaw_offset * RAD_TO_DEG);
-    printf("  Roll:  %.4f rad (%.2f°)\n", 
+    printf("  Roll:  %.4f rad (%.2f deg)\n",
            config->offsets.roll_offset, config->offsets.roll_offset * RAD_TO_DEG);
-    
-    printf("\nGyro offsets:\n");
-    printf("  X: %.4f rad/s\n", config->offsets.gyro_x_offset);
-    printf("  Y: %.4f rad/s\n", config->offsets.gyro_y_offset);
-    printf("  Z: %.4f rad/s\n", config->offsets.gyro_z_offset);
+
+    printf("\nGyro offsets (deg/s):\n");
+    printf("  X: %.4f\n", config->offsets.gyro_x_offset);
+    printf("  Y: %.4f\n", config->offsets.gyro_y_offset);
+    printf("  Z: %.4f\n", config->offsets.gyro_z_offset);
     
     printf("\nCalibrated: %s\n", config->calibrated ? "YES" : "NO");
     printf("=========================\n\n");

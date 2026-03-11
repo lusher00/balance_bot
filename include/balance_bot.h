@@ -32,8 +32,8 @@
 #define DT                  0.01f
 
 // Control limits
-#define MAX_THETA_REF       0.3f    // Max lean angle (rad) ~17 deg
-#define MAX_STEERING        1.0f    // Max steering command
+#define MAX_THETA_REF       17.0f   // Max lean angle command (deg)
+#define MAX_STEERING        1.0f    // Max steering command (normalized)
 
 // PID default gains (tunable via iPhone app)
 #define BALANCE_KP  40.0f
@@ -93,17 +93,18 @@ typedef enum {
  */
 typedef struct {
     // IMU
-    float theta;        // Body pitch angle  (rad)
-    float theta_dot;    // Body pitch rate   (rad/s)
-    float phi;          // Body roll angle   (rad)
-    float psi;          // Body yaw angle    (rad)
+    float theta;        // Body pitch angle  (deg)
+    float theta_dot;    // Body pitch rate   (deg/s)
+    float phi;          // Body roll angle   (deg)
+    float psi;          // Body yaw angle    (deg)
 
     // Encoders
-    float phi_left;     // Left wheel angle  (rad)
-    float phi_right;    // Right wheel angle (rad)
+    float phi_left;     // Left wheel angle  (deg)
+    float phi_right;    // Right wheel angle (deg)
 
     // Control references
-    float theta_ref;    // Desired body angle  (for D1)
+    float theta_ref;    // Desired body angle  (deg)
+    float theta_offset; // Balance point trim  (deg) — tunable from iPhone
     float steering;     // Desired steering    (-1 to +1)
 
     // External UART input (used only in MODE_EXT_INPUT)

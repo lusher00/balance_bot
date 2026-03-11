@@ -13,9 +13,12 @@
  */
 
 #include "debug_config.h"
+#include "balance_bot.h"
+#include "motor_hal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -236,8 +239,67 @@ static int parse_json_command(const char* json_cmd) {
         return 0;
     }
     
-    // Add more command handlers as needed
-    
+    // {"type":"arm","value":true}  or  {"type":"arm","value":false}
+    if (strstr(json_cmd, "\"type\":\"arm\"")) {
+        if (strstr(json_cmd, "\"value\":true")) {
+            if (fabsf(state.theta) > 14.0f) {
+                LOG_WARN("iPhone ARM REJECTED — angle too large (%.1f deg)", state.theta);
+                return -1;
+            }
+            state.armed = 1;
+            motor_hal_standby(0);
+            rc_led_set(RC_LED_GREEN, 1);
+            LOG_INFO("iPhone: ARMED (theta=%.2f deg)", state.theta);
+        } else {
+            state.armed = 0;
+            motor_hal_set_both(0.0f, 0.0f);
+            motor_hal_standby(1);
+            pid_reset(&balance_pid);
+            pid_reset(&steering_pid);
+            rc_led_set(RC_LED_GREEN, 0);
+            LOG_INFO("iPhone: DISARMED");
+        }
+        return 0;
+    }
+
+    // {"type":"set_theta_offset","value":0.05}   (radians)
+    if (strstr(json_cmd, "\"type\":\"set_theta_offset\"")) {
+        const char *p = strstr(json_cmd, "\"value\":");
+        if (!p) return -1;
+        float val = 0.0f;
+        if (sscanf(p, "\"value\":%f", &val) != 1) return -1;
+        // Clamp to ±15 deg
+        if (val >  15.0f) val =  15.0f;
+        if (val < -15.0f) val = -15.0f;
+        state.theta_offset = val;
+        LOG_INFO("iPhone: theta_offset = %.2f deg", val);
+        return 0;
+    }
+
+    // {"type":"set_pid","controller":"balance","kp":40.0,"ki":0.5,"kd":5.0}
+    // {"type":"set_pid","controller":"steering","kp":1.0,"ki":0.0,"kd":0.1}
+    if (strstr(json_cmd, "\"type\":\"set_pid\"")) {
+        float kp = 0.0f, ki = 0.0f, kd = 0.0f;
+        const char *p;
+
+        p = strstr(json_cmd, "\"kp\":"); if (p) sscanf(p, "\"kp\":%f", &kp);
+        p = strstr(json_cmd, "\"ki\":"); if (p) sscanf(p, "\"ki\":%f", &ki);
+        p = strstr(json_cmd, "\"kd\":"); if (p) sscanf(p, "\"kd\":%f", &kd);
+
+        if (strstr(json_cmd, "\"controller\":\"balance\"")) {
+            pid_set_gains(&balance_pid, kp, ki, kd);
+            LOG_INFO("iPhone: balance PID kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
+            return 0;
+        }
+        if (strstr(json_cmd, "\"controller\":\"steering\"")) {
+            pid_set_gains(&steering_pid, kp, ki, kd);
+            LOG_INFO("iPhone: steering PID kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
+            return 0;
+        }
+        LOG_WARN("set_pid: unknown controller");
+        return -1;
+    }
+
     LOG_WARN("Unknown command type");
     return -1;
 }
@@ -262,11 +324,12 @@ static void build_telemetry_json(char* buffer, size_t size) {
     // System status (always included)
     if (g_debug_config.telemetry.system_status) {
         pos += snprintf(buffer + pos, size - pos,
-                       "\"system\":{\"battery\":%.2f,\"armed\":%s,\"mode\":%d,\"loop_hz\":%.1f},",
+                       "\"system\":{\"battery\":%.2f,\"armed\":%s,\"mode\":%d,\"loop_hz\":%.1f,\"theta_offset\":%.4f},",
                        g_telemetry_data.system.battery_voltage,
                        g_telemetry_data.system.armed ? "true" : "false",
                        g_telemetry_data.system.mode,
-                       g_telemetry_data.system.loop_hz);
+                       g_telemetry_data.system.loop_hz,
+                       state.theta_offset);
     }
     
     // Encoders

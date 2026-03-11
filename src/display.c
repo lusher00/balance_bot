@@ -349,7 +349,7 @@ static void draw_system(int r)
     attron(COLOR_PAIR(s->battery_voltage < 10.5f ? CP_WARN : CP_OK));
     mvprintw(r, 40, "Batt: %.2fV", s->battery_voltage);
     attroff(COLOR_PAIR(CP_WARN)); attroff(COLOR_PAIR(CP_OK));
-    mvprintw(r, 54, "theta: %+.4f rad", g_telemetry_data.imu.theta);
+    mvprintw(r, 54, "theta: %+.2f deg", g_telemetry_data.imu.theta);
 }
 
 static void draw_log(int r)
