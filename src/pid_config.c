@@ -20,7 +20,7 @@
  * 15.0 0.0 1.5
  */
 
-#include "cat_follower.h"
+#include "balance_bot.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

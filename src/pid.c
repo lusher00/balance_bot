@@ -3,7 +3,7 @@
  * @brief PID controller implementation
  */
 
-#include "cat_follower.h"
+#include "balance_bot.h"
 #include <string.h>
 
 void pid_init(pid_controller_t* pid, float kp, float ki, float kd, float dt) {

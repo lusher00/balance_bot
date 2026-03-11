@@ -337,12 +337,12 @@ static void build_telemetry_json(char* buffer, size_t size) {
     }
     
     // Cat position
-    if (g_debug_config.telemetry.cat_position && g_telemetry_data.cat.detected) {
+    if (g_debug_config.telemetry.ext_input && g_telemetry_data.ext_input.valid) {
         pos += snprintf(buffer + pos, size - pos,
-                       "\"cat\":{\"detected\":true,\"x\":%.3f,\"y\":%.3f,\"confidence\":%.2f},",
-                       g_telemetry_data.cat.x,
-                       g_telemetry_data.cat.y,
-                       g_telemetry_data.cat.confidence);
+                       "\"ext_input\":{\"valid\":true,\"x\":%.3f,\"y\":%.3f,\"confidence\":%.2f},",
+                       g_telemetry_data.ext_input.x,
+                       g_telemetry_data.ext_input.y,
+                       g_telemetry_data.ext_input.confidence);
     }
     
     // Remove trailing comma

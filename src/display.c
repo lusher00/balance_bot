@@ -14,7 +14,7 @@
  */
 
 #include "display.h"
-#include "cat_follower.h"
+#include "balance_bot.h"
 #include "debug_config.h"
 
 #include <stdio.h>
@@ -344,7 +344,7 @@ static void draw_system(int r)
     attron(COLOR_PAIR(s->armed ? CP_OK : CP_WARN));
     mvprintw(r, 1, "Armed: %-5s", s->armed ? "YES" : "no");
     attroff(COLOR_PAIR(CP_OK)); attroff(COLOR_PAIR(CP_WARN));
-    const char *modes[] = { "BALANCE", "CAT_FOLLOW", "MANUAL" };
+    const char *modes[] = { "BALANCE", "EXT_INPUT", "MANUAL" };
     mvprintw(r, 18, "Mode: %-12s", s->mode < 3 ? modes[s->mode] : "?");
     attron(COLOR_PAIR(s->battery_voltage < 10.5f ? CP_WARN : CP_OK));
     mvprintw(r, 40, "Batt: %.2fV", s->battery_voltage);

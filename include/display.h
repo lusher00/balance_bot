@@ -20,7 +20,7 @@
 #define DISPLAY_H
 
 #include "debug_config.h"
-#include "cat_follower.h"   /* robot_state_t, telemetry_data_t */
+#include "balance_bot.h"   /* robot_state_t, telemetry_data_t */
 
 /**
  * @brief Start the ncurses display thread.

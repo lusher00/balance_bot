@@ -34,10 +34,10 @@
  *   1. Add a field to the sbus state struct (or use sbus_get_channel_raw())
  *   2. Update sbus_decode_channels() to populate it
  *   3. Add a getter function at the bottom of this file
- *   4. Declare the getter in cat_follower.h
+ *   4. Declare the getter in balance_bot.h
  */
 
-#include "cat_follower.h"
+#include "balance_bot.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

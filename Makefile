@@ -7,17 +7,26 @@ CFLAGS = -Wall -Wextra -O2 -Iinclude
 LDFLAGS = -lrobotcontrol -lm -lpthread -lncurses
 
 # Source files
+# ── Motor HAL backend ────────────────────────────────────────────────────────
+# Choose ONE of the following lines.  Comment out the other.
+#   motor_hal_rc.c      — BeagleBone PWM cape + eQEP encoders (default)
+#   motor_hal_roboclaw.c — RoboClaw packet-serial over UART (-m /dev/ttyOx)
+MOTOR_HAL = src/motor_hal_rc.c
+#MOTOR_HAL = src/motor_hal_roboclaw.c
+
 SRCS = src/main.c \
        src/robot.c \
        src/display.c \
        src/pid.c \
-       src/cat_tracker.c \
+       src/uart_input.c \
+       src/roboclaw.c \
        src/ipc_server.c \
        src/telemetry.c \
        src/pid_config.c \
        src/input_xbox.c \
        src/input_sbus.c \
-	src/imu_config.c
+       src/imu_config.c \
+       $(MOTOR_HAL)
 
 # Object files
 OBJS = $(patsubst src/%.c,$(OBJDIR)/%.o,$(SRCS))

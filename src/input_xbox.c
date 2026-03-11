@@ -6,7 +6,7 @@
  * No device path required - scans /dev/input/js* for controllers.
  */
 
-#include "cat_follower.h"
+#include "balance_bot.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

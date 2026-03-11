@@ -8,7 +8,7 @@
  * - Non-volatile storage in /etc/balance_bot_imu.conf
  */
 
-#include "cat_follower.h"
+#include "balance_bot.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>

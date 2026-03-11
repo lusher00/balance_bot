@@ -79,14 +79,14 @@ typedef struct {
 } motor_telemetry_t;
 
 /**
- * @brief Cat position telemetry
+ * @brief External UART input telemetry
  */
 typedef struct {
-    bool detected;           // Is cat currently detected?
-    float x;                 // Horizontal position (-1 to 1)
-    float y;                 // Vertical position (-1 to 1)
-    float confidence;        // Detection confidence (0 to 1)
-} cat_telemetry_t;
+    bool valid;              // Is data fresh?
+    float x;                 // Lateral command (-1 to 1)
+    float y;                 // Forward command (-1 to 1)
+    float confidence;        // Source confidence (0 to 1)
+} ext_input_telemetry_t;
 
 /**
  * @brief System status telemetry
@@ -94,7 +94,7 @@ typedef struct {
 typedef struct {
     float battery_voltage;   // Battery voltage (V)
     bool armed;              // Are motors armed?
-    int mode;                // 0=balance, 1=cat_follow, 2=manual
+    int mode;                // 0=balance, 1=ext_input, 2=manual
     float loop_hz;           // Actual control loop frequency
     uint32_t uptime_sec;     // Seconds since start
 } system_telemetry_t;
@@ -116,7 +116,7 @@ typedef struct {
     pid_telemetry_t D3_steering;     // Steering PID state
     
     motor_telemetry_t motors;        // Motor commands
-    cat_telemetry_t cat;             // Cat position
+    ext_input_telemetry_t ext_input; // External UART input
     system_telemetry_t system;       // System status
 } telemetry_data_t;
 
@@ -136,7 +136,7 @@ typedef struct {
     bool imu_full;           // All IMU data (accel, gyro) - HIGH BANDWIDTH
     bool pid_states;         // PID errors, terms, outputs
     bool motor_commands;     // Motor duty cycles
-    bool cat_position;       // Cat tracking data
+    bool ext_input;          // External UART input data
     bool system_status;      // Battery, armed, mode - always recommended
 } telemetry_enables_t;
 
@@ -154,14 +154,13 @@ typedef struct {
 
 /**
  * @brief Video overlay configuration
- * 
- * These flags are sent to cat_track (RPi5) to control what's
- * overlaid on the video stream.
+ *
+ * Flags forwarded to an external coprocessor (e.g. RPi) to control
+ * what is overlaid on any video stream it produces.
  */
 typedef struct {
-    bool cat_box;            // Draw bounding box around cat
-    bool crosshair;          // Draw crosshair at cat center
-    bool stats;              // Show FPS, detection stats
+    bool crosshair;          // Draw crosshair / target marker
+    bool stats;              // Show FPS / detection stats
 } video_overlays_t;
 
 /**
@@ -306,7 +305,7 @@ static inline debug_config_t get_default_debug_config(void) {
             .imu_full = false,         // Disable high-bandwidth data
             .pid_states = true,
             .motor_commands = false,
-            .cat_position = true,
+            .ext_input = true,
             .system_status = true
         },
         .controllers = {
@@ -315,7 +314,6 @@ static inline debug_config_t get_default_debug_config(void) {
             .D3_steering = true
         },
         .overlays = {
-            .cat_box = true,
             .crosshair = true,
             .stats = false
         },

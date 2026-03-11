@@ -10,7 +10,7 @@
  */
 
 #include "debug_config.h"
-#include "cat_follower.h"
+#include "balance_bot.h"
 #include <robotcontrol.h>
 #include <math.h>
 
@@ -160,16 +160,16 @@ static void update_motor_telemetry(void) {
 }
 
 /**
- * @brief Update cat tracking telemetry
+ * @brief Update external UART input telemetry
  */
-static void update_cat_telemetry(void) {
-    if (!g_debug_config.telemetry.cat_position) return;
+static void update_ext_input_telemetry(void) {
+    if (!g_debug_config.telemetry.ext_input) return;
     
-    // Copy cat position from robot state
-    g_telemetry_data.cat.detected = state.cat.detected;
-    g_telemetry_data.cat.x = state.cat.x;
-    g_telemetry_data.cat.y = state.cat.y;
-    g_telemetry_data.cat.confidence = state.cat.confidence;
+    // Copy latest external input from robot state
+    g_telemetry_data.ext_input.valid = state.ext_input.valid;
+    g_telemetry_data.ext_input.x = state.ext_input.x;
+    g_telemetry_data.ext_input.y = state.ext_input.y;
+    g_telemetry_data.ext_input.confidence = state.ext_input.confidence;
 }
 
 /**
@@ -220,7 +220,7 @@ void telemetry_update(void) {
     update_imu_telemetry();
     update_pid_telemetry();
     update_motor_telemetry();
-    update_cat_telemetry();
+    update_ext_input_telemetry();
 }
 
 /**
@@ -264,7 +264,7 @@ void telemetry_get_config_description(char* buffer, size_t size) {
     if (g_debug_config.telemetry.imu_full) pos += snprintf(buffer + pos, size - pos, "imu_full ");
     if (g_debug_config.telemetry.pid_states) pos += snprintf(buffer + pos, size - pos, "pid_states ");
     if (g_debug_config.telemetry.motor_commands) pos += snprintf(buffer + pos, size - pos, "motors ");
-    if (g_debug_config.telemetry.cat_position) pos += snprintf(buffer + pos, size - pos, "cat ");
+    if (g_debug_config.telemetry.ext_input) pos += snprintf(buffer + pos, size - pos, "ext_input ");
     
     if (pos == strlen("Telemetry enabled: ")) {
         snprintf(buffer + pos, size - pos, "none");
@@ -318,11 +318,11 @@ void telemetry_print_summary(void) {
                g_telemetry_data.D3_steering.enabled ? "ON" : "OFF");
     }
     
-    if (g_debug_config.telemetry.cat_position && g_telemetry_data.cat.detected) {
+    if (g_debug_config.telemetry.ext_input && g_telemetry_data.ext_input.valid) {
         printf("Cat: x=%.2f y=%.2f conf=%.0f%%\n",
-               g_telemetry_data.cat.x,
-               g_telemetry_data.cat.y,
-               g_telemetry_data.cat.confidence * 100.0);
+               g_telemetry_data.ext_input.x,
+               g_telemetry_data.ext_input.y,
+               g_telemetry_data.ext_input.confidence * 100.0);
     }
     
     printf("========================\n\n");

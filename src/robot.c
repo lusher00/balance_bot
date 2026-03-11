@@ -3,7 +3,8 @@
  * @brief Main robot control loop with telemetry and IPC integration
  */
 
-#include "cat_follower.h"
+#include "balance_bot.h"
+#include "motor_hal.h"
 #include "display.h"
 #include <stdio.h>
 #include <math.h>
@@ -46,34 +47,24 @@ state.psi = imu_transformed.yaw;
     state.phi = mpu_data.dmp_TaitBryan[TB_ROLL_Y];         // Roll
     
     // Read encoders
-    int left_ticks = rc_encoder_read(1);
-    int right_ticks = rc_encoder_read(2);
+    int left_ticks = motor_hal_encoder_read(MOTOR_LEFT);
+    int right_ticks = motor_hal_encoder_read(MOTOR_RIGHT);
     state.phi_left = left_ticks * 2.0 * M_PI / ENCODER_TICKS_PER_REV;
     state.phi_right = right_ticks * 2.0 * M_PI / ENCODER_TICKS_PER_REV;
     
-    // Cat following mode
-    if (state.mode == MODE_FOLLOW_CAT) {
-        cat_position_t cat;
-        if (cat_tracker_get_position(&cat)) {
-            state.cat = cat;
-            
-            // Cat-based control
-            if (fabsf(cat.x) > CAT_DEADBAND) {
-                state.steering = cat.x * CAT_STEERING_GAIN;
-            } else {
-                state.steering = 0.0f;
-            }
-            
-            // Approach if cat is centered
-            if (fabsf(cat.x) < 0.3f) {
-                state.theta_ref = -CAT_APPROACH_GAIN;
-            } else {
-                state.theta_ref = 0.0f;
-            }
+    // External UART packet input mode
+    if (state.mode == MODE_EXT_INPUT) {
+        input_packet_t pkt;
+        if (uart_input_get(&pkt)) {
+            state.ext_input = pkt;
+            /* y drives forward lean, x drives steering.
+             * Tune these scale factors to taste. */
+            state.theta_ref = -pkt.y * MAX_THETA_REF;
+            state.steering  =  pkt.x * MAX_STEERING;
         } else {
-            // No cat detected - stop
+            /* No signal — hold still */
             state.theta_ref = 0.0f;
-            state.steering = 0.0f;
+            state.steering  = 0.0f;
         }
     }
     
@@ -112,8 +103,7 @@ state.psi = imu_transformed.yaw;
     rc_saturate_float(&right_duty, -1.0f, 1.0f);
     
     // Send to motors
-    rc_motor_set(1, left_duty);
-    rc_motor_set(2, right_duty);
+    motor_hal_set_both(left_duty, right_duty);
     
     // Track for telemetry
     last_left_duty = left_duty;
@@ -127,11 +117,11 @@ static void on_pause_press(void) {
     // Cycle through modes
     switch (state.mode) {
         case MODE_BALANCE:
-            state.mode = MODE_FOLLOW_CAT;
-            LOG_INFO("Mode: CAT FOLLOW");
+            state.mode = MODE_EXT_INPUT;
+            LOG_INFO("Mode: EXT INPUT");
             rc_led_set(RC_LED_RED, 1);
             break;
-        case MODE_FOLLOW_CAT:
+        case MODE_EXT_INPUT:
             state.mode = MODE_BALANCE;
             LOG_INFO("Mode: BALANCE");
             rc_led_set(RC_LED_RED, 0);
@@ -151,13 +141,12 @@ static void on_mode_release(void) {
     if (state.armed) {
         LOG_INFO("ARMED");
         rc_led_set(RC_LED_GREEN, 1);
-        rc_motor_standby(0);
+        motor_hal_standby(0);
     } else {
         LOG_INFO("DISARMED");
         rc_led_set(RC_LED_GREEN, 0);
-        rc_motor_standby(1);
-        rc_motor_set(1, 0.0f);
-        rc_motor_set(2, 0.0f);
+        motor_hal_standby(1);
+        motor_hal_set_both(0.0f, 0.0f);
         
         // Reset PIDs
         pid_reset(&balance_pid);
@@ -207,20 +196,7 @@ imu_config_print(&g_imu_config);
     }
     rc_mpu_set_dmp_callback(&imu_interrupt);
     
-    // Initialize motors
-    LOG_INFO("Initializing motors...");
-    if (rc_motor_init() == -1) {
-        fprintf(stderr, "ERROR: Motor initialization failed\n");
-        return -1;
-    }
-    rc_motor_standby(1);  // Start in standby
-    
-    // Initialize encoders
-    LOG_INFO("Initializing encoders...");
-    if (rc_encoder_init() == -1) {
-        fprintf(stderr, "ERROR: Encoder initialization failed\n");
-        return -1;
-    }
+    // Motor HAL is initialised by main() before robot_init() is called
     
     // Initialize buttons
     LOG_INFO("Initializing buttons...");
@@ -279,9 +255,8 @@ void robot_run(void) {
             // Kill switch or failsafe: force immediate disarm if not fully high
             if (kill < 2 && state.armed) {
                 state.armed = 0;
-                rc_motor_standby(1);
-                rc_motor_set(1, 0.0f);
-                rc_motor_set(2, 0.0f);
+                motor_hal_standby(1);
+                motor_hal_set_both(0.0f, 0.0f);
                 pid_reset(&balance_pid);
                 pid_reset(&steering_pid);
                 rc_led_set(RC_LED_GREEN, 0);
@@ -297,16 +272,15 @@ void robot_run(void) {
                              state.theta * RAD_TO_DEG);
                 } else {
                     state.armed = 1;
-                    rc_motor_standby(0);
+                    motor_hal_standby(0);
                     rc_led_set(RC_LED_GREEN, 1);
                     LOG_INFO("SBUS: ARMED (theta=%.2f deg)",
                              state.theta * RAD_TO_DEG);
                 }
             } else if (arm < 2 && prev_sbus_arm == 2) {
                 state.armed = 0;
-                rc_motor_standby(1);
-                rc_motor_set(1, 0.0f);
-                rc_motor_set(2, 0.0f);
+                motor_hal_standby(1);
+                motor_hal_set_both(0.0f, 0.0f);
                 pid_reset(&balance_pid);
                 pid_reset(&steering_pid);
                 rc_led_set(RC_LED_GREEN, 0);
@@ -350,13 +324,8 @@ void robot_cleanup(void) {
     LOG_INFO("Cleaning up robot...");
     
     // Disarm and stop motors
-    rc_motor_set(1, 0.0f);
-    rc_motor_set(2, 0.0f);
-    rc_motor_standby(1);
-    rc_motor_cleanup();
-    
-    // Cleanup other hardware
-    rc_encoder_cleanup();
+    motor_hal_set_both(0.0f, 0.0f);
+    motor_hal_cleanup();
     rc_mpu_power_off();
     
     // Turn off LEDs
