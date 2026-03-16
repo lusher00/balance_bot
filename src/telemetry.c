@@ -184,6 +184,28 @@ static void update_system_telemetry(void) {
     // Robot state
     g_telemetry_data.system.armed = state.armed;
     g_telemetry_data.system.mode = state.mode;
+    g_telemetry_data.system.theta_offset = state.theta_offset;
+
+    // Read external battery monitor status (written by batt_monitor service)
+    {
+        FILE *f = fopen("/run/batt_status.json", "r");
+        if (f) {
+            float v = 0.0f;
+            char status[16] = "unknown";
+            fscanf(f, "{\"voltage\":%f,\"status\":\"%15[^\"]\"}", &v, status);
+            fclose(f);
+            g_telemetry_data.system.batt_voltage = v;
+            if (strcmp(status, "critical") == 0)
+                g_telemetry_data.system.batt_status = BATT_CRITICAL;
+            else if (strcmp(status, "warning") == 0)
+                g_telemetry_data.system.batt_status = BATT_WARNING;
+            else
+                g_telemetry_data.system.batt_status = BATT_OK;
+        } else {
+            g_telemetry_data.system.batt_voltage = -1.0f;
+            g_telemetry_data.system.batt_status  = BATT_UNKNOWN;
+        }
+    }
     
     // Calculate actual loop frequency
     static uint64_t last_update_us = 0;

@@ -11,8 +11,8 @@ LDFLAGS = -lrobotcontrol -lm -lpthread -lncurses
 # Choose ONE of the following lines.  Comment out the other.
 #   motor_hal_rc.c      — BeagleBone PWM cape + eQEP encoders (default)
 #   motor_hal_roboclaw.c — RoboClaw packet-serial over UART (-m /dev/ttyOx)
-MOTOR_HAL = src/motor_hal_rc.c
-#MOTOR_HAL = src/motor_hal_roboclaw.c
+#MOTOR_HAL = src/motor_hal_rc.c
+MOTOR_HAL = src/motor_hal_roboclaw.c
 
 SRCS = src/main.c \
        src/robot.c \

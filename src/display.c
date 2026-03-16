@@ -346,8 +346,8 @@ static void draw_system(int r)
     attroff(COLOR_PAIR(CP_OK)); attroff(COLOR_PAIR(CP_WARN));
     const char *modes[] = { "BALANCE", "EXT_INPUT", "MANUAL" };
     mvprintw(r, 18, "Mode: %-12s", s->mode < 3 ? modes[s->mode] : "?");
-    attron(COLOR_PAIR(s->battery_voltage < 10.5f ? CP_WARN : CP_OK));
-    mvprintw(r, 40, "Batt: %.2fV", s->battery_voltage);
+    attron(COLOR_PAIR(s->batt_voltage > 0 && s->batt_voltage < 10.5f ? CP_WARN : CP_OK));
+    mvprintw(r, 40, "Batt: %.2fV", s->batt_voltage > 0 ? s->batt_voltage : s->battery_voltage);
     attroff(COLOR_PAIR(CP_WARN)); attroff(COLOR_PAIR(CP_OK));
     mvprintw(r, 54, "theta: %+.2f deg", g_telemetry_data.imu.theta);
 }

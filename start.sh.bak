@@ -18,6 +18,7 @@ SERVER_LOG="/tmp/server.log"
 
 # Default args — no input source (arm via iPhone or MODE button)
 # Override on command line e.g: ./start.sh -i sbus -u /dev/ttyO1
+#BOT_ARGS="-d all -i sbus -u /dev/ttyO1 -m /dev/ttyO5 -B 38400 ${@}"
 BOT_ARGS="-d all -m /dev/ttyO5 -B 38400 ${@}"
 
 # ── sanity checks ──────────────────────────────────────────────────
@@ -31,11 +32,9 @@ if [ ! -x "$BALANCE_BOT" ]; then
     exit 1
 fi
 
-# ── kill any stale balance_bot / server.js ────────────────────────
-sudo systemctl stop balance_bot 2>/dev/null
-sudo pkill -f balance_bot 2>/dev/null
+# ── kill any stale server.js ───────────────────────────────────────
 pkill -f server.js 2>/dev/null
-sleep 0.5
+sleep 0.3
 
 # ── start server.js in background, output to log only ─────────────
 echo "Starting server.js (log: $SERVER_LOG)..."

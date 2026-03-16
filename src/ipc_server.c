@@ -324,12 +324,15 @@ static void build_telemetry_json(char* buffer, size_t size) {
     // System status (always included)
     if (g_debug_config.telemetry.system_status) {
         pos += snprintf(buffer + pos, size - pos,
-                       "\"system\":{\"battery\":%.2f,\"armed\":%s,\"mode\":%d,\"loop_hz\":%.1f,\"theta_offset\":%.4f},",
+                       "\"system\":{\"battery\":%.2f,\"armed\":%s,\"mode\":%d,\"loop_hz\":%.1f,\"theta_offset\":%.4f,"
+                       "\"batt_voltage\":%.3f,\"batt_status\":%d},",
                        g_telemetry_data.system.battery_voltage,
                        g_telemetry_data.system.armed ? "true" : "false",
                        g_telemetry_data.system.mode,
                        g_telemetry_data.system.loop_hz,
-                       state.theta_offset);
+                       state.theta_offset,
+                       g_telemetry_data.system.batt_voltage,
+                       (int)g_telemetry_data.system.batt_status);
     }
     
     // Encoders

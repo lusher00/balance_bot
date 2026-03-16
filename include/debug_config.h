@@ -91,12 +91,22 @@ typedef struct {
 /**
  * @brief System status telemetry
  */
+typedef enum {
+    BATT_UNKNOWN  = 0,
+    BATT_OK       = 1,
+    BATT_WARNING  = 2,
+    BATT_CRITICAL = 3,
+} batt_status_t;
+
 typedef struct {
-    float battery_voltage;   // Battery voltage (V)
+    float battery_voltage;   // Battery voltage (V) — onboard ADC (legacy)
     bool armed;              // Are motors armed?
     int mode;                // 0=balance, 1=ext_input, 2=manual
     float loop_hz;           // Actual control loop frequency
     uint32_t uptime_sec;     // Seconds since start
+    float theta_offset;      // Balance point trim (deg)
+    float batt_voltage;      // External 3S voltage from batt_monitor (V), -1 if unavailable
+    batt_status_t batt_status; // ok / warning / critical / unknown
 } system_telemetry_t;
 
 /**
