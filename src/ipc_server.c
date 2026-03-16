@@ -282,6 +282,18 @@ static int parse_json_command(const char* json_cmd) {
         return 0;
     }
 
+    // {"type":"set_mode","value":1}  0=idle 1=balance 2=ext_input 3=manual
+    if (strstr(json_cmd, "\"type\":\"set_mode\"")) {
+        const char *p = strstr(json_cmd, "\"value\":");
+        if (!p) return -1;
+        int val = 0;
+        if (sscanf(p, "\"value\":%d", &val) != 1) return -1;
+        if (val < 0 || val > 3) return -1;
+        state.mode = (robot_mode_t)val;
+        LOG_INFO("iPhone: mode → %d", val);
+        return 0;
+    }
+
     // {"type":"set_pid","controller":"balance","kp":40.0,"ki":0.5,"kd":5.0}
     // {"type":"set_pid","controller":"steering","kp":1.0,"ki":0.0,"kd":0.1}
     if (strstr(json_cmd, "\"type\":\"set_pid\"")) {
@@ -304,6 +316,18 @@ static int parse_json_command(const char* json_cmd) {
         }
         LOG_WARN("set_pid: unknown controller");
         return -1;
+    }
+
+    // {"type":"save_pid"}  — write current gains to pidconfig.txt
+    if (strstr(json_cmd, "\"type\":\"save_pid\"")) {
+        pid_config_file_t cfg;
+        pid_config_get_current(&cfg);
+        if (pid_config_save(NULL, &cfg) == 0) {
+            LOG_INFO("iPhone: PID config saved to pidconfig.txt");
+        } else {
+            LOG_WARN("iPhone: failed to save PID config");
+        }
+        return 0;
     }
 
     LOG_WARN("Unknown command type");

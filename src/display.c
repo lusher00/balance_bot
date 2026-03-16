@@ -344,7 +344,7 @@ static void draw_system(int r)
     attron(COLOR_PAIR(s->armed ? CP_OK : CP_WARN));
     mvprintw(r, 1, "Armed: %-5s", s->armed ? "YES" : "no");
     attroff(COLOR_PAIR(CP_OK)); attroff(COLOR_PAIR(CP_WARN));
-    const char *modes[] = { "BALANCE", "EXT_INPUT", "MANUAL" };
+    const char *modes[] = { "IDLE", "BALANCE", "EXT_CTL", "MANUAL" };
     mvprintw(r, 18, "Mode: %-12s", s->mode < 3 ? modes[s->mode] : "?");
     attron(COLOR_PAIR(s->batt_voltage > 0 && s->batt_voltage < 10.5f ? CP_WARN : CP_OK));
     mvprintw(r, 40, "Batt: %.2fV", s->batt_voltage > 0 ? s->batt_voltage : s->battery_voltage);
