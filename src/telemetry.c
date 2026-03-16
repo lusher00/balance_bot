@@ -179,7 +179,7 @@ static void update_system_telemetry(void) {
     
     // Read battery voltage
     // Note: rc_adc_batt() returns battery voltage on BeagleBone Blue
-    g_telemetry_data.system.battery_voltage = rc_adc_batt();
+    g_telemetry_data.system.battery_voltage = rc_adc_batt(); // fallback until batt_status read below
     
     // Robot state
     g_telemetry_data.system.armed = state.armed;
@@ -195,6 +195,7 @@ static void update_system_telemetry(void) {
             fscanf(f, "{\"voltage\":%f,\"status\":\"%15[^\"]\"}", &v, status);
             fclose(f);
             g_telemetry_data.system.batt_voltage = v;
+            g_telemetry_data.system.battery_voltage = v;  // also drives ncurses display
             if (strcmp(status, "critical") == 0)
                 g_telemetry_data.system.batt_status = BATT_CRITICAL;
             else if (strcmp(status, "warning") == 0)

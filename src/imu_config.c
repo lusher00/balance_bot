@@ -36,21 +36,23 @@ imu_config_t imu_config_get_default(void) {
     imu_config_t config = {0};
     
     // Orientation: IMU axes to robot axes
-    // Robot pitch comes from IMU Y-axis rotation
-    // Robot yaw comes from IMU X-axis rotation
+    // TB_ROLL_Y (index 1) = forward/back lean → robot pitch (balance axis)
+    //   DMP zero = lying flat; upright = +90°, so subtract π/2 to make upright = 0°
+    // TB_PITCH_X (index 0) = side lean → robot roll
+    // TB_YAW_Z   (index 2) = turning   → robot yaw
     config.orientation.pitch_axis = IMU_AXIS_Y;
-    config.orientation.yaw_axis = IMU_AXIS_X;
-    config.orientation.roll_axis = IMU_AXIS_Z;
-    
+    config.orientation.yaw_axis   = IMU_AXIS_Z;
+    config.orientation.roll_axis  = IMU_AXIS_X;
+
     // Sign corrections (determined by right-hand rule)
     config.orientation.pitch_sign = 1.0f;
-    config.orientation.yaw_sign = 1.0f;
-    config.orientation.roll_sign = 1.0f;
-    
-    // Zero offsets (calibrated when robot is balanced)
+    config.orientation.yaw_sign   = 1.0f;
+    config.orientation.roll_sign  = 1.0f;
+
+    // Zero offsets (set via calibration when robot is balanced/upright)
     config.offsets.pitch_offset = 0.0f;
-    config.offsets.yaw_offset = 0.0f;
-    config.offsets.roll_offset = 0.0f;
+    config.offsets.yaw_offset   = 0.0f;
+    config.offsets.roll_offset  = 0.0f;
     
     // Gyro offsets (drift compensation)
     config.offsets.gyro_x_offset = 0.0f;
@@ -125,8 +127,8 @@ int imu_config_load(imu_config_t* config) {
     
     // Set orientation axes (fixed for this robot)
     config->orientation.pitch_axis = IMU_AXIS_Y;
-    config->orientation.yaw_axis = IMU_AXIS_X;
-    config->orientation.roll_axis = IMU_AXIS_Z;
+    config->orientation.yaw_axis   = IMU_AXIS_Z;
+    config->orientation.roll_axis  = IMU_AXIS_X;
     
     config->calibrated = true;
     

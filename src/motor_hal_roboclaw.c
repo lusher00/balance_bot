@@ -88,8 +88,10 @@ int motor_hal_set_both(float left, float right)
     if (!g_rc) return -1;
 
     /* clamp */
-    if (left  >  1.0f) left  =  1.0f; if (left  < -1.0f) left  = -1.0f;
-    if (right >  1.0f) right =  1.0f; if (right < -1.0f) right = -1.0f;
+    if (left  >  1.0f) left  =  1.0f;
+    if (left  < -1.0f) left  = -1.0f;
+    if (right >  1.0f) right =  1.0f;
+    if (right < -1.0f) right = -1.0f;
 
     int16_t d1 = (int16_t)(POL_L * left  * DUTY_MAX);
     int16_t d2 = (int16_t)(POL_R * right * DUTY_MAX);

@@ -242,8 +242,8 @@ static int parse_json_command(const char* json_cmd) {
     // {"type":"arm","value":true}  or  {"type":"arm","value":false}
     if (strstr(json_cmd, "\"type\":\"arm\"")) {
         if (strstr(json_cmd, "\"value\":true")) {
-            if (fabsf(state.theta - state.theta_offset) > 14.0f) {
-                LOG_WARN("iPhone ARM REJECTED — angle too large (%.1f deg, offset=%.1f)", state.theta, state.theta_offset);
+            if (fabsf(state.theta) > 14.0f) {
+                LOG_WARN("iPhone ARM REJECTED — angle too large (%.1f deg)", state.theta);
                 return -1;
             }
             state.armed = 1;
@@ -262,17 +262,23 @@ static int parse_json_command(const char* json_cmd) {
         return 0;
     }
 
-    // {"type":"set_theta_offset","value":0.05}   (radians)
+    // {"type":"zero_imu"}  — capture current angles as zero reference, save to file
+    if (strstr(json_cmd, "\"type\":\"zero_imu\"")) {
+        imu_config_calibrate(&mpu_data, &g_imu_config);
+        LOG_INFO("iPhone: IMU zeroed at theta=%.2f deg, saved to config", state.theta);
+        return 0;
+    }
+
+    // {"type":"set_theta_offset","value":1.5}  — small runtime fine-trim (±5 deg max)
     if (strstr(json_cmd, "\"type\":\"set_theta_offset\"")) {
         const char *p = strstr(json_cmd, "\"value\":");
         if (!p) return -1;
         float val = 0.0f;
         if (sscanf(p, "\"value\":%f", &val) != 1) return -1;
-        // Clamp to ±15 deg
-        if (val >  15.0f) val =  15.0f;
-        if (val < -15.0f) val = -15.0f;
+        if (val >  5.0f) val =  5.0f;
+        if (val < -5.0f) val = -5.0f;
         state.theta_offset = val;
-        LOG_INFO("iPhone: theta_offset = %.2f deg", val);
+        LOG_INFO("iPhone: theta_offset fine-trim = %.2f deg", val);
         return 0;
     }
 
