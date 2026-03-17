@@ -180,7 +180,7 @@ static int handle_command(const char* json_cmd, char* response, size_t response_
  */
 static int parse_json_command(const char* json_cmd) {
     // Simple JSON parsing (in production, use json-c library)
-    // For now, we'll do basic string matching
+    // For now, we'\''ll do basic string matching
     
     // Example: {"type":"set_controller","controller":"D1_balance","enabled":true}
     if (strstr(json_cmd, "\"type\":\"set_controller\"")) {

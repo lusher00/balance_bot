@@ -191,6 +191,7 @@ int  pid_config_load_or_default(const char *filename, pid_config_file_t *config)
 void pid_config_print         (const pid_config_file_t *config);
 int  pid_config_save          (const char *filename, const pid_config_file_t *config);
 void pid_config_apply         (const pid_config_file_t *config);
+void pid_config_get_current   (pid_config_file_t *config);
 
 // ============================================================================
 // XBOX CONTROLLER (input_xbox.c)
