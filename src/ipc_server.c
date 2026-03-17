@@ -242,20 +242,15 @@ static int parse_json_command(const char* json_cmd) {
     // {"type":"arm","value":true}  or  {"type":"arm","value":false}
     if (strstr(json_cmd, "\"type\":\"arm\"")) {
         if (strstr(json_cmd, "\"value\":true")) {
-            if (fabsf(state.theta) > 14.0f) {
-                LOG_WARN("iPhone ARM REJECTED — angle too large (%.1f deg)", state.theta);
+            if (fabsf(state.theta - state.theta_offset) > 14.0f) {
+                LOG_WARN("iPhone ARM REJECTED — effective angle too large (%.1f deg)", state.theta - state.theta_offset);
                 return -1;
             }
             state.armed = 1;
-            motor_hal_standby(0);
             rc_led_set(RC_LED_GREEN, 1);
             LOG_INFO("iPhone: ARMED (theta=%.2f deg)", state.theta);
         } else {
             state.armed = 0;
-            motor_hal_set_both(0.0f, 0.0f);
-            motor_hal_standby(1);
-            pid_reset(&balance_pid);
-            pid_reset(&steering_pid);
             rc_led_set(RC_LED_GREEN, 0);
             LOG_INFO("iPhone: DISARMED");
         }
@@ -264,11 +259,16 @@ static int parse_json_command(const char* json_cmd) {
 
     // {"type":"zero_imu"}  — set balance trim to current pitch, save to pidconfig.txt
     if (strstr(json_cmd, "\"type\":\"zero_imu\"")) {
-        state.theta_offset = -state.theta;
+        // Capture current raw angle as the mounting offset — stored in radians
+        // inside imu_config so apply_transform outputs 0 when upright.
+        imu_offsets_calibrate(&mpu_data, &g_imu_offsets);
+        imu_offsets_save(&g_imu_offsets);
+        // Reset the PID balance trim — the mounting offset now handles zeroing.
+        state.theta_offset = 0.0f;
         pid_config_file_t cfg;
         pid_config_get_current(&cfg);
         pid_config_save(NULL, &cfg);
-        LOG_INFO("iPhone: theta_offset = %.2f deg, saved", state.theta_offset);
+        LOG_INFO("iPhone: IMU zeroed, saved");
         return 0;
     }
 
@@ -300,8 +300,8 @@ static int parse_json_command(const char* json_cmd) {
         return 0;
     }
 
-    // {"type":"set_pid","controller":"balance","kp":40.0,"ki":0.5,"kd":5.0}
-    // {"type":"set_pid","controller":"steering","kp":1.0,"ki":0.0,"kd":0.1}
+    // {"type":"set_pid","controller":"D1_balance","kp":40.0,"ki":0.5,"kd":5.0}
+    // {"type":"set_pid","controller":"D3_steering","kp":1.0,"ki":0.0,"kd":0.1}
     if (strstr(json_cmd, "\"type\":\"set_pid\"")) {
         float kp = 0.0f, ki = 0.0f, kd = 0.0f;
         const char *p;
@@ -310,17 +310,19 @@ static int parse_json_command(const char* json_cmd) {
         p = strstr(json_cmd, "\"ki\":"); if (p) sscanf(p, "\"ki\":%f", &ki);
         p = strstr(json_cmd, "\"kd\":"); if (p) sscanf(p, "\"kd\":%f", &kd);
 
-        if (strstr(json_cmd, "\"controller\":\"balance\"")) {
+        if (strstr(json_cmd, "\"controller\":\"D1_balance\"")) {
             pid_set_gains(&balance_pid, kp, ki, kd);
-            LOG_INFO("iPhone: balance PID kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
+            pid_reset(&balance_pid);
+            LOG_INFO("iPhone: D1_balance kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
             return 0;
         }
-        if (strstr(json_cmd, "\"controller\":\"steering\"")) {
+        if (strstr(json_cmd, "\"controller\":\"D3_steering\"")) {
             pid_set_gains(&steering_pid, kp, ki, kd);
-            LOG_INFO("iPhone: steering PID kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
+            pid_reset(&steering_pid);
+            LOG_INFO("iPhone: D3_steering kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
             return 0;
         }
-        LOG_WARN("set_pid: unknown controller");
+        LOG_WARN("set_pid: unknown controller in: %s", json_cmd);
         return -1;
     }
 

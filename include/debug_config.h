@@ -68,6 +68,7 @@ typedef struct {
     float i_term;            // Integral term
     float d_term;            // Derivative term
     float output;            // Final controller output
+    float kp, ki, kd;        // Current gains (for app sync on connect)
 } pid_telemetry_t;
 
 /**

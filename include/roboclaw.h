@@ -94,6 +94,7 @@ int roboclaw_speed_m1m2(struct roboclaw *rc,uint8_t address, int speed_m1, int s
 int roboclaw_speed_accel_m1m2(struct roboclaw *rc,uint8_t address, int speed_m1, int speed_m2, int accel);
 int roboclaw_main_battery_voltage(struct roboclaw *rc,uint8_t address, int16_t *voltage);
 int roboclaw_encoders(struct roboclaw *rc, uint8_t address, int32_t *enc_m1, int32_t *enc_m2);
+int roboclaw_reset_encoders(struct roboclaw *rc, uint8_t address);
 
 #ifdef __cplusplus
 }

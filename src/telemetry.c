@@ -35,34 +35,28 @@ static uint64_t prev_timestamp_us = 0;
  * Reads encoder values and calculates position and velocity.
  */
 static void update_encoder_telemetry(void) {
-    if (!g_debug_config.telemetry.encoders) return;
-    
-    // Read current encoder ticks
-    int32_t left_ticks = rc_encoder_read(1);
-    int32_t right_ticks = rc_encoder_read(2);
-    
-    g_telemetry_data.encoders.left_ticks  = left_ticks;
-    g_telemetry_data.encoders.right_ticks = right_ticks;
-    g_telemetry_data.encoders.left_rad    = left_ticks  * (360.0f / ENCODER_TICKS_PER_REV);  // now deg
-    g_telemetry_data.encoders.right_rad   = right_ticks * (360.0f / ENCODER_TICKS_PER_REV);  // now deg
-    
-    // Calculate velocity (deg/s)
+    // Encoder positions are always tracked by robot.c — just copy from state.
     uint64_t now_us = rc_nanos_since_boot() / 1000;
+
+    g_telemetry_data.encoders.left_ticks  = state.enc_left;
+    g_telemetry_data.encoders.right_ticks = state.enc_right;
+    g_telemetry_data.encoders.left_rad    = state.phi_left;
+    g_telemetry_data.encoders.right_rad   = state.phi_right;
+
     if (prev_timestamp_us > 0) {
         float dt = (now_us - prev_timestamp_us) / 1000000.0f;
         if (dt > 0.0001f) {
-            int32_t left_delta  = left_ticks  - prev_left_ticks;
-            int32_t right_delta = right_ticks - prev_right_ticks;
-            
+            int32_t left_delta  = state.enc_left  - prev_left_ticks;
+            int32_t right_delta = state.enc_right - prev_right_ticks;
             g_telemetry_data.encoders.left_vel  =
                 (left_delta  * (360.0f / ENCODER_TICKS_PER_REV)) / dt;
             g_telemetry_data.encoders.right_vel =
                 (right_delta * (360.0f / ENCODER_TICKS_PER_REV)) / dt;
         }
     }
-    
-    prev_left_ticks = left_ticks;
-    prev_right_ticks = right_ticks;
+
+    prev_left_ticks   = state.enc_left;
+    prev_right_ticks  = state.enc_right;
     prev_timestamp_us = now_us;
 }
 
@@ -83,9 +77,9 @@ static void update_imu_telemetry(void) {
     g_telemetry_data.imu.qy = (float)mpu_data.dmp_quat[2];
     g_telemetry_data.imu.qz = (float)mpu_data.dmp_quat[3];
     imu_transform_t t;
-    imu_config_apply_transform(&mpu_data, &t, &g_imu_config);
+    imu_apply_transform(&mpu_data, &t, &g_imu_offsets);
 
-    g_telemetry_data.imu.theta     = t.pitch;
+    g_telemetry_data.imu.theta     = t.pitch - state.theta_offset;
     g_telemetry_data.imu.phi       = t.roll;
     g_telemetry_data.imu.psi       = t.yaw;
     g_telemetry_data.imu.theta_dot = t.pitch_dot;
@@ -113,36 +107,38 @@ static void update_imu_telemetry(void) {
  */
 static void update_pid_telemetry(void) {
     if (!g_debug_config.telemetry.pid_states) return;
-    
+
     // D1: Balance controller
-    g_telemetry_data.D1_balance.enabled = g_debug_config.controllers.D1_balance;
-    g_telemetry_data.D1_balance.setpoint = state.theta_ref;
+    // Setpoint is theta_ref + theta_offset — exactly what the ISR uses.
+    g_telemetry_data.D1_balance.enabled     = g_debug_config.controllers.D1_balance;
+    g_telemetry_data.D1_balance.setpoint    = state.theta_ref + state.theta_offset;
     g_telemetry_data.D1_balance.measurement = state.theta;
-    g_telemetry_data.D1_balance.error = balance_pid.prev_error;
-    g_telemetry_data.D1_balance.p_term = balance_pid.kp * balance_pid.prev_error;
-    g_telemetry_data.D1_balance.i_term = balance_pid.ki * balance_pid.integrator;
-    g_telemetry_data.D1_balance.d_term = balance_pid.kd * 
-        (balance_pid.prev_error - balance_pid.prev_error) / balance_pid.dt;  // Simplified
-    // Note: Actual calculation requires storing previous error
-    
-    // Calculate output from PID terms
-    float balance_output = g_telemetry_data.D1_balance.p_term + 
-                          g_telemetry_data.D1_balance.i_term + 
-                          g_telemetry_data.D1_balance.d_term;
-    g_telemetry_data.D1_balance.output = balance_output;
-    
-    // D2: Drive controller (if implemented)
+    g_telemetry_data.D1_balance.error       = balance_pid.prev_error;
+    g_telemetry_data.D1_balance.p_term      = balance_pid.kp * balance_pid.prev_error;
+    g_telemetry_data.D1_balance.i_term      = balance_pid.ki * balance_pid.integrator;
+    g_telemetry_data.D1_balance.d_term      = 0.0f;
+    g_telemetry_data.D1_balance.output      = g_telemetry_data.D1_balance.p_term
+                                            + g_telemetry_data.D1_balance.i_term;
+    g_telemetry_data.D1_balance.kp          = balance_pid.kp;
+    g_telemetry_data.D1_balance.ki          = balance_pid.ki;
+    g_telemetry_data.D1_balance.kd          = balance_pid.kd;
+
+    // D2: Drive controller (not yet implemented)
     g_telemetry_data.D2_drive.enabled = g_debug_config.controllers.D2_drive;
-    // TODO: Populate when D2 is implemented
-    
+
     // D3: Steering controller
-    g_telemetry_data.D3_steering.enabled = g_debug_config.controllers.D3_steering;
-    g_telemetry_data.D3_steering.setpoint = state.steering;
-    g_telemetry_data.D3_steering.error = steering_pid.prev_error;
-    
-    float steering_output = steering_pid.kp * steering_pid.prev_error +
-                           steering_pid.ki * steering_pid.integrator;
-    g_telemetry_data.D3_steering.output = steering_output;
+    g_telemetry_data.D3_steering.enabled     = g_debug_config.controllers.D3_steering;
+    g_telemetry_data.D3_steering.setpoint    = state.steering;
+    g_telemetry_data.D3_steering.measurement = (state.phi_left - state.phi_right) / 2.0f;
+    g_telemetry_data.D3_steering.error       = steering_pid.prev_error;
+    g_telemetry_data.D3_steering.p_term      = steering_pid.kp * steering_pid.prev_error;
+    g_telemetry_data.D3_steering.i_term      = steering_pid.ki * steering_pid.integrator;
+    g_telemetry_data.D3_steering.d_term      = 0.0f;
+    g_telemetry_data.D3_steering.output      = g_telemetry_data.D3_steering.p_term
+                                             + g_telemetry_data.D3_steering.i_term;
+    g_telemetry_data.D3_steering.kp          = steering_pid.kp;
+    g_telemetry_data.D3_steering.ki          = steering_pid.ki;
+    g_telemetry_data.D3_steering.kd          = steering_pid.kd;
 }
 
 /**
@@ -190,12 +186,18 @@ static void update_system_telemetry(void) {
     {
         FILE *f = fopen("/run/batt_status.json", "r");
         if (f) {
+            char buf[128] = {0};
+            fread(buf, 1, sizeof(buf)-1, f);
+            fclose(f);
             float v = 0.0f;
             char status[16] = "unknown";
-            fscanf(f, "{\"voltage\":%f,\"status\":\"%15[^\"]\"}", &v, status);
-            fclose(f);
-            g_telemetry_data.system.batt_voltage = v;
-            g_telemetry_data.system.battery_voltage = v;  // also drives ncurses display
+            /* parse with strstr — immune to whitespace variations */
+            const char *vp = strstr(buf, "\"voltage\":");
+            if (vp) sscanf(vp, "\"voltage\": %f", &v);
+            const char *sp = strstr(buf, "\"status\":");
+            if (sp) sscanf(sp, "\"status\": \"%15[^\"]\"", status);
+            g_telemetry_data.system.batt_voltage    = v;
+            g_telemetry_data.system.battery_voltage = v;
             if (strcmp(status, "critical") == 0)
                 g_telemetry_data.system.batt_status = BATT_CRITICAL;
             else if (strcmp(status, "warning") == 0)
@@ -207,17 +209,6 @@ static void update_system_telemetry(void) {
             g_telemetry_data.system.batt_status  = BATT_UNKNOWN;
         }
     }
-    
-    // Calculate actual loop frequency
-    static uint64_t last_update_us = 0;
-    uint64_t now_us = rc_nanos_since_boot() / 1000;
-    if (last_update_us > 0) {
-        float dt = (now_us - last_update_us) / 1000000.0;
-        if (dt > 0.0001) {
-            g_telemetry_data.system.loop_hz = 1.0 / dt;
-        }
-    }
-    last_update_us = now_us;
     
     // Uptime
     g_telemetry_data.system.uptime_sec = (uint32_t)(rc_nanos_since_boot() / 1000000000ULL);

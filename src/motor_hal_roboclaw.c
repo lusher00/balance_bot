@@ -26,13 +26,16 @@
 
 /* ── wiring ─────────────────────────────────────────────────────── */
 #define RC_ADDRESS  0x80    /* default RoboClaw address — change if you set a different one */
-#define POL_L       1.0f    /* flip to -1.0f if left  motor runs backwards */
-#define POL_R      -1.0f    /* flip to  1.0f if right motor runs backwards */
+#define POL_L      -1.0f
+#define POL_R       1.0f
 
 /* duty range the RoboClaw expects for MIXEDDUTY (cmd 34): -32767 .. +32767 */
 #define DUTY_MAX    32767
 
+#include <pthread.h>
+
 static struct roboclaw *g_rc = NULL;
+static pthread_mutex_t g_rc_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* last encoder values — cached so motor_hal_encoder_read() works per-side */
 static int32_t g_enc_l = 0;
@@ -43,7 +46,9 @@ static int32_t g_enc_r = 0;
 static int refresh_encoders(void)
 {
     if (!g_rc) return -1;
+    pthread_mutex_lock(&g_rc_mutex);
     int ret = roboclaw_encoders(g_rc, RC_ADDRESS, &g_enc_l, &g_enc_r);
+    pthread_mutex_unlock(&g_rc_mutex);
     if (ret != ROBOCLAW_OK) {
         LOG_WARN("motor_hal_roboclaw: encoder read failed (%d)", ret);
         return -1;
@@ -68,6 +73,12 @@ int motor_hal_init(const char *device, int baud)
     }
 
     motor_hal_set_both(0.0f, 0.0f);
+
+    if (roboclaw_reset_encoders(g_rc, RC_ADDRESS) != ROBOCLAW_OK)
+        LOG_WARN("motor_hal_roboclaw: encoder reset at init failed");
+    else
+        LOG_INFO("motor_hal_roboclaw: encoders zeroed");
+
     LOG_INFO("motor_hal_roboclaw: ready");
     return 0;
 }
@@ -87,7 +98,6 @@ int motor_hal_set_both(float left, float right)
 {
     if (!g_rc) return -1;
 
-    /* clamp */
     if (left  >  1.0f) left  =  1.0f;
     if (left  < -1.0f) left  = -1.0f;
     if (right >  1.0f) right =  1.0f;
@@ -96,7 +106,10 @@ int motor_hal_set_both(float left, float right)
     int16_t d1 = (int16_t)(POL_L * left  * DUTY_MAX);
     int16_t d2 = (int16_t)(POL_R * right * DUTY_MAX);
 
+    pthread_mutex_lock(&g_rc_mutex);
     int ret = roboclaw_duty_m1m2(g_rc, RC_ADDRESS, d1, d2);
+    pthread_mutex_unlock(&g_rc_mutex);
+
     if (ret != ROBOCLAW_OK) {
         LOG_WARN("motor_hal_roboclaw: duty command failed (%d)", ret);
         return -1;
@@ -129,7 +142,15 @@ int motor_hal_standby(int standby)
 
 int32_t motor_hal_encoder_read(int motor)
 {
-    refresh_encoders();
+    /* Refresh both encoders in a single UART transaction.
+     * Guard with a timestamp so back-to-back left/right calls in the
+     * same loop tick only hit the wire once. */
+    static uint64_t last_refresh_us = 0;
+    uint64_t now_us = rc_nanos_since_boot() / 1000;
+    if (now_us - last_refresh_us > 5000) {   /* refresh at most every 5 ms */
+        refresh_encoders();
+        last_refresh_us = now_us;
+    }
     return (motor == MOTOR_LEFT) ? g_enc_l : g_enc_r;
 }
 
@@ -143,21 +164,13 @@ int motor_hal_encoder_reset(int motor)
 
 int motor_hal_encoder_reset_all(void)
 {
-    /* roboclaw library doesn't wrap cmd 20 (RESETENC) directly.
-     * Use roboclaw_encoders() with a trick: set both encoder counts to 0
-     * by sending SETM1ENCCOUNT / SETM2ENCCOUNT if available, otherwise
-     * just zero our cached values and accept the hardware count continuing.
-     *
-     * Simplest correct approach: the library does expose roboclaw_encoders
-     * for reading only.  For reset we fall back to zeroing the cache here
-     * and note that robot.c should call this before arming so relative
-     * position is what matters, not absolute.
-     *
-     * TODO: add roboclaw_reset_encoders() to the library if needed.
-     */
     g_enc_l = 0;
     g_enc_r = 0;
-    LOG_WARN("motor_hal_roboclaw: encoder reset zeroes cache only — "
-             "hardware counters not reset (add RESETENC cmd to library if needed)");
-    return 0;
+    if (!g_rc) return -1;
+    pthread_mutex_lock(&g_rc_mutex);
+    int ret = roboclaw_reset_encoders(g_rc, RC_ADDRESS);
+    pthread_mutex_unlock(&g_rc_mutex);
+    if (ret != ROBOCLAW_OK)
+        LOG_WARN("motor_hal_roboclaw: hardware encoder reset failed (%d)", ret);
+    return (ret == ROBOCLAW_OK) ? 0 : -1;
 }

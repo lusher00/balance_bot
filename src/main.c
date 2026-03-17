@@ -32,9 +32,8 @@ static char        *ext_uart_device  = NULL;
 static int          ext_uart_baud    = 115200;
 static int          ext_uart_timeout = 500;     /* ms */
 
-/* RoboClaw motor driver */
-static bool         use_roboclaw     = false;
-static char        *roboclaw_device  = NULL;
+/* RoboClaw motor driver — always used */
+static char        *roboclaw_device  = NULL;   /* default: /dev/ttyO2 */
 static int          roboclaw_baud    = 38400;
 
 static bool         quiet_mode       = false;
@@ -67,11 +66,9 @@ static void print_usage(void)
     printf("  -b <baud>          Baud rate for EXT UART input (default: 115200)\n");
     printf("  -t <ms>            Stale-packet timeout for EXT input (default: 500 ms)\n");
     printf("\n");
-    printf("Motor driver options:\n");
-    printf("  -m <device>        Enable RoboClaw driver on this UART device\n");
-    printf("                     e.g. -m /dev/ttyO2\n");
-    printf("                     Without this flag the BeagleBone rc_motor API is used.\n");
-    printf("  -B <baud>          Baud rate for RoboClaw UART (default: 38400)\n");
+    printf("Motor options:\n");
+    printf("  -m <device>        RoboClaw UART device (default: /dev/ttyO2)\n");
+    printf("  -B <baud>          RoboClaw baud rate   (default: 38400)\n");
     printf("\n");
     printf("Other options:\n");
     printf("  -p <file>          PID config file (default: pidconfig.txt)\n");
@@ -116,11 +113,8 @@ static int parse_args(int argc, char *argv[])
             case 'b':  ext_uart_baud    = atoi(optarg);         break;
             case 't':  ext_uart_timeout = atoi(optarg);         break;
 
-            case 'm':
-                use_roboclaw    = true;
-                roboclaw_device = optarg;
-                break;
-            case 'B':  roboclaw_baud = atoi(optarg);            break;
+            case 'm':  roboclaw_device = optarg;         break;
+            case 'B':  roboclaw_baud   = atoi(optarg);   break;
 
             case 'p':  pid_config_file = optarg;                break;
             case 'q':  quiet_mode = true;                       break;
@@ -202,11 +196,8 @@ int main(int argc, char *argv[])
             printf("  Input:      Balance only (no drive input)\n");
             break;
     }
-    if (use_roboclaw)
-        printf("  Motors:     RoboClaw on %s at %d baud\n",
-               roboclaw_device, roboclaw_baud);
-    else
-        printf("  Motors:     BeagleBone rc_motor API\n");
+    printf("  Motors:     RoboClaw on %s at %d baud\n",
+           roboclaw_device ? roboclaw_device : "/dev/ttyO2", roboclaw_baud);
 
     printf("  PID config: %s\n", pid_config_file ? pid_config_file : "pidconfig.txt");
     printf("  Log level:  %s\n", quiet_mode ? "WARN" : "INFO");
@@ -243,18 +234,11 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    /* Initialise motor HAL before robot_init() so the right backend is ready.
-     * For the rc_motor backend, device/baud are ignored.
-     * For the RoboClaw backend, pass the CLI -m / -B values. */
-    {
-        const char *mdev = use_roboclaw ? roboclaw_device : NULL;
-        int mbaud        = use_roboclaw ? roboclaw_baud   : 0;
-        LOG_INFO("Initialising motor HAL...");
-        if (motor_hal_init(mdev, mbaud) < 0) {
-            fprintf(stderr, "Error: motor HAL init failed\n");
-            ipc_server_cleanup();
-            return -1;
-        }
+    LOG_INFO("Initialising motor HAL (RoboClaw)...");
+    if (motor_hal_init(roboclaw_device, roboclaw_baud) < 0) {
+        fprintf(stderr, "Error: motor HAL init failed\n");
+        ipc_server_cleanup();
+        return -1;
     }
 
     /* Robot hardware (IMU, encoders, buttons) */

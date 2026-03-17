@@ -99,8 +99,10 @@ typedef struct {
     float psi;          // Body yaw angle    (deg)
 
     // Encoders
-    float phi_left;     // Left wheel angle  (deg)
-    float phi_right;    // Right wheel angle (deg)
+    int32_t enc_left;       // Raw encoder ticks (always updated)
+    int32_t enc_right;
+    float phi_left;         // Left wheel angle  (deg)
+    float phi_right;        // Right wheel angle (deg)
 
     // Control references
     float theta_ref;    // Desired body angle  (deg)
@@ -227,26 +229,21 @@ uint16_t sbus_get_channel_raw  (int ch);
 float    sbus_get_channel_float(int ch);
 
 // ============================================================================
-// IMU CONFIG (imu_config.c)
+// IMU ORIENTATION (fixed for BeagleBone Blue mounted vertically)
+//
+// BBB axes when bot stands upright:
+//   +X = down, +Z = forward, +Y = left
+//
+// Balance axis: forward/back lean = rotation around Y = TB_ROLL_Y
+// Upright resting angle stored as pitch_offset (radians, set via zero_imu).
+//
+// theta (deg) = (TB_ROLL_Y - pitch_offset) * RAD_TO_DEG
 // ============================================================================
 
-typedef enum { IMU_AXIS_X = 0, IMU_AXIS_Y = 1, IMU_AXIS_Z = 2 } imu_axis_t;
-
 typedef struct {
-    imu_axis_t pitch_axis, yaw_axis, roll_axis;
-    float pitch_sign, yaw_sign, roll_sign;
-} imu_orientation_t;
-
-typedef struct {
-    float pitch_offset, yaw_offset, roll_offset;
-    float gyro_x_offset, gyro_y_offset, gyro_z_offset;
+    float pitch_offset;   // TB_ROLL_Y value when upright (radians) — set via zero_imu
+    float yaw_offset;     // TB_YAW_Z  value at heading zero (radians)
 } imu_offsets_t;
-
-typedef struct {
-    imu_orientation_t orientation;
-    imu_offsets_t     offsets;
-    bool              calibrated;
-} imu_config_t;
 
 typedef struct {
     float pitch, yaw, roll;
@@ -254,16 +251,13 @@ typedef struct {
     float accel_x, accel_y, accel_z;
 } imu_transform_t;
 
-extern imu_config_t g_imu_config;
+extern imu_offsets_t g_imu_offsets;
 
-imu_config_t imu_config_get_default   (void);
-int          imu_config_load          (imu_config_t *config);
-int          imu_config_save          (const imu_config_t *config);
-void         imu_config_apply_transform(const rc_mpu_data_t *raw,
-                                        imu_transform_t *out,
-                                        const imu_config_t *config);
-void         imu_config_calibrate     (const rc_mpu_data_t *raw, imu_config_t *config);
-void         imu_config_print         (const imu_config_t *config);
+int  imu_offsets_load  (imu_offsets_t *offsets);
+int  imu_offsets_save  (const imu_offsets_t *offsets);
+void imu_offsets_calibrate(const rc_mpu_data_t *raw, imu_offsets_t *offsets);
+void imu_apply_transform  (const rc_mpu_data_t *raw, imu_transform_t *out,
+                            const imu_offsets_t *offsets);
 
 // ============================================================================
 // UTILITY MACROS

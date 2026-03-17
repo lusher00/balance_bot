@@ -43,7 +43,7 @@ static void imu_interrupt(void) {
     // mpu_data is populated by the DMP library before this callback fires.
     // Apply mounting transform to get angles in robot frame (degrees).
     imu_transform_t t;
-    imu_config_apply_transform(&mpu_data, &t, &g_imu_config);
+    imu_apply_transform(&mpu_data, &t, &g_imu_offsets);
 
     state.theta     = t.pitch;      // deg
     state.theta_dot = t.pitch_dot;  // deg/s
@@ -143,8 +143,7 @@ int robot_init(void) {
     LOG_INFO("  D3_steering: Kp=%.1f Ki=%.1f Kd=%.1f", STEERING_KP, STEERING_KI, STEERING_KD);
 
     // IMU config
-    imu_config_load(&g_imu_config);
-    imu_config_print(&g_imu_config);
+    imu_offsets_load(&g_imu_offsets);
 
     // IMU / DMP
     LOG_INFO("Initializing IMU...");
@@ -198,12 +197,34 @@ int robot_init(void) {
  */
 void robot_run(void) {
     uint64_t loop_counter = 0;
+    uint64_t last_loop_us = 0;
 
     while (rc_get_state() != EXITING) {
 
+        // ── Loop rate measurement ─────────────────────────────────────────
+        uint64_t now_us = rc_nanos_since_boot() / 1000;
+        if (last_loop_us > 0) {
+            float dt = (now_us - last_loop_us) / 1000000.0f;
+            if (dt > 0.0001f)
+                g_telemetry_data.system.loop_hz = 1.0f / dt;
+        }
+        last_loop_us = now_us;
+
+        // ── Disarm handling ───────────────────────────────────────────────
+        // Detect armed going false (set by IPC thread, fall detection, or SBUS).
+        // All motor stops happen here — never from other threads.
+        static int prev_armed = 0;
+        if (prev_armed && !state.armed) {
+            motor_output_ready = 0;
+            motor_hal_set_both(0.0f, 0.0f);
+            pid_reset(&balance_pid);
+            pid_reset(&steering_pid);
+            last_left_duty  = 0.0f;
+            last_right_duty = 0.0f;
+        }
+        prev_armed = state.armed;
+
         // ── Motor write ───────────────────────────────────────────────────
-        // First thing each iteration — minimizes latency from ISR PID output
-        // to hardware.  Motor I/O (UART for RoboClaw) lives here, not in ISR.
         if (motor_output_ready) {
             float l = pending_left_duty;
             float r = pending_right_duty;
@@ -217,8 +238,10 @@ void robot_run(void) {
         // Kept out of ISR: may be I2C (eQEP) or blocking UART (RoboClaw).
         int left_ticks  = motor_hal_encoder_read(MOTOR_LEFT);
         int right_ticks = motor_hal_encoder_read(MOTOR_RIGHT);
-        state.phi_left  = left_ticks  * (360.0f / ENCODER_TICKS_PER_REV);  // deg
-        state.phi_right = right_ticks * (360.0f / ENCODER_TICKS_PER_REV);  // deg
+        state.enc_left  = left_ticks;
+        state.enc_right = right_ticks;
+        state.phi_left  = left_ticks  * (360.0f / ENCODER_TICKS_PER_REV);
+        state.phi_right = right_ticks * (360.0f / ENCODER_TICKS_PER_REV);
 
         // ── Input sources → theta_ref / steering ──────────────────────────
         if (state.mode == MODE_EXT_INPUT) {
@@ -243,18 +266,14 @@ void robot_run(void) {
 
             if (kill < 2 && state.armed) {
                 state.armed = 0;
-                motor_hal_standby(1);
-                motor_hal_set_both(0.0f, 0.0f);
-                pid_reset(&balance_pid);
-                pid_reset(&steering_pid);
                 rc_led_set(RC_LED_GREEN, 0);
                 LOG_WARN("SBUS kill switch — DISARMED");
             }
 
             static int prev_sbus_arm = 0;
             if (arm == 2 && prev_sbus_arm < 2 && kill == 2) {
-                if (fabsf(state.theta) > 14.0f) {
-                    LOG_WARN("SBUS ARM REJECTED — angle too large (%.1f deg)", state.theta);
+                if (fabsf(state.theta - state.theta_offset) > 14.0f) {
+                    LOG_WARN("SBUS ARM REJECTED — angle too large (%.1f deg)", state.theta - state.theta_offset);
                 } else {
                     state.armed = 1;
                     motor_hal_standby(0);
@@ -263,10 +282,6 @@ void robot_run(void) {
                 }
             } else if (arm < 2 && prev_sbus_arm == 2) {
                 state.armed = 0;
-                motor_hal_standby(1);
-                motor_hal_set_both(0.0f, 0.0f);
-                pid_reset(&balance_pid);
-                pid_reset(&steering_pid);
                 rc_led_set(RC_LED_GREEN, 0);
                 LOG_INFO("SBUS DISARMED");
             }
@@ -278,6 +293,14 @@ void robot_run(void) {
             }
         }
         // ─────────────────────────────────────────────────────────────────
+
+        // ── Fall detection — disarm if effective lean exceeds 15° ────────
+        if (state.armed && fabsf(state.theta - state.theta_offset) > 15.0f) {
+            state.armed = 0;
+            rc_led_set(RC_LED_GREEN, 0);
+            LOG_WARN("FELL — auto-disarmed (theta=%.1f offset=%.1f eff=%.1f)",
+                     state.theta, state.theta_offset, state.theta - state.theta_offset);
+        }
 
         // Saturate references before the next ISR reads them
         rc_saturate_float(&state.theta_ref, -MAX_THETA_REF, MAX_THETA_REF);
@@ -301,7 +324,13 @@ void robot_run(void) {
         display_update();
 
         loop_counter++;
-        rc_usleep(10000);  // 10 ms -> ~100 Hz main loop
+
+        // Sleep only the remaining time in the 10ms budget.
+        // UART calls (encoder read, motor write) eat into the tick;
+        // this keeps the loop close to 100Hz regardless.
+        uint64_t elapsed_us = rc_nanos_since_boot() / 1000 - now_us;
+        if (elapsed_us < 10000)
+            rc_usleep(10000 - elapsed_us);
     }
 }
 

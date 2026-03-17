@@ -546,6 +546,15 @@ int roboclaw_duty_m1m2(struct roboclaw *rc, uint8_t address, int16_t duty_m1, in
 	return send_cmd_wait_answer(rc, bytes, ROBOCLAW_ACK_BYTES, 0);
 }
 
+int roboclaw_reset_encoders(struct roboclaw *rc, uint8_t address)
+{
+	uint8_t bytes = 0;
+	rc->buffer[bytes++] = address;
+	rc->buffer[bytes++] = RESETENC;
+	bytes += encode_checksum(rc->buffer, bytes);
+	return send_cmd_wait_answer(rc, bytes, ROBOCLAW_ACK_BYTES, 0);
+}
+
 int roboclaw_speed_m1m2(struct roboclaw *rc, uint8_t address, int speed_m1, int speed_m2)
 {	
 	int bytes=encode_speed_m1m2(rc->buffer, address, speed_m1, speed_m2);				
@@ -596,4 +605,3 @@ int roboclaw_encoders(struct roboclaw *rc, uint8_t address, int32_t *enc_m1, int
 
 	return ROBOCLAW_OK;
 }
-
