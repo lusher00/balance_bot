@@ -174,14 +174,9 @@ void pid_config_apply(const pid_config_file_t* config) {
     // D2_drive not implemented yet
     // TODO: Apply D2 gains when drive controller is added
     
-    // Apply balance angle offset
-    // This would offset the theta setpoint
-    // For now, just log it
-    if (config->balance_angle != 0.0) {
-        LOG_INFO("Balance angle offset: %.3f rad (%.1f deg)",
-                 config->balance_angle,
-                 config->balance_angle * RAD_TO_DEG);
-    }
+    // Apply balance angle offset as runtime trim
+    state.theta_offset = config->balance_angle;
+    LOG_INFO("Balance trim (theta_offset): %.3f deg", state.theta_offset);
     
     LOG_INFO("PID configuration applied");
 }
@@ -195,7 +190,7 @@ void pid_config_apply(const pid_config_file_t* config) {
  * @param config Pointer to structure to populate
  */
 void pid_config_get_current(pid_config_file_t* config) {
-    config->balance_angle = 0.0;  // TODO: Get from actual offset if implemented
+    config->balance_angle = state.theta_offset;
     
     config->D1_balance.kp = balance_pid.kp;
     config->D1_balance.ki = balance_pid.ki;
@@ -270,9 +265,7 @@ int pid_config_load_or_default(const char* filename, pid_config_file_t* config) 
  */
 void pid_config_print(const pid_config_file_t* config) {
     printf("\n=== PID Configuration ===\n");
-    printf("Balance angle offset: %.3f rad (%.1f°)\n", 
-           config->balance_angle,
-           config->balance_angle * RAD_TO_DEG);
+    printf("Balance trim (theta_offset): %.3f deg\n", config->balance_angle);
     printf("\nD1 Balance Controller:\n");
     printf("  Kp = %.2f\n", config->D1_balance.kp);
     printf("  Ki = %.2f\n", config->D1_balance.ki);

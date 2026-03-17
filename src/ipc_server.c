@@ -262,23 +262,29 @@ static int parse_json_command(const char* json_cmd) {
         return 0;
     }
 
-    // {"type":"zero_imu"}  — capture current angles as zero reference, save to file
+    // {"type":"zero_imu"}  — set balance trim to current pitch, save to pidconfig.txt
     if (strstr(json_cmd, "\"type\":\"zero_imu\"")) {
-        imu_config_calibrate(&mpu_data, &g_imu_config);
-        LOG_INFO("iPhone: IMU zeroed at theta=%.2f deg, saved to config", state.theta);
+        state.theta_offset = -state.theta;
+        pid_config_file_t cfg;
+        pid_config_get_current(&cfg);
+        pid_config_save(NULL, &cfg);
+        LOG_INFO("iPhone: theta_offset = %.2f deg, saved", state.theta_offset);
         return 0;
     }
 
-    // {"type":"set_theta_offset","value":1.5}  — small runtime fine-trim (±5 deg max)
+    // {"type":"set_theta_offset","value":1.5}  — runtime balance trim, saved to pidconfig.txt
     if (strstr(json_cmd, "\"type\":\"set_theta_offset\"")) {
         const char *p = strstr(json_cmd, "\"value\":");
         if (!p) return -1;
         float val = 0.0f;
         if (sscanf(p, "\"value\":%f", &val) != 1) return -1;
-        if (val >  5.0f) val =  5.0f;
-        if (val < -5.0f) val = -5.0f;
+        if (val >  30.0f) val =  30.0f;
+        if (val < -30.0f) val = -30.0f;
         state.theta_offset = val;
-        LOG_INFO("iPhone: theta_offset fine-trim = %.2f deg", val);
+        pid_config_file_t cfg;
+        pid_config_get_current(&cfg);
+        pid_config_save(NULL, &cfg);
+        LOG_INFO("iPhone: theta_offset = %.2f deg, saved", val);
         return 0;
     }
 
@@ -416,20 +422,29 @@ static void build_telemetry_json(char* buffer, size_t size) {
     if (g_debug_config.telemetry.pid_states) {
         pos += snprintf(buffer + pos, size - pos,
                        "\"D1_balance\":{\"enabled\":%s,\"setpoint\":%.4f,"
-                       "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f},",
+                       "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
+                       "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},",
                        g_telemetry_data.D1_balance.enabled ? "true" : "false",
                        g_telemetry_data.D1_balance.setpoint,
                        g_telemetry_data.D1_balance.measurement,
                        g_telemetry_data.D1_balance.error,
-                       g_telemetry_data.D1_balance.output);
-        
+                       g_telemetry_data.D1_balance.output,
+                       g_telemetry_data.D1_balance.kp,
+                       g_telemetry_data.D1_balance.ki,
+                       g_telemetry_data.D1_balance.kd);
+
         pos += snprintf(buffer + pos, size - pos,
                        "\"D3_steering\":{\"enabled\":%s,\"setpoint\":%.4f,"
-                       "\"error\":%.4f,\"output\":%.4f},",
+                       "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
+                       "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},",
                        g_telemetry_data.D3_steering.enabled ? "true" : "false",
                        g_telemetry_data.D3_steering.setpoint,
+                       g_telemetry_data.D3_steering.measurement,
                        g_telemetry_data.D3_steering.error,
-                       g_telemetry_data.D3_steering.output);
+                       g_telemetry_data.D3_steering.output,
+                       g_telemetry_data.D3_steering.kp,
+                       g_telemetry_data.D3_steering.ki,
+                       g_telemetry_data.D3_steering.kd);
     }
     
     // Cat position
