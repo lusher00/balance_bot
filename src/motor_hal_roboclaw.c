@@ -27,7 +27,7 @@
 /* ── wiring ─────────────────────────────────────────────────────── */
 #define RC_ADDRESS  0x80    /* default RoboClaw address — change if you set a different one */
 #define POL_L      -1.0f
-#define POL_R       1.0f
+#define POL_R      -1.0f
 
 /* duty range the RoboClaw expects for MIXEDDUTY (cmd 34): -32767 .. +32767 */
 #define DUTY_MAX    32767
@@ -46,13 +46,18 @@ static int32_t g_enc_r = 0;
 static int refresh_encoders(void)
 {
     if (!g_rc) return -1;
+    int32_t m1, m2;
     pthread_mutex_lock(&g_rc_mutex);
-    int ret = roboclaw_encoders(g_rc, RC_ADDRESS, &g_enc_l, &g_enc_r);
+    int ret = roboclaw_encoders(g_rc, RC_ADDRESS, &m1, &m2);
     pthread_mutex_unlock(&g_rc_mutex);
     if (ret != ROBOCLAW_OK) {
         LOG_WARN("motor_hal_roboclaw: encoder read failed (%d)", ret);
         return -1;
     }
+    // M2 = left wheel, negate because it decrements when moving forward.
+    // M1 = right wheel, positive when moving forward.
+    g_enc_l = -m2;
+    g_enc_r =  m1;
     return 0;
 }
 

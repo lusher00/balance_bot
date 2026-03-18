@@ -241,8 +241,9 @@ float    sbus_get_channel_float(int ch);
 // ============================================================================
 
 typedef struct {
-    float pitch_offset;   // TB_ROLL_Y value when upright (radians) — set via zero_imu
-    float yaw_offset;     // TB_YAW_Z  value at heading zero (radians)
+    float pitch_offset;      // angle when upright (degrees)
+    float yaw_offset;        // yaw at heading zero (degrees)
+    float pitch_dot_offset;  // gyro Y bias (deg/s) — corrects constant drift
 } imu_offsets_t;
 
 typedef struct {

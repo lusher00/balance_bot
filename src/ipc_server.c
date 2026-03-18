@@ -258,6 +258,16 @@ static int parse_json_command(const char* json_cmd) {
     }
 
     // {"type":"zero_imu"}  — set balance trim to current pitch, save to pidconfig.txt
+    if (strstr(json_cmd, "\"type\":\"zero_encoders\"")) {
+        motor_hal_encoder_reset_all();
+        state.enc_left  = 0;
+        state.enc_right = 0;
+        state.phi_left  = 0.0f;
+        state.phi_right = 0.0f;
+        LOG_INFO("iPhone: encoders zeroed");
+        return 0;
+    }
+
     if (strstr(json_cmd, "\"type\":\"zero_imu\"")) {
         // Capture current raw angle as the mounting offset — stored in radians
         // inside imu_config so apply_transform outputs 0 when upright.
@@ -577,3 +587,4 @@ void ipc_server_cleanup(void) {
     
     LOG_INFO("IPC server stopped");
 }
+
