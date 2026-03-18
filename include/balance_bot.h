@@ -104,6 +104,10 @@ typedef struct {
     float phi_left;         // Left wheel angle  (deg)
     float phi_right;        // Right wheel angle (deg)
 
+    // D2 position controller
+    float pos;              // Global wheel position (deg): avg wheel angle + theta
+    float pos_setpoint;     // D2 position setpoint (deg)
+    
     // Control references
     float theta_ref;    // Desired body angle  (deg)
     float theta_offset; // Balance point trim  (deg) — tunable from iPhone
