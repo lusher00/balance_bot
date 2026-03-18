@@ -13,7 +13,7 @@
 // Global state
 robot_state_t state = {0};
 rc_mpu_data_t mpu_data;
-pid_controller_t balance_pid, steering_pid;
+pid_controller_t balance_pid, drive_pid, steering_pid;
 
 // Debug configuration (defined in debug_config.h, initialized in main.c)
 debug_config_t g_debug_config;
@@ -211,13 +211,12 @@ void robot_run(void) {
         last_loop_us = now_us;
 
         // ── Disarm handling ───────────────────────────────────────────────
-        // Detect armed going false (set by IPC thread, fall detection, or SBUS).
-        // All motor stops happen here — never from other threads.
         static int prev_armed = 0;
         if (prev_armed && !state.armed) {
             motor_output_ready = 0;
             motor_hal_set_both(0.0f, 0.0f);
             pid_reset(&balance_pid);
+            pid_reset(&drive_pid);
             pid_reset(&steering_pid);
             last_left_duty  = 0.0f;
             last_right_duty = 0.0f;
@@ -235,13 +234,17 @@ void robot_run(void) {
         }
 
         // ── Encoder read ──────────────────────────────────────────────────
-        // Kept out of ISR: may be I2C (eQEP) or blocking UART (RoboClaw).
         int left_ticks  = motor_hal_encoder_read(MOTOR_LEFT);
         int right_ticks = motor_hal_encoder_read(MOTOR_RIGHT);
         state.enc_left  = left_ticks;
         state.enc_right = right_ticks;
         state.phi_left  = left_ticks  * (360.0f / ENCODER_TICKS_PER_REV);
         state.phi_right = right_ticks * (360.0f / ENCODER_TICKS_PER_REV);
+
+        // ── Global wheel position ─────────────────────────────────────────
+        // pos = avg wheel angle in body frame + body lean = absolute position
+        // in global frame (same convention as rc_balance cstate.phi).
+        state.pos = (state.phi_left + state.phi_right) / 2.0f + state.theta;
 
         // ── Input sources → theta_ref / steering ──────────────────────────
         if (state.mode == MODE_EXT_INPUT) {
@@ -261,8 +264,8 @@ void robot_run(void) {
 
         // ── SBUS arming / drive commands ──────────────────────────────────
         if (sbus_is_connected()) {
-            int kill = sbus_get_kill();  // 0=kill 1=kill 2=run
-            int arm  = sbus_get_arm();   // 0=disarm 1=mid 2=armed
+            int kill = sbus_get_kill();
+            int arm  = sbus_get_arm();
 
             if (kill < 2 && state.armed) {
                 state.armed = 0;
@@ -292,14 +295,33 @@ void robot_run(void) {
                 state.steering  = sbus_get_turn()  * MAX_STEERING;
             }
         }
-        // ─────────────────────────────────────────────────────────────────
 
-        // ── Fall detection — disarm if effective lean exceeds 15° ────────
+        // ── Fall detection ────────────────────────────────────────────────
         if (state.armed && fabsf(state.theta - state.theta_offset) > 15.0f) {
             state.armed = 0;
             rc_led_set(RC_LED_GREEN, 0);
             LOG_WARN("FELL — auto-disarmed (theta=%.1f offset=%.1f eff=%.1f)",
                      state.theta, state.theta_offset, state.theta - state.theta_offset);
+        }
+
+        // ── D2 position (drive) controller ───────────────────────────────
+        // Runs after input sources write theta_ref (used as drive command),
+        // overwrites theta_ref with lean angle setpoint for D1.
+        if (g_debug_config.controllers.D2_drive && state.armed) {
+            state.pos_setpoint += state.theta_ref * DT;
+
+            float pos_err = state.pos_setpoint - state.pos;
+            if (fabsf(pos_err) < DRIVE_PHI_DEADZONE) {
+                pid_reset(&drive_pid);
+                state.pos_setpoint = state.pos;
+            } else {
+                float d2_out = pid_update(&drive_pid, state.pos_setpoint, state.pos);
+                rc_saturate_float(&d2_out, -MAX_THETA_REF, MAX_THETA_REF);
+                state.theta_ref = -d2_out;
+            }
+        } else {
+            state.pos_setpoint = state.pos;
+            if (!state.armed) pid_reset(&drive_pid);
         }
 
         // Saturate references before the next ISR reads them
@@ -325,9 +347,6 @@ void robot_run(void) {
 
         loop_counter++;
 
-        // Sleep only the remaining time in the 10ms budget.
-        // UART calls (encoder read, motor write) eat into the tick;
-        // this keeps the loop close to 100Hz regardless.
         uint64_t elapsed_us = rc_nanos_since_boot() / 1000 - now_us;
         if (elapsed_us < 10000)
             rc_usleep(10000 - elapsed_us);
