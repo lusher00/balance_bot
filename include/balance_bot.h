@@ -43,6 +43,8 @@
 #define STEERING_KI  0.0f
 #define STEERING_KD  2.0f
 
+#define DRIVE_PHI_DEADZONE 2.0f
+
 // Encoder configuration
 #define ENCODER_TICKS_PER_REV 2400  // TODO: set to actual value
 
@@ -107,7 +109,7 @@ typedef struct {
     // D2 position controller
     float pos;              // Global wheel position (deg): avg wheel angle + theta
     float pos_setpoint;     // D2 position setpoint (deg)
-    
+
     // Control references
     float theta_ref;    // Desired body angle  (deg)
     float theta_offset; // Balance point trim  (deg) — tunable from iPhone
