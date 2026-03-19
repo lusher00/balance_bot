@@ -141,8 +141,9 @@ int robot_init(void) {
     pid_init(&drive_pid,  DRIVE_KP,  DRIVE_KI,  DRIVE_KD,  DT);
     pid_init(&steering_pid, STEERING_KP, STEERING_KI, STEERING_KD, DT);
     LOG_INFO("PID Controllers:");
-    LOG_INFO("  D1_balance:  Kp=%.1f Ki=%.1f Kd=%.1f", BALANCE_KP,  BALANCE_KI,  BALANCE_KD);
-    LOG_INFO("  D3_steering: Kp=%.1f Ki=%.1f Kd=%.1f", STEERING_KP, STEERING_KI, STEERING_KD);
+    LOG_INFO("  D1_balance:  Kp=%.3f Ki=%.3f Kd=%.3f", BALANCE_KP,  BALANCE_KI,  BALANCE_KD);
+    LOG_INFO("  D2_balance:  Kp=%.3f Ki=%.3f Kd=%.3f", DRIVE_KP, DRIVE_KI, DRIVE_KD);
+    LOG_INFO("  D3_steering: Kp=%.3f Ki=%.3f Kd=%.3f", STEERING_KP, STEERING_KI, STEERING_KD);
 
     // IMU config
     imu_offsets_load(&g_imu_offsets);
@@ -244,8 +245,6 @@ void robot_run(void) {
         state.phi_right = right_ticks * (360.0f / ENCODER_TICKS_PER_REV);
 
         // ── Global wheel position ─────────────────────────────────────────
-        // pos = avg wheel angle in body frame + body lean = absolute position
-        // in global frame (same convention as rc_balance cstate.phi).
         state.pos = (state.phi_left + state.phi_right) / 2.0f + state.theta;
 
         // ── Input sources → theta_ref / steering ──────────────────────────
@@ -265,28 +264,36 @@ void robot_run(void) {
         sbus_update();
 
         // ── SBUS arming / drive commands ──────────────────────────────────
+        // state.trying  — operator wants the robot to balance (arm switch)
+        // state.armed   — actually driving motors (cleared on fall, restored when upright)
         if (sbus_is_connected()) {
             int kill = sbus_get_kill();
             int arm  = sbus_get_arm();
 
-            if (kill < 2 && state.armed) {
-                state.armed = 0;
-                rc_led_set(RC_LED_GREEN, 0);
-                LOG_WARN("SBUS kill switch — DISARMED");
+            if (kill < 2) {
+                if (state.trying) {
+                    state.trying = 0;
+                    state.armed  = 0;
+                    rc_led_set(RC_LED_GREEN, 0);
+                    LOG_WARN("SBUS kill switch — DISARMED");
+                }
             }
 
             static int prev_sbus_arm = 0;
             if (arm == 2 && prev_sbus_arm < 2 && kill == 2) {
                 if (fabsf(state.theta - state.theta_offset) > 14.0f) {
-                    LOG_WARN("SBUS ARM REJECTED — angle too large (%.1f deg)", state.theta - state.theta_offset);
+                    LOG_WARN("SBUS ARM REJECTED — angle too large (%.1f deg)",
+                             state.theta - state.theta_offset);
                 } else {
-                    state.armed = 1;
+                    state.trying = 1;
+                    state.armed  = 1;
                     motor_hal_standby(0);
                     rc_led_set(RC_LED_GREEN, 1);
                     LOG_INFO("SBUS ARMED (theta=%.2f deg)", state.theta);
                 }
             } else if (arm < 2 && prev_sbus_arm == 2) {
-                state.armed = 0;
+                state.trying = 0;
+                state.armed  = 0;
                 rc_led_set(RC_LED_GREEN, 0);
                 LOG_INFO("SBUS DISARMED");
             }
@@ -298,17 +305,23 @@ void robot_run(void) {
             }
         }
 
-        // ── Fall detection ────────────────────────────────────────────────
-        if (state.armed && fabsf(state.theta - state.theta_offset) > 15.0f) {
+        // ── Fall detection / auto-recovery ───────────────────────────────
+        float eff_angle = fabsf(state.theta - state.theta_offset);
+        if (state.armed && eff_angle > 15.0f) {
+            // Fell — cut motors but stay trying if operator hasn't disarmed
             state.armed = 0;
+            motor_hal_standby(1);
             rc_led_set(RC_LED_GREEN, 0);
-            LOG_WARN("FELL — auto-disarmed (theta=%.1f offset=%.1f eff=%.1f)",
-                     state.theta, state.theta_offset, state.theta - state.theta_offset);
+            LOG_WARN("FELL — auto-disarmed (eff=%.1f deg)", eff_angle);
+        } else if (!state.armed && state.trying && eff_angle < 10.0f) {
+            // Back within range — re-arm
+            state.armed = 1;
+            motor_hal_standby(0);
+            rc_led_set(RC_LED_GREEN, 1);
+            LOG_INFO("RECOVERED — re-armed (eff=%.1f deg)", eff_angle);
         }
 
         // ── D2 position (drive) controller ───────────────────────────────
-        // Runs after input sources write theta_ref (used as drive command),
-        // overwrites theta_ref with lean angle setpoint for D1.
         if (g_debug_config.controllers.D2_drive && state.armed) {
             state.pos_setpoint += state.theta_ref * DT;
 
