@@ -223,7 +223,7 @@ int pid_config_create_default(const char* filename) {
     pid_config_file_t default_config = {
         .balance_angle = 0.0,
         .D1_balance = { .kp = BALANCE_KP, .ki = BALANCE_KI, .kd = BALANCE_KD },
-        .D2_drive = { .kp = DRIVE_KP, .ki = DRIVE_KI .kd = DRIVE_KD },
+        .D2_drive = { .kp = DRIVE_KP, .ki = DRIVE_KI, .kd = DRIVE_KD },
         .D3_steering = { .kp = STEERING_KP, .ki = STEERING_KI, .kd = STEERING_KD }
     };
     

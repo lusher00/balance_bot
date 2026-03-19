@@ -122,6 +122,7 @@ typedef struct {
     input_packet_t ext_input;
 
     robot_mode_t mode;
+    int trying;
     int armed;          // 0 = disarmed, 1 = armed
 } robot_state_t;
 
