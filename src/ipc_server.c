@@ -436,7 +436,7 @@ static void build_telemetry_json(char* buffer, size_t size) {
         pos += snprintf(buffer + pos, size - pos, "},");
     }
     
-    // PID states
+  // PID states
     if (g_debug_config.telemetry.pid_states) {
         pos += snprintf(buffer + pos, size - pos,
                        "\"D1_balance\":{\"enabled\":%s,\"setpoint\":%.4f,"
@@ -450,6 +450,19 @@ static void build_telemetry_json(char* buffer, size_t size) {
                        g_telemetry_data.D1_balance.kp,
                        g_telemetry_data.D1_balance.ki,
                        g_telemetry_data.D1_balance.kd);
+
+        pos += snprintf(buffer + pos, size - pos,
+                       "\"D2_drive\":{\"enabled\":%s,\"setpoint\":%.4f,"
+                       "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
+                       "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},",
+                       g_telemetry_data.D2_drive.enabled ? "true" : "false",
+                       g_telemetry_data.D2_drive.setpoint,
+                       g_telemetry_data.D2_drive.measurement,
+                       g_telemetry_data.D2_drive.error,
+                       g_telemetry_data.D2_drive.output,
+                       g_telemetry_data.D2_drive.kp,
+                       g_telemetry_data.D2_drive.ki,
+                       g_telemetry_data.D2_drive.kd);
 
         pos += snprintf(buffer + pos, size - pos,
                        "\"D3_steering\":{\"enabled\":%s,\"setpoint\":%.4f,"
