@@ -36,12 +36,15 @@
 #define MAX_STEERING        1.0f    // Max steering command (normalized)
 
 // PID default gains (tunable via iPhone app)
-#define BALANCE_KP  40.0f
-#define BALANCE_KI   0.0f
-#define BALANCE_KD   5.0f
-#define STEERING_KP 20.0f
-#define STEERING_KI  0.0f
-#define STEERING_KD  2.0f
+#define BALANCE_KP   0.050f
+#define BALANCE_KI   0.015f
+#define BALANCE_KD   0.005f
+#define STEERING_KP  0.050f
+#define STEERING_KI  0.015f
+#define STEERING_KD  0.005f
+#define DRIVE_KP     0.050f
+#define DRIVE_KI     0.015f
+#define DRIVE_KD     0.005f
 
 #define DRIVE_PHI_DEADZONE 2.0f
 
@@ -130,6 +133,7 @@ extern robot_state_t    state;
 extern rc_mpu_data_t    mpu_data;
 extern pid_controller_t balance_pid;
 extern pid_controller_t steering_pid;
+extern pid_controller_t drive_pid;
 extern debug_config_t   g_debug_config;
 extern telemetry_data_t g_telemetry_data;
 

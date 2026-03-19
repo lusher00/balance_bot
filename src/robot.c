@@ -116,6 +116,7 @@ static void on_mode_release(void) {
         motor_hal_standby(1);
         motor_hal_set_both(0.0f, 0.0f);
         pid_reset(&balance_pid);
+        pid_reset(&drive_pid);
         pid_reset(&steering_pid);
     }
 }
@@ -137,6 +138,7 @@ int robot_init(void) {
 
     // PIDs
     pid_init(&balance_pid,  BALANCE_KP,  BALANCE_KI,  BALANCE_KD,  DT);
+    pid_init(&drive_pid,  DRIVE_KP,  DRIVE_KI,  DRIVE_KD,  DT);
     pid_init(&steering_pid, STEERING_KP, STEERING_KI, STEERING_KD, DT);
     LOG_INFO("PID Controllers:");
     LOG_INFO("  D1_balance:  Kp=%.1f Ki=%.1f Kd=%.1f", BALANCE_KP,  BALANCE_KI,  BALANCE_KD);

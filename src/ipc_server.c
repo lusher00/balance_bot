@@ -326,6 +326,12 @@ static int parse_json_command(const char* json_cmd) {
             LOG_INFO("iPhone: D1_balance kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
             return 0;
         }
+        if (strstr(json_cmd, "\"controller\":\"D2_drive\"")) {
+            pid_set_gains(&drive_pid, kp, ki, kd);
+            pid_reset(&drive_pid);
+            LOG_INFO("iPhone: D2_drive kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
+            return 0;
+        }
         if (strstr(json_cmd, "\"controller\":\"D3_steering\"")) {
             pid_set_gains(&steering_pid, kp, ki, kd);
             pid_reset(&steering_pid);

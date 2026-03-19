@@ -321,7 +321,7 @@ static inline debug_config_t get_default_debug_config(void) {
         },
         .controllers = {
             .D1_balance = true,        // Always enabled
-            .D2_drive = false,         // Disabled by default
+            .D2_drive = true,         
             .D3_steering = true
         },
         .overlays = {

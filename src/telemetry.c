@@ -20,7 +20,7 @@ telemetry_data_t g_telemetry_data = {0};
 // External references to robot state
 extern robot_state_t state;
 extern rc_mpu_data_t mpu_data;
-extern pid_controller_t balance_pid, steering_pid;
+extern pid_controller_t balance_pid, drive_pid, steering_pid;
 
 // Encoder tracking for velocity calculation
 static int32_t prev_left_ticks = 0;
@@ -109,7 +109,6 @@ static void update_pid_telemetry(void) {
     if (!g_debug_config.telemetry.pid_states) return;
 
     // D1: Balance controller
-    // Setpoint is theta_ref + theta_offset — exactly what the ISR uses.
     g_telemetry_data.D1_balance.enabled     = g_debug_config.controllers.D1_balance;
     g_telemetry_data.D1_balance.setpoint    = state.theta_ref + state.theta_offset;
     g_telemetry_data.D1_balance.measurement = state.theta;
@@ -123,8 +122,19 @@ static void update_pid_telemetry(void) {
     g_telemetry_data.D1_balance.ki          = balance_pid.ki;
     g_telemetry_data.D1_balance.kd          = balance_pid.kd;
 
-    // D2: Drive controller (not yet implemented)
-    g_telemetry_data.D2_drive.enabled = g_debug_config.controllers.D2_drive;
+    // D2: Drive (position) controller
+    g_telemetry_data.D2_drive.enabled     = g_debug_config.controllers.D2_drive;
+    g_telemetry_data.D2_drive.setpoint    = state.pos_setpoint;
+    g_telemetry_data.D2_drive.measurement = state.pos;
+    g_telemetry_data.D2_drive.error       = drive_pid.prev_error;
+    g_telemetry_data.D2_drive.p_term      = drive_pid.kp * drive_pid.prev_error;
+    g_telemetry_data.D2_drive.i_term      = drive_pid.ki * drive_pid.integrator;
+    g_telemetry_data.D2_drive.d_term      = 0.0f;
+    g_telemetry_data.D2_drive.output      = g_telemetry_data.D2_drive.p_term
+                                          + g_telemetry_data.D2_drive.i_term;
+    g_telemetry_data.D2_drive.kp          = drive_pid.kp;
+    g_telemetry_data.D2_drive.ki          = drive_pid.ki;
+    g_telemetry_data.D2_drive.kd          = drive_pid.kd;
 
     // D3: Steering controller
     g_telemetry_data.D3_steering.enabled     = g_debug_config.controllers.D3_steering;
@@ -139,9 +149,7 @@ static void update_pid_telemetry(void) {
     g_telemetry_data.D3_steering.kp          = steering_pid.kp;
     g_telemetry_data.D3_steering.ki          = steering_pid.ki;
     g_telemetry_data.D3_steering.kd          = steering_pid.kd;
-}
-
-/**
+}/**
  * @brief Update motor command telemetry
  */
 static void update_motor_telemetry(void) {

@@ -136,11 +136,11 @@ int pid_config_save(const char* filename, const pid_config_file_t* config) {
     // Write file in same format as load expects
     fprintf(file, "0\n");  // holdPosition (legacy)
     fprintf(file, "%.3f\n", config->balance_angle);
-    fprintf(file, "%.2f %.2f %.2f\n", 
+    fprintf(file, "%.3f %.3f %.3f\n", 
             config->D1_balance.kp, config->D1_balance.ki, config->D1_balance.kd);
-    fprintf(file, "%.2f %.2f %.2f\n",
+    fprintf(file, "%.3f %.3f %.3f\n",
             config->D2_drive.kp, config->D2_drive.ki, config->D2_drive.kd);
-    fprintf(file, "%.2f %.2f %.2f\n",
+    fprintf(file, "%.3f %.3f %.3f\n",
             config->D3_steering.kp, config->D3_steering.ki, config->D3_steering.kd);
     
     fclose(file);
@@ -165,7 +165,13 @@ void pid_config_apply(const pid_config_file_t* config) {
                   config->D1_balance.ki,
                   config->D1_balance.kd);
     
-    // Update steering PID
+    // Update drive PID
+    pid_set_gains(&drive_pid, 
+                  config->D2_drive.kp,
+                  config->D2_drive.ki,
+                  config->D2_drive.kd);
+
+                  // Update steering PID
     pid_set_gains(&steering_pid,
                   config->D3_steering.kp,
                   config->D3_steering.ki,
@@ -196,9 +202,9 @@ void pid_config_get_current(pid_config_file_t* config) {
     config->D1_balance.ki = balance_pid.ki;
     config->D1_balance.kd = balance_pid.kd;
     
-    config->D2_drive.kp = 0.0;  // Not implemented yet
-    config->D2_drive.ki = 0.0;
-    config->D2_drive.kd = 0.0;
+    config->D2_drive.kp = drive_pid.kp;
+    config->D2_drive.ki = drive_pid.ki;
+    config->D2_drive.kd = drive_pid.kd;
     
     config->D3_steering.kp = steering_pid.kp;
     config->D3_steering.ki = steering_pid.ki;
@@ -217,7 +223,7 @@ int pid_config_create_default(const char* filename) {
     pid_config_file_t default_config = {
         .balance_angle = 0.0,
         .D1_balance = { .kp = BALANCE_KP, .ki = BALANCE_KI, .kd = BALANCE_KD },
-        .D2_drive = { .kp = 0.0, .ki = 0.0, .kd = 0.0 },
+        .D2_drive = { .kp = DRIVE_KP, .ki = DRIVE_KI .kd = DRIVE_KD },
         .D3_steering = { .kp = STEERING_KP, .ki = STEERING_KI, .kd = STEERING_KD }
     };
     
