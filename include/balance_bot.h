@@ -48,6 +48,26 @@
 
 #define DRIVE_PHI_DEADZONE 2.0f
 
+// D2 position controller — encoder-tick-based hold/drive
+// Zone thresholds (ticks): A > B > C > D (D is the tightest deadband)
+#define POS_ZONE_A          8000    // Outer zone — coarse correction
+#define POS_ZONE_B          4000
+#define POS_ZONE_C          1000
+// positionScale* divides the tick error to produce a lean-angle bias (deg)
+#define POS_SCALE_A         600.0f
+#define POS_SCALE_B         800.0f
+#define POS_SCALE_C         1000.0f
+#define POS_SCALE_D         500.0f  // Inside zone C (tightest hold)
+// velocityScale divides tick-velocity to damp oscillation
+#define POS_VEL_SCALE_STOP  60.0f   // Damping when holding position
+#define POS_VEL_SCALE_MOVE  70.0f   // Back-EMF compensation when driving
+// Velocity threshold (ticks/100ms) below which we call the bot "stopped"
+#define POS_STOPPED_VEL     40
+// Maximum angle correction D2 is allowed to inject (deg)
+#define POS_MAX_CORRECTION  10.0f
+// Velocity update period (ms)
+#define POS_VEL_PERIOD_MS   100
+
 // Encoder configuration
 #define ENCODER_TICKS_PER_REV 2400  // TODO: set to actual value
 
@@ -109,9 +129,16 @@ typedef struct {
     float phi_left;         // Left wheel angle  (deg)
     float phi_right;        // Right wheel angle (deg)
 
-    // D2 position controller
-    float pos;              // Global wheel position (deg): avg wheel angle + theta
-    float pos_setpoint;     // D2 position setpoint (deg)
+    // D2 position controller (encoder-tick based)
+    int32_t enc_pos;            // Sum of left+right encoder ticks (position)
+    int32_t enc_pos_target;     // Target tick position (held when stick is centered)
+    int32_t enc_velocity;       // Tick velocity (ticks per 100 ms window)
+    int32_t enc_velocity_raw;   // Raw delta before the stopped-check
+    int     enc_vel_reset;      // Set to 1 by ipc_server after zero_encoders; cleared by robot.c
+
+    // Legacy degree-based position (kept for telemetry)
+    float pos;              // avg wheel angle (deg)
+    float pos_setpoint;     // D2 setpoint (deg) — unused when D2_drive enabled
 
     // Control references
     float theta_ref;    // Desired body angle  (deg)

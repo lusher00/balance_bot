@@ -1,0 +1,11 @@
+{
+    "files.associations": {
+        "*.h": "c",
+        "*.c": "c"
+    },
+    "editor.formatOnSave": true,
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/include"
+    ],
+    "terminal.integrated.defaultProfile.osx": "bash"
+}

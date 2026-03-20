@@ -250,7 +250,9 @@ static int parse_json_command(const char* json_cmd) {
             rc_led_set(RC_LED_GREEN, 1);
             LOG_INFO("iPhone: ARMED (theta=%.2f deg)", state.theta);
         } else {
-            state.armed = 0;
+            state.armed  = 0;
+            state.trying = 0;   // prevent auto-recovery from immediately re-arming
+            motor_hal_standby(1);
             rc_led_set(RC_LED_GREEN, 0);
             LOG_INFO("iPhone: DISARMED");
         }
@@ -260,10 +262,14 @@ static int parse_json_command(const char* json_cmd) {
     // {"type":"zero_imu"}  — set balance trim to current pitch, save to pidconfig.txt
     if (strstr(json_cmd, "\"type\":\"zero_encoders\"")) {
         motor_hal_encoder_reset_all();
-        state.enc_left  = 0;
-        state.enc_right = 0;
-        state.phi_left  = 0.0f;
-        state.phi_right = 0.0f;
+        state.enc_left       = 0;
+        state.enc_right      = 0;
+        state.phi_left       = 0.0f;
+        state.phi_right      = 0.0f;
+        state.enc_pos        = 0;
+        state.enc_pos_target = 0;   // D2 hold target — reset with encoders
+        state.enc_velocity   = 0;
+        state.enc_vel_reset  = 1;   // signal robot.c to resync velocity window
         LOG_INFO("iPhone: encoders zeroed");
         return 0;
     }

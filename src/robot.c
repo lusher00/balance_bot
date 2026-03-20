@@ -8,6 +8,7 @@
 #include "display.h"
 #include <stdio.h>
 #include <math.h>
+#include <stdbool.h>
 #include <robotcontrol.h>
 
 // Global state
@@ -244,6 +245,8 @@ void robot_run(void)
             pid_reset(&steering_pid);
             last_left_duty = 0.0f;
             last_right_duty = 0.0f;
+            // Sync D2 target so position hold starts fresh on next arm
+            state.enc_pos_target = state.enc_pos;
         }
         prev_armed = state.armed;
 
@@ -261,13 +264,48 @@ void robot_run(void)
         // ── Encoder read ──────────────────────────────────────────────────
         int left_ticks = motor_hal_encoder_read(MOTOR_LEFT);
         int right_ticks = motor_hal_encoder_read(MOTOR_RIGHT);
-        state.enc_left = left_ticks;
+        state.enc_left  = left_ticks;
         state.enc_right = right_ticks;
-        state.phi_left = left_ticks * (360.0f / ENCODER_TICKS_PER_REV);
+        state.phi_left  = left_ticks  * (360.0f / ENCODER_TICKS_PER_REV);
         state.phi_right = right_ticks * (360.0f / ENCODER_TICKS_PER_REV);
+        state.pos       = (state.phi_left + state.phi_right) / 2.0f;
 
-        // ── Global wheel position ─────────────────────────────────────────
-        state.pos = (state.phi_left + state.phi_right) / 2.0f + state.theta;
+        // ── Encoder position + velocity (100 ms window) ───────────────────
+        state.enc_pos = left_ticks + right_ticks;
+        {
+            static int32_t  last_enc_pos   = 0;
+            static uint64_t last_vel_us    = 0;
+            static bool     vel_init       = false;
+            static bool     stopped        = true;
+
+            uint64_t now_us = rc_nanos_since_boot() / 1000;
+
+            if (state.enc_vel_reset) {
+                last_enc_pos       = state.enc_pos;  // == 0 after zero_encoders
+                last_vel_us        = now_us;
+                vel_init           = true;
+                stopped            = true;
+                state.enc_vel_reset = 0;
+            } else if (!vel_init) {
+                last_enc_pos = state.enc_pos;
+                last_vel_us  = now_us;
+                vel_init     = true;
+            } else if ((now_us - last_vel_us) >= (POS_VEL_PERIOD_MS * 1000ULL)) {
+                int32_t delta          = state.enc_pos - last_enc_pos;
+                state.enc_velocity_raw = delta;
+                state.enc_velocity     = delta;
+                last_enc_pos           = state.enc_pos;
+                last_vel_us            = now_us;
+
+                // Latch target when the bot comes to a stop (stick centered)
+                if (abs(delta) <= POS_STOPPED_VEL && !stopped) {
+                    state.enc_pos_target = state.enc_pos;
+                    stopped = true;
+                }
+                if (abs(delta) > POS_STOPPED_VEL)
+                    stopped = false;
+            }
+        }
 
         // ── Input sources → theta_ref / steering ──────────────────────────
         if (state.mode == MODE_EXT_INPUT)
@@ -361,17 +399,59 @@ void robot_run(void)
         }
 
         // ── D2 position (drive) controller ───────────────────────────────
+        // When D2 is enabled: the stick command sets a *rate* (ticks/s target).
+        // With stick centered (theta_ref == 0): hold enc_pos_target using a
+        // zone-based lean-angle bias + velocity damping (Balanduino style).
+        // When driving: let the bot move, damp with velocity feed-forward.
         if (g_debug_config.controllers.D2_drive && state.armed)
         {
-            state.pos_setpoint += state.theta_ref * DT;
+            float correction = 0.0f;
+            bool  stick_centered = (fabsf(state.theta_ref) < 0.5f);
 
-            float d2_out = pid_update(&drive_pid, state.pos_setpoint, state.pos);
-            rc_saturate_float(&d2_out, -MAX_THETA_REF, MAX_THETA_REF);
-            state.theta_ref = -d2_out;
+            if (stick_centered)
+            {
+                // Position hold — zone-based proportional + velocity damp
+                int32_t err = state.enc_pos - state.enc_pos_target;
+                int32_t absErr = abs(err);
+
+                if (absErr > POS_ZONE_A)
+                    correction = -(float)err / POS_SCALE_A;
+                else if (absErr > POS_ZONE_B)
+                    correction = -(float)err / POS_SCALE_B;
+                else if (absErr > POS_ZONE_C)
+                    correction = -(float)err / POS_SCALE_C;
+                else
+                    correction = -(float)err / POS_SCALE_D;
+
+                // Velocity damping — resist oscillation around target
+                correction -= (float)state.enc_velocity / POS_VEL_SCALE_STOP;
+            }
+            else
+            {
+                // Driving — apply back-EMF compensation to smooth acceleration
+                // Sign: enc_velocity is negative going forward (motors spin back)
+                float vel_comp = (float)state.enc_velocity / POS_VEL_SCALE_MOVE;
+                // Only compensate if velocity opposes the commanded direction
+                if ((state.theta_ref > 0.0f && state.enc_velocity < 0) ||
+                    (state.theta_ref < 0.0f && state.enc_velocity > 0) ||
+                    state.theta_ref == 0.0f)
+                {
+                    correction += vel_comp;
+                }
+                // Keep target fresh so hold kicks in cleanly when stick returns
+                state.enc_pos_target = state.enc_pos;
+            }
+
+            // Clamp and inject into theta_ref
+            if (correction >  POS_MAX_CORRECTION) correction =  POS_MAX_CORRECTION;
+            if (correction < -POS_MAX_CORRECTION) correction = -POS_MAX_CORRECTION;
+            state.theta_ref += correction;
         }
         else
         {
-            state.pos_setpoint = state.pos;
+            // D2 disabled — keep target synced so it's ready when re-enabled
+            state.enc_pos_target = state.enc_pos;
+            state.pos_setpoint   = state.pos;
             if (!state.armed)
                 pid_reset(&drive_pid);
         }
