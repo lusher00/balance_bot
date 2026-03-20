@@ -49,24 +49,54 @@
 #define DRIVE_PHI_DEADZONE 2.0f
 
 // D2 position controller — encoder-tick-based hold/drive
-// Zone thresholds (ticks): A > B > C > D (D is the tightest deadband)
-#define POS_ZONE_A          8000    // Outer zone — coarse correction
-#define POS_ZONE_B          4000
-#define POS_ZONE_C          1000
-// positionScale* divides the tick error to produce a lean-angle bias (deg)
-#define POS_SCALE_A         600.0f
-#define POS_SCALE_B         800.0f
-#define POS_SCALE_C         1000.0f
-#define POS_SCALE_D         500.0f  // Inside zone C (tightest hold)
-// velocityScale divides tick-velocity to damp oscillation
-#define POS_VEL_SCALE_STOP  60.0f   // Damping when holding position
-#define POS_VEL_SCALE_MOVE  70.0f   // Back-EMF compensation when driving
-// Velocity threshold (ticks/100ms) below which we call the bot "stopped"
-#define POS_STOPPED_VEL     40
-// Maximum angle correction D2 is allowed to inject (deg)
-#define POS_MAX_CORRECTION  10.0f
-// Velocity update period (ms)
-#define POS_VEL_PERIOD_MS   100
+// These defaults initialise g_pos_config in robot.c.
+// Use set_pos_config IPC command or the iPhone app to tune at runtime.
+#define POS_ZONE_A_DEFAULT          8000
+#define POS_ZONE_B_DEFAULT          4000
+#define POS_ZONE_C_DEFAULT          1000
+#define POS_SCALE_A_DEFAULT         600.0f
+#define POS_SCALE_B_DEFAULT         800.0f
+#define POS_SCALE_C_DEFAULT         1000.0f
+#define POS_SCALE_D_DEFAULT         500.0f
+#define POS_VEL_SCALE_STOP_DEFAULT  60.0f
+#define POS_VEL_SCALE_MOVE_DEFAULT  70.0f
+#define POS_VEL_SCALE_TURNING_DEFAULT 70.0f  // Turning authority reduction at speed
+#define POS_STOPPED_VEL_DEFAULT     40
+#define POS_MAX_CORRECTION_DEFAULT  10.0f
+#define POS_MAX_ANGLE_RATE_DEFAULT  5.0f     // deg/tick — Balanduino 1°@500Hz ≈ 5°@100Hz
+#define POS_BACK_TO_SPOT_DEFAULT    1        // Full zone hold by default
+#define POS_VEL_PERIOD_MS           100
+
+/**
+ * @brief Runtime-tunable parameters for the D2 position (hold/drive) controller.
+ *
+ * All fields are readable and writable at runtime via the IPC set_pos_config
+ * command and the iPhone app.  Initialised from the _DEFAULT macros above.
+ *
+ * Zone thresholds (ticks): A > B > C, with D being the tightest deadband
+ * (error inside zone C).  scale_* divides the raw tick error to produce a
+ * lean-angle bias in degrees.  vel_scale_* divides the 100 ms tick velocity
+ * for damping / back-EMF compensation.
+ */
+typedef struct {
+    int32_t zone_a;         // Outer zone threshold (ticks)
+    int32_t zone_b;
+    int32_t zone_c;
+    float   scale_a;        // Tick-error → lean-angle divisor, zone A
+    float   scale_b;
+    float   scale_c;
+    float   scale_d;        // Inside zone C (tightest hold)
+    float   vel_scale_stop; // Velocity damp divisor when holding
+    float   vel_scale_move; // Back-EMF comp divisor when driving
+    float   vel_scale_turning; // Reduces turning authority at speed (Balanduino-style)
+    int32_t stopped_vel;    // Ticks/100ms threshold for "stopped" detection
+    float   max_correction; // Maximum lean-angle correction D2 may inject (deg)
+    float   max_angle_rate; // Max correction change per main loop tick (deg/tick)
+                            // Rate-limits D2 output to prevent slamming theta_ref.
+                            // Balanduino uses 1°/loop at 500Hz ≈ 5°/loop at 100Hz.
+    int     back_to_spot;   // 1 = full zone-based hold (A/B/C/D);
+                            // 0 = only correct inside zone_c (loose hold, Balanduino mode)
+} pos_config_t;
 
 // Encoder configuration
 #define ENCODER_TICKS_PER_REV 2400  // TODO: set to actual value
@@ -145,6 +175,11 @@ typedef struct {
     float theta_offset; // Balance point trim  (deg) — tunable from iPhone
     float steering;     // Desired steering    (-1 to +1)
 
+    // D3 steering latch — when the drive stick returns to centre, D3 holds
+    // the phi_diff at that moment rather than fighting back to zero.
+    float steering_latch;   // phi_diff value latched at stick-centre transition
+    int   steering_latched; // 1 = latch is active (stick centred), 0 = driving
+
     // External UART input (used only in MODE_EXT_INPUT)
     input_packet_t ext_input;
 
@@ -164,6 +199,7 @@ extern pid_controller_t steering_pid;
 extern pid_controller_t drive_pid;
 extern debug_config_t   g_debug_config;
 extern telemetry_data_t g_telemetry_data;
+extern pos_config_t     g_pos_config;
 
 // ============================================================================
 // PID (pid.c)
@@ -232,6 +268,32 @@ void pid_config_print         (const pid_config_file_t *config);
 int  pid_config_save          (const char *filename, const pid_config_file_t *config);
 void pid_config_apply         (const pid_config_file_t *config);
 void pid_config_get_current   (pid_config_file_t *config);
+
+// ============================================================================
+// POSITION CONTROLLER CONFIG (pid_config.c)
+// ============================================================================
+
+/**
+ * @brief Apply a pos_config_t to the global g_pos_config.
+ * Called from IPC set_pos_config handler and on startup.
+ */
+void pos_config_apply  (const pos_config_t *cfg);
+
+/**
+ * @brief Populate *cfg from the current g_pos_config values.
+ * Used by save_pid to persist position params alongside PID gains.
+ */
+void pos_config_get_current(pos_config_t *cfg);
+
+/**
+ * @brief Save pos_config to file (appended section in pidconfig.txt).
+ */
+int  pos_config_save   (const char *filename, const pos_config_t *cfg);
+
+/**
+ * @brief Load pos_config from file, or fill defaults if section absent.
+ */
+int  pos_config_load_or_default(const char *filename, pos_config_t *cfg);
 
 // ============================================================================
 // XBOX CONTROLLER (input_xbox.c)

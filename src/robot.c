@@ -17,6 +17,9 @@ robot_state_t state = {0};
 rc_mpu_data_t mpu_data;
 pid_controller_t balance_pid, drive_pid, steering_pid;
 
+// Runtime-tunable position controller parameters (initialised in robot_init)
+pos_config_t g_pos_config;
+
 // Debug configuration (defined in debug_config.h, initialized in main.c)
 debug_config_t g_debug_config;
 
@@ -156,6 +159,24 @@ int robot_init(void)
     pid_init(&balance_pid, BALANCE_KP, BALANCE_KI, BALANCE_KD, DT);
     pid_init(&drive_pid, DRIVE_KP, DRIVE_KI, DRIVE_KD, DT);
     pid_init(&steering_pid, STEERING_KP, STEERING_KI, STEERING_KD, DT);
+
+    // Initialise position controller config from compile-time defaults.
+    // These are overwritten by pid_config_load_or_default() in main(),
+    // and can be updated at runtime via IPC set_pos_config.
+    g_pos_config.zone_a            = POS_ZONE_A_DEFAULT;
+    g_pos_config.zone_b            = POS_ZONE_B_DEFAULT;
+    g_pos_config.zone_c            = POS_ZONE_C_DEFAULT;
+    g_pos_config.scale_a           = POS_SCALE_A_DEFAULT;
+    g_pos_config.scale_b           = POS_SCALE_B_DEFAULT;
+    g_pos_config.scale_c           = POS_SCALE_C_DEFAULT;
+    g_pos_config.scale_d           = POS_SCALE_D_DEFAULT;
+    g_pos_config.vel_scale_stop    = POS_VEL_SCALE_STOP_DEFAULT;
+    g_pos_config.vel_scale_move    = POS_VEL_SCALE_MOVE_DEFAULT;
+    g_pos_config.vel_scale_turning = POS_VEL_SCALE_TURNING_DEFAULT;
+    g_pos_config.stopped_vel       = POS_STOPPED_VEL_DEFAULT;
+    g_pos_config.max_correction    = POS_MAX_CORRECTION_DEFAULT;
+    g_pos_config.max_angle_rate    = POS_MAX_ANGLE_RATE_DEFAULT;
+    g_pos_config.back_to_spot      = POS_BACK_TO_SPOT_DEFAULT;
     LOG_INFO("PID Controllers:");
     LOG_INFO("  D1_balance:  Kp=%.3f Ki=%.3f Kd=%.3f", BALANCE_KP, BALANCE_KI, BALANCE_KD);
     LOG_INFO("  D2_balance:  Kp=%.3f Ki=%.3f Kd=%.3f", DRIVE_KP, DRIVE_KI, DRIVE_KD);
@@ -304,12 +325,12 @@ void robot_run(void)
                 last_vel_us = now_us;
 
                 // Latch target when the bot comes to a stop (stick centered)
-                if (abs(delta) <= POS_STOPPED_VEL && !stopped)
+                if (abs(delta) <= g_pos_config.stopped_vel && !stopped)
                 {
                     state.enc_pos_target = state.enc_pos;
                     stopped = true;
                 }
-                if (abs(delta) > POS_STOPPED_VEL)
+                if (abs(delta) > g_pos_config.stopped_vel)
                     stopped = false;
             }
         }
@@ -386,6 +407,51 @@ void robot_run(void)
             }
         }
 
+        // ── D3 steering latch ─────────────────────────────────────────────
+        // When the turn stick returns to centre, latch the current phi_diff
+        // as the D3 setpoint.  This prevents D3 from fighting back to zero
+        // after the bot comes to rest at an asymmetric wheel position.
+        //
+        // Also applies Balanduino-style turning velocity scale: reduces turning
+        // authority at speed so the bot doesn't spin out. The raw stick value
+        // is reduced by |enc_velocity| / vel_scale_turning, clamped back toward
+        // zero (never past it).
+        {
+            float phi_diff = (state.phi_left - state.phi_right) / 2.0f;
+            bool turn_centered = (fabsf(state.steering) < 0.05f);
+
+            if (turn_centered && !state.steering_latched)
+            {
+                state.steering_latch   = phi_diff;
+                state.steering_latched = 1;
+            }
+            else if (!turn_centered)
+            {
+                state.steering_latched = 0;
+                state.steering_latch   = 0.0f;
+
+                // Velocity-based turning authority reduction (Balanduino pattern):
+                // scale down turning command at high wheel speed so the bot doesn't
+                // spin out. The reduction is subtracted in the direction of the
+                // command, clamped so it never reverses sign.
+                if (g_pos_config.vel_scale_turning > 0.0f)
+                {
+                    float vel_turndown = fabsf((float)state.enc_velocity /
+                                               g_pos_config.vel_scale_turning);
+                    if (state.steering < 0.0f) {
+                        state.steering += vel_turndown;
+                        if (state.steering > 0.0f) state.steering = 0.0f;
+                    } else if (state.steering > 0.0f) {
+                        state.steering -= vel_turndown;
+                        if (state.steering < 0.0f) state.steering = 0.0f;
+                    }
+                }
+            }
+
+            if (state.steering_latched && g_debug_config.controllers.D3_steering)
+                state.steering = state.steering_latch;
+        }
+
         // ── Fall detection / auto-recovery ───────────────────────────────
         float eff_angle = fabsf(state.theta - state.theta_offset);
         if (state.armed && eff_angle > 15.0f)
@@ -407,53 +473,77 @@ void robot_run(void)
 
         // ── D2 position (drive) controller ───────────────────────────────
         // When D2 is enabled: the stick command sets a *rate* (ticks/s target).
-        // With stick centered (theta_ref == 0): hold enc_pos_target using a
-        // zone-based lean-angle bias + velocity damping (Balanduino style).
+        // With stick centered: hold enc_pos_target using zone-based lean-angle
+        // bias + velocity damping (Balanduino style).
         // When driving: let the bot move, damp with velocity feed-forward.
+        // All parameters are in g_pos_config (runtime-tunable via IPC).
+        //
+        // back_to_spot=1: full zone-based hold (A/B/C/D proportional)
+        // back_to_spot=0: only correct inside zone_c — loose hold (Balanduino mode)
+        //
+        // max_angle_rate limits how fast the correction can change per tick,
+        // preventing D2 from slamming theta_ref and causing oscillation.
+        // (Balanduino uses 1°/loop at 500 Hz ≈ 5°/loop at our 100 Hz.)
         if (g_debug_config.controllers.D2_drive && state.armed)
         {
+            static float last_correction = 0.0f;
             float correction = 0.0f;
             bool stick_centered = (fabsf(state.theta_ref) < 0.5f);
 
             if (stick_centered)
             {
-                // Position hold — zone-based proportional + velocity damp
-                int32_t err = state.enc_pos - state.enc_pos_target;
+                int32_t err    = state.enc_pos - state.enc_pos_target;
                 int32_t absErr = abs(err);
 
-                if (absErr > POS_ZONE_A)
-                    correction = -(float)err / POS_SCALE_A;
-                else if (absErr > POS_ZONE_B)
-                    correction = -(float)err / POS_SCALE_B;
-                else if (absErr > POS_ZONE_C)
-                    correction = -(float)err / POS_SCALE_C;
+                if (g_pos_config.back_to_spot)
+                {
+                    // Full zone-based proportional hold
+                    if      (absErr > g_pos_config.zone_a)
+                        correction = -(float)err / g_pos_config.scale_a;
+                    else if (absErr > g_pos_config.zone_b)
+                        correction = -(float)err / g_pos_config.scale_b;
+                    else if (absErr > g_pos_config.zone_c)
+                        correction = -(float)err / g_pos_config.scale_c;
+                    else
+                        correction = -(float)err / g_pos_config.scale_d;
+                }
                 else
-                    correction = -(float)err / POS_SCALE_D;
+                {
+                    // Loose hold: only correct inside zone_c, otherwise drift free
+                    if (absErr < g_pos_config.zone_c)
+                        correction = -(float)err / g_pos_config.scale_d;
+                    else
+                        state.enc_pos_target = state.enc_pos;
+                }
 
                 // Velocity damping — resist oscillation around target
-                correction -= (float)state.enc_velocity / POS_VEL_SCALE_STOP;
+                correction -= (float)state.enc_velocity / g_pos_config.vel_scale_stop;
             }
             else
             {
-                // Driving — apply back-EMF compensation to smooth acceleration
-                // Sign: enc_velocity is negative going forward (motors spin back)
-                float vel_comp = (float)state.enc_velocity / POS_VEL_SCALE_MOVE;
-                // Only compensate if velocity opposes the commanded direction
+                // Driving — back-EMF compensation to smooth acceleration
+                float vel_comp = (float)state.enc_velocity / g_pos_config.vel_scale_move;
                 if ((state.theta_ref > 0.0f && state.enc_velocity < 0) ||
                     (state.theta_ref < 0.0f && state.enc_velocity > 0) ||
                     state.theta_ref == 0.0f)
                 {
                     correction += vel_comp;
                 }
-                // Keep target fresh so hold kicks in cleanly when stick returns
                 state.enc_pos_target = state.enc_pos;
             }
 
-            // Clamp and inject into theta_ref
-            if (correction > POS_MAX_CORRECTION)
-                correction = POS_MAX_CORRECTION;
-            if (correction < -POS_MAX_CORRECTION)
-                correction = -POS_MAX_CORRECTION;
+            // Rate-limit correction (Balanduino: don't change restAngle by more
+            // than max_angle_rate per loop tick — prevents slamming theta_ref)
+            float delta = correction - last_correction;
+            if (delta >  g_pos_config.max_angle_rate) delta =  g_pos_config.max_angle_rate;
+            if (delta < -g_pos_config.max_angle_rate) delta = -g_pos_config.max_angle_rate;
+            correction = last_correction + delta;
+            last_correction = correction;
+
+            // Hard clamp
+            if (correction >  g_pos_config.max_correction) correction =  g_pos_config.max_correction;
+            if (correction < -g_pos_config.max_correction) correction = -g_pos_config.max_correction;
+
             state.theta_ref += correction;
         }
         else

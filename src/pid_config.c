@@ -286,3 +286,122 @@ void pid_config_print(const pid_config_file_t* config) {
     printf("  Kd = %.2f\n", config->D3_steering.kd);
     printf("=========================\n\n");
 }
+
+// ============================================================================
+// POSITION CONTROLLER CONFIG
+// ============================================================================
+
+#define POS_CONFIG_SECTION "# pos_config"
+
+void pos_config_apply(const pos_config_t *cfg)
+{
+    g_pos_config = *cfg;
+    LOG_INFO("pos_config applied: zones=%d/%d/%d scales=%.0f/%.0f/%.0f/%.0f "
+             "vel=%.0f/%.0f/%.0f stopped=%d maxcorr=%.1f rate=%.1f bts=%d",
+             cfg->zone_a, cfg->zone_b, cfg->zone_c,
+             cfg->scale_a, cfg->scale_b, cfg->scale_c, cfg->scale_d,
+             cfg->vel_scale_stop, cfg->vel_scale_move, cfg->vel_scale_turning,
+             cfg->stopped_vel, cfg->max_correction,
+             cfg->max_angle_rate, cfg->back_to_spot);
+}
+
+void pos_config_get_current(pos_config_t *cfg)
+{
+    *cfg = g_pos_config;
+}
+
+/**
+ * Append (or overwrite the section starting at POS_CONFIG_SECTION) in the
+ * pidconfig.txt file.  Uses a simple append — the section is always added at
+ * the end, and load uses the last occurrence.
+ *
+ * Section format (one key=value per line, terminated by blank line or EOF):
+ *   # pos_config
+ *   zone_a=8000
+ *   zone_b=4000
+ *   ...
+ */
+int pos_config_save(const char *filename, const pos_config_t *cfg)
+{
+    if (!filename) filename = DEFAULT_CONFIG_FILE;
+
+    FILE *f = fopen(filename, "a");
+    if (!f) {
+        LOG_ERROR("pos_config_save: cannot open %s: %s", filename, strerror(errno));
+        return -1;
+    }
+    fprintf(f, "\n%s\n", POS_CONFIG_SECTION);
+    fprintf(f, "zone_a=%d\n",         cfg->zone_a);
+    fprintf(f, "zone_b=%d\n",         cfg->zone_b);
+    fprintf(f, "zone_c=%d\n",         cfg->zone_c);
+    fprintf(f, "scale_a=%.3f\n",      cfg->scale_a);
+    fprintf(f, "scale_b=%.3f\n",      cfg->scale_b);
+    fprintf(f, "scale_c=%.3f\n",      cfg->scale_c);
+    fprintf(f, "scale_d=%.3f\n",      cfg->scale_d);
+    fprintf(f, "vel_scale_stop=%.3f\n", cfg->vel_scale_stop);
+    fprintf(f, "vel_scale_move=%.3f\n", cfg->vel_scale_move);
+    fprintf(f, "vel_scale_turning=%.3f\n", cfg->vel_scale_turning);
+    fprintf(f, "stopped_vel=%d\n",    cfg->stopped_vel);
+    fprintf(f, "max_correction=%.3f\n", cfg->max_correction);
+    fprintf(f, "max_angle_rate=%.3f\n", cfg->max_angle_rate);
+    fprintf(f, "back_to_spot=%d\n",  cfg->back_to_spot);
+    fclose(f);
+    LOG_INFO("pos_config saved to %s", filename);
+    return 0;
+}
+
+int pos_config_load_or_default(const char *filename, pos_config_t *cfg)
+{
+    // Fill defaults first — if the section is absent we still have sane values
+    cfg->zone_a         = POS_ZONE_A_DEFAULT;
+    cfg->zone_b         = POS_ZONE_B_DEFAULT;
+    cfg->zone_c         = POS_ZONE_C_DEFAULT;
+    cfg->scale_a        = POS_SCALE_A_DEFAULT;
+    cfg->scale_b        = POS_SCALE_B_DEFAULT;
+    cfg->scale_c        = POS_SCALE_C_DEFAULT;
+    cfg->scale_d        = POS_SCALE_D_DEFAULT;
+    cfg->vel_scale_stop    = POS_VEL_SCALE_STOP_DEFAULT;
+    cfg->vel_scale_move    = POS_VEL_SCALE_MOVE_DEFAULT;
+    cfg->vel_scale_turning = POS_VEL_SCALE_TURNING_DEFAULT;
+    cfg->stopped_vel       = POS_STOPPED_VEL_DEFAULT;
+    cfg->max_correction    = POS_MAX_CORRECTION_DEFAULT;
+    cfg->max_angle_rate    = POS_MAX_ANGLE_RATE_DEFAULT;
+    cfg->back_to_spot      = POS_BACK_TO_SPOT_DEFAULT;
+
+    if (!filename) filename = DEFAULT_CONFIG_FILE;
+    FILE *f = fopen(filename, "r");
+    if (!f) return 0;   // no file yet — defaults are fine
+
+    char line[128];
+    int in_section = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, POS_CONFIG_SECTION, strlen(POS_CONFIG_SECTION)) == 0) {
+            in_section = 1;
+            continue;
+        }
+        if (!in_section) continue;
+        if (line[0] == '#' || line[0] == '\n') { in_section = 0; continue; }
+        // Parse key=value
+        char key[64]; float fval; int ival;
+        if (sscanf(line, "%63[^=]=%f", key, &fval) == 2) {
+            if      (!strcmp(key,"zone_a"))          cfg->zone_a         = (int32_t)fval;
+            else if (!strcmp(key,"zone_b"))          cfg->zone_b         = (int32_t)fval;
+            else if (!strcmp(key,"zone_c"))          cfg->zone_c         = (int32_t)fval;
+            else if (!strcmp(key,"scale_a"))         cfg->scale_a        = fval;
+            else if (!strcmp(key,"scale_b"))         cfg->scale_b        = fval;
+            else if (!strcmp(key,"scale_c"))         cfg->scale_c        = fval;
+            else if (!strcmp(key,"scale_d"))         cfg->scale_d        = fval;
+            else if (!strcmp(key,"vel_scale_stop"))    cfg->vel_scale_stop    = fval;
+            else if (!strcmp(key,"vel_scale_move"))    cfg->vel_scale_move    = fval;
+            else if (!strcmp(key,"vel_scale_turning")) cfg->vel_scale_turning = fval;
+            else if (!strcmp(key,"stopped_vel"))       cfg->stopped_vel       = (int32_t)fval;
+            else if (!strcmp(key,"max_correction"))    cfg->max_correction    = fval;
+            else if (!strcmp(key,"max_angle_rate"))    cfg->max_angle_rate    = fval;
+            else if (!strcmp(key,"back_to_spot"))      cfg->back_to_spot      = (int)fval;
+        }
+        (void)ival;
+    }
+    fclose(f);
+    LOG_INFO("pos_config loaded from %s", filename);
+    return 0;
+}

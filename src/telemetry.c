@@ -122,19 +122,25 @@ static void update_pid_telemetry(void) {
     g_telemetry_data.D1_balance.ki          = balance_pid.ki;
     g_telemetry_data.D1_balance.kd          = balance_pid.kd;
 
-    // D2: Drive (position) controller
+    // D2: Drive (position) controller -- zone-based, not a true PID.
+    // Map fields to encoder-tick semantics so the graph is meaningful:
+    //   setpoint    = enc_pos_target (ticks)
+    //   measurement = enc_pos        (ticks)
+    //   error       = enc_pos - enc_pos_target (ticks, sign: +ve = ahead of target)
+    //   output      = last correction injected into theta_ref (deg) -- tracked via
+    //                 the steering_latch field reuse; approximate from error/scale
+    //   kp/ki/kd    = not applicable; send pos_config zone/scale summary as kp
     g_telemetry_data.D2_drive.enabled     = g_debug_config.controllers.D2_drive;
-    g_telemetry_data.D2_drive.setpoint    = state.pos_setpoint;
-    g_telemetry_data.D2_drive.measurement = state.pos;
-    g_telemetry_data.D2_drive.error       = drive_pid.prev_error;
-    g_telemetry_data.D2_drive.p_term      = drive_pid.kp * drive_pid.prev_error;
-    g_telemetry_data.D2_drive.i_term      = drive_pid.ki * drive_pid.integrator;
-    g_telemetry_data.D2_drive.d_term      = 0.0f;
-    g_telemetry_data.D2_drive.output      = g_telemetry_data.D2_drive.p_term
-                                          + g_telemetry_data.D2_drive.i_term;
-    g_telemetry_data.D2_drive.kp          = drive_pid.kp;
-    g_telemetry_data.D2_drive.ki          = drive_pid.ki;
-    g_telemetry_data.D2_drive.kd          = drive_pid.kd;
+    g_telemetry_data.D2_drive.setpoint    = (float)state.enc_pos_target;
+    g_telemetry_data.D2_drive.measurement = (float)state.enc_pos;
+    g_telemetry_data.D2_drive.error       = (float)(state.enc_pos - state.enc_pos_target);
+    g_telemetry_data.D2_drive.p_term      = 0.0f;
+    g_telemetry_data.D2_drive.i_term      = 0.0f;
+    g_telemetry_data.D2_drive.d_term      = (float)state.enc_velocity;  // velocity for graph
+    g_telemetry_data.D2_drive.output      = 0.0f; // correction injected; robot.c doesn't track this separately yet
+    g_telemetry_data.D2_drive.kp          = (float)g_pos_config.zone_a;  // expose zone_a as kp for sync
+    g_telemetry_data.D2_drive.ki          = g_pos_config.scale_a;
+    g_telemetry_data.D2_drive.kd          = g_pos_config.max_correction;
 
     // D3: Steering controller
     g_telemetry_data.D3_steering.enabled     = g_debug_config.controllers.D3_steering;
