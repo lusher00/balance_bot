@@ -26,8 +26,8 @@
 
 /* ── wiring ─────────────────────────────────────────────────────── */
 #define RC_ADDRESS 0x80 /* default RoboClaw address — change if you set a different one */
-#define POL_L -1.0f
-#define POL_R -1.0f
+#define POL_L 1.0f
+#define POL_R 1.0f
 
 /* duty range the RoboClaw expects for MIXEDDUTY (cmd 34): -32767 .. +32767 */
 #define DUTY_MAX 32767
@@ -56,10 +56,10 @@ static int refresh_encoders(void)
         LOG_WARN("motor_hal_roboclaw: encoder read failed (%d)", ret);
         return -1;
     }
-    // M2 = left wheel, negate because it decrements when moving forward.
+    // M2 = left wheel, positive when moving forward (M2 & ENC2 are negated in basic micro motion studio)
     // M1 = right wheel, positive when moving forward.
-    g_enc_l = -m2;
     g_enc_r = m1;
+    g_enc_l = m2;
     return 0;
 }
 
