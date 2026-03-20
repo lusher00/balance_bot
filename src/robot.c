@@ -7,6 +7,7 @@
 #include "motor_hal.h"
 #include "display.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
 #include <stdbool.h>
 #include <robotcontrol.h>
@@ -264,41 +265,47 @@ void robot_run(void)
         // ── Encoder read ──────────────────────────────────────────────────
         int left_ticks = motor_hal_encoder_read(MOTOR_LEFT);
         int right_ticks = motor_hal_encoder_read(MOTOR_RIGHT);
-        state.enc_left  = left_ticks;
+        state.enc_left = left_ticks;
         state.enc_right = right_ticks;
-        state.phi_left  = left_ticks  * (360.0f / ENCODER_TICKS_PER_REV);
+        state.phi_left = left_ticks * (360.0f / ENCODER_TICKS_PER_REV);
         state.phi_right = right_ticks * (360.0f / ENCODER_TICKS_PER_REV);
-        state.pos       = (state.phi_left + state.phi_right) / 2.0f;
+        state.pos = (state.phi_left + state.phi_right) / 2.0f;
 
         // ── Encoder position + velocity (100 ms window) ───────────────────
         state.enc_pos = left_ticks + right_ticks;
         {
-            static int32_t  last_enc_pos   = 0;
-            static uint64_t last_vel_us    = 0;
-            static bool     vel_init       = false;
-            static bool     stopped        = true;
+            static int32_t last_enc_pos = 0;
+            static uint64_t last_vel_us = 0;
+            static bool vel_init = false;
+            static bool stopped = true;
 
             uint64_t now_us = rc_nanos_since_boot() / 1000;
 
-            if (state.enc_vel_reset) {
-                last_enc_pos       = state.enc_pos;  // == 0 after zero_encoders
-                last_vel_us        = now_us;
-                vel_init           = true;
-                stopped            = true;
+            if (state.enc_vel_reset)
+            {
+                last_enc_pos = state.enc_pos; // == 0 after zero_encoders
+                last_vel_us = now_us;
+                vel_init = true;
+                stopped = true;
                 state.enc_vel_reset = 0;
-            } else if (!vel_init) {
+            }
+            else if (!vel_init)
+            {
                 last_enc_pos = state.enc_pos;
-                last_vel_us  = now_us;
-                vel_init     = true;
-            } else if ((now_us - last_vel_us) >= (POS_VEL_PERIOD_MS * 1000ULL)) {
-                int32_t delta          = state.enc_pos - last_enc_pos;
+                last_vel_us = now_us;
+                vel_init = true;
+            }
+            else if ((now_us - last_vel_us) >= (POS_VEL_PERIOD_MS * 1000ULL))
+            {
+                int32_t delta = state.enc_pos - last_enc_pos;
                 state.enc_velocity_raw = delta;
-                state.enc_velocity     = delta;
-                last_enc_pos           = state.enc_pos;
-                last_vel_us            = now_us;
+                state.enc_velocity = delta;
+                last_enc_pos = state.enc_pos;
+                last_vel_us = now_us;
 
                 // Latch target when the bot comes to a stop (stick centered)
-                if (abs(delta) <= POS_STOPPED_VEL && !stopped) {
+                if (abs(delta) <= POS_STOPPED_VEL && !stopped)
+                {
                     state.enc_pos_target = state.enc_pos;
                     stopped = true;
                 }
@@ -406,7 +413,7 @@ void robot_run(void)
         if (g_debug_config.controllers.D2_drive && state.armed)
         {
             float correction = 0.0f;
-            bool  stick_centered = (fabsf(state.theta_ref) < 0.5f);
+            bool stick_centered = (fabsf(state.theta_ref) < 0.5f);
 
             if (stick_centered)
             {
@@ -443,15 +450,17 @@ void robot_run(void)
             }
 
             // Clamp and inject into theta_ref
-            if (correction >  POS_MAX_CORRECTION) correction =  POS_MAX_CORRECTION;
-            if (correction < -POS_MAX_CORRECTION) correction = -POS_MAX_CORRECTION;
+            if (correction > POS_MAX_CORRECTION)
+                correction = POS_MAX_CORRECTION;
+            if (correction < -POS_MAX_CORRECTION)
+                correction = -POS_MAX_CORRECTION;
             state.theta_ref += correction;
         }
         else
         {
             // D2 disabled — keep target synced so it's ready when re-enabled
             state.enc_pos_target = state.enc_pos;
-            state.pos_setpoint   = state.pos;
+            state.pos_setpoint = state.pos;
             if (!state.armed)
                 pid_reset(&drive_pid);
         }

@@ -25,12 +25,12 @@
 #include <stdint.h>
 
 /* ── wiring ─────────────────────────────────────────────────────── */
-#define RC_ADDRESS  0x80    /* default RoboClaw address — change if you set a different one */
-#define POL_L      -1.0f
-#define POL_R      -1.0f
+#define RC_ADDRESS 0x80 /* default RoboClaw address — change if you set a different one */
+#define POL_L -1.0f
+#define POL_R -1.0f
 
 /* duty range the RoboClaw expects for MIXEDDUTY (cmd 34): -32767 .. +32767 */
-#define DUTY_MAX    32767
+#define DUTY_MAX 32767
 
 #include <pthread.h>
 
@@ -45,19 +45,21 @@ static int32_t g_enc_r = 0;
 
 static int refresh_encoders(void)
 {
-    if (!g_rc) return -1;
+    if (!g_rc)
+        return -1;
     int32_t m1, m2;
     pthread_mutex_lock(&g_rc_mutex);
     int ret = roboclaw_encoders(g_rc, RC_ADDRESS, &m1, &m2);
     pthread_mutex_unlock(&g_rc_mutex);
-    if (ret != ROBOCLAW_OK) {
+    if (ret != ROBOCLAW_OK)
+    {
         LOG_WARN("motor_hal_roboclaw: encoder read failed (%d)", ret);
         return -1;
     }
     // M2 = left wheel, negate because it decrements when moving forward.
     // M1 = right wheel, positive when moving forward.
     g_enc_l = -m2;
-    g_enc_r =  m1;
+    g_enc_r = m1;
     return 0;
 }
 
@@ -65,14 +67,17 @@ static int refresh_encoders(void)
 
 int motor_hal_init(const char *device, int baud)
 {
-    if (!device) device = "/dev/ttyO2";
-    if (baud <= 0) baud = 38400;
+    if (!device)
+        device = "/dev/ttyO2";
+    if (baud <= 0)
+        baud = 460800;
 
     LOG_INFO("motor_hal_roboclaw: opening %s at %d baud (addr 0x%02X)",
              device, baud, RC_ADDRESS);
 
     g_rc = roboclaw_init(device, baud);
-    if (!g_rc) {
+    if (!g_rc)
+    {
         LOG_ERROR("motor_hal_roboclaw: roboclaw_init() failed — check device and baud");
         return -1;
     }
@@ -90,7 +95,8 @@ int motor_hal_init(const char *device, int baud)
 
 void motor_hal_cleanup(void)
 {
-    if (!g_rc) return;
+    if (!g_rc)
+        return;
     motor_hal_set_both(0.0f, 0.0f);
     roboclaw_close(g_rc);
     g_rc = NULL;
@@ -101,21 +107,27 @@ void motor_hal_cleanup(void)
 
 int motor_hal_set_both(float left, float right)
 {
-    if (!g_rc) return -1;
+    if (!g_rc)
+        return -1;
 
-    if (left  >  1.0f) left  =  1.0f;
-    if (left  < -1.0f) left  = -1.0f;
-    if (right >  1.0f) right =  1.0f;
-    if (right < -1.0f) right = -1.0f;
+    if (left > 1.0f)
+        left = 1.0f;
+    if (left < -1.0f)
+        left = -1.0f;
+    if (right > 1.0f)
+        right = 1.0f;
+    if (right < -1.0f)
+        right = -1.0f;
 
-    int16_t d1 = (int16_t)(POL_L * left  * DUTY_MAX);
+    int16_t d1 = (int16_t)(POL_L * left * DUTY_MAX);
     int16_t d2 = (int16_t)(POL_R * right * DUTY_MAX);
 
     pthread_mutex_lock(&g_rc_mutex);
     int ret = roboclaw_duty_m1m2(g_rc, RC_ADDRESS, d1, d2);
     pthread_mutex_unlock(&g_rc_mutex);
 
-    if (ret != ROBOCLAW_OK) {
+    if (ret != ROBOCLAW_OK)
+    {
         LOG_WARN("motor_hal_roboclaw: duty command failed (%d)", ret);
         return -1;
     }
@@ -127,8 +139,8 @@ int motor_hal_set(int motor, float duty)
     /* roboclaw_duty_m1m2 drives both motors in one packet — keep the
      * other side at zero.  If you need independent control use set_both. */
     return motor == MOTOR_LEFT
-        ? motor_hal_set_both(duty, 0.0f)
-        : motor_hal_set_both(0.0f, duty);
+               ? motor_hal_set_both(duty, 0.0f)
+               : motor_hal_set_both(0.0f, duty);
 }
 
 int motor_hal_free_spin(void)
@@ -139,7 +151,8 @@ int motor_hal_free_spin(void)
 int motor_hal_standby(int standby)
 {
     /* RoboClaw has no standby pin — zeroing motors is the equivalent */
-    if (standby) return motor_hal_set_both(0.0f, 0.0f);
+    if (standby)
+        return motor_hal_set_both(0.0f, 0.0f);
     return 0;
 }
 
@@ -152,7 +165,8 @@ int32_t motor_hal_encoder_read(int motor)
      * same loop tick only hit the wire once. */
     static uint64_t last_refresh_us = 0;
     uint64_t now_us = rc_nanos_since_boot() / 1000;
-    if (now_us - last_refresh_us > 5000) {   /* refresh at most every 5 ms */
+    if (now_us - last_refresh_us > 5000)
+    { /* refresh at most every 5 ms */
         refresh_encoders();
         last_refresh_us = now_us;
     }
@@ -171,7 +185,8 @@ int motor_hal_encoder_reset_all(void)
 {
     g_enc_l = 0;
     g_enc_r = 0;
-    if (!g_rc) return -1;
+    if (!g_rc)
+        return -1;
     pthread_mutex_lock(&g_rc_mutex);
     int ret = roboclaw_reset_encoders(g_rc, RC_ADDRESS);
     pthread_mutex_unlock(&g_rc_mutex);
