@@ -2,8 +2,8 @@
  * @file motor_hal_roboclaw.c
  * @brief Motor HAL backend: RoboClaw via roboclaw library (Bartosz Meglicki).
  *
- * Uses roboclaw_init() / roboclaw_duty_m1m2() / roboclaw_encoders() from
- * the vendored roboclaw library (src/roboclaw.c + include/roboclaw.h).
+ * Uses roboclaw_init() / roboclaw_speed_m1m2() / roboclaw_duty_m1m2() / roboclaw_encoders()
+ * from the vendored roboclaw library (src/roboclaw.c + include/roboclaw.h).
  * That library owns the tty directly via termios — do NOT also open it
  * through rc_uart.
  *
@@ -12,9 +12,24 @@
  * and pass -m /dev/ttyOx [-B <baud>] on the command line.
  *
  * Wiring notes:
- *   M1 = LEFT  motor  (adjust POL_L if it runs backwards)
- *   M2 = RIGHT motor  (adjust POL_R if it runs backwards)
+ *   M1 = RIGHT motor  (negate g_motor_config.pol_r if it runs backwards)
+ *   M2 = LEFT  motor  (negate g_motor_config.pol_l if it runs backwards)
  *   Address 0x80 is the RoboClaw factory default.
+ *
+ * ── Drive mode ───────────────────────────────────────────────────────────────
+ * All drive parameters are runtime-tunable via the IPC set_motor_config command
+ * and live in g_motor_config (balance_bot.h / pid_config.c).
+ *
+ *   mode 0  MOTOR_HAL_MODE_DUTY          — raw PWM duty (MIXEDDUTY, cmd 34)
+ *   mode 1  MOTOR_HAL_MODE_VELOCITY      — closed-loop QPPS (MIXEDSPEED, cmd 37)
+ *   mode 2  MOTOR_HAL_MODE_VELOCITY_ACCEL— closed-loop QPPS + ramp (cmd 40)
+ *
+ * For velocity modes the HAL maps the normalised ±1.0f input to
+ * ±g_motor_config.qpps_max encoder pulses/second.
+ *
+ * Important: velocity modes require the RoboClaw encoder inputs to be wired
+ * and the velocity PID tuned in Basic Micro Motion Studio before use.
+ * The RoboClaw velocity PID is completely separate from balance_bot's PID.
  */
 
 #include "motor_hal.h"
@@ -23,16 +38,13 @@
 
 #include <string.h>
 #include <stdint.h>
+#include <pthread.h>
 
-/* ── wiring ─────────────────────────────────────────────────────── */
-#define RC_ADDRESS 0x80 /* default RoboClaw address — change if you set a different one */
-#define POL_L 1.0f
-#define POL_R 1.0f
+/* ── wiring ──────────────────────────────────────────────────────────────── */
+#define RC_ADDRESS 0x80   /* default RoboClaw address */
 
 /* duty range the RoboClaw expects for MIXEDDUTY (cmd 34): -32767 .. +32767 */
 #define DUTY_MAX 32767
-
-#include <pthread.h>
 
 static struct roboclaw *g_rc = NULL;
 static pthread_mutex_t g_rc_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -110,28 +122,48 @@ int motor_hal_set_both(float left, float right)
     if (!g_rc)
         return -1;
 
-    if (left > 1.0f)
-        left = 1.0f;
-    if (left < -1.0f)
-        left = -1.0f;
-    if (right > 1.0f)
-        right = 1.0f;
-    if (right < -1.0f)
-        right = -1.0f;
+    /* clamp to ±1.0 */
+    if (left  >  1.0f) left  =  1.0f;
+    if (left  < -1.0f) left  = -1.0f;
+    if (right >  1.0f) right =  1.0f;
+    if (right < -1.0f) right = -1.0f;
 
-    int16_t d1 = (int16_t)(POL_L * left * DUTY_MAX);
-    int16_t d2 = (int16_t)(POL_R * right * DUTY_MAX);
+    const float pol_l    = g_motor_config.pol_l;
+    const float pol_r    = g_motor_config.pol_r;
+    const int   mode     = g_motor_config.mode;
+    const int   qpps_max = g_motor_config.qpps_max;
+    const int   accel    = g_motor_config.accel_qpps;
 
+    int ret;
     pthread_mutex_lock(&g_rc_mutex);
-    int ret = roboclaw_duty_m1m2(g_rc, RC_ADDRESS, d1, d2);
-    pthread_mutex_unlock(&g_rc_mutex);
 
-    if (ret != ROBOCLAW_OK)
-    {
-        LOG_WARN("motor_hal_roboclaw: duty command failed (%d)", ret);
-        return -1;
+    if (mode == MOTOR_HAL_MODE_VELOCITY_ACCEL) {
+        /* closed-loop velocity + acceleration ramp (MIXEDSPEEDACCEL, cmd 40) */
+        int32_t spd_r = (int32_t)(pol_r * right * (float)qpps_max);
+        int32_t spd_l = (int32_t)(pol_l * left  * (float)qpps_max);
+        ret = roboclaw_speed_accel_m1m2(g_rc, RC_ADDRESS, spd_r, spd_l, accel);
+        if (ret != ROBOCLAW_OK)
+            LOG_WARN("motor_hal_roboclaw: speed_accel command failed (%d)", ret);
+
+    } else if (mode == MOTOR_HAL_MODE_VELOCITY) {
+        /* closed-loop velocity, no ramp (MIXEDSPEED, cmd 37) */
+        int32_t spd_r = (int32_t)(pol_r * right * (float)qpps_max);
+        int32_t spd_l = (int32_t)(pol_l * left  * (float)qpps_max);
+        ret = roboclaw_speed_m1m2(g_rc, RC_ADDRESS, spd_r, spd_l);
+        if (ret != ROBOCLAW_OK)
+            LOG_WARN("motor_hal_roboclaw: speed command failed (%d)", ret);
+
+    } else {
+        /* raw PWM duty cycle (MIXEDDUTY, cmd 34) — default, no encoder feedback */
+        int16_t d1 = (int16_t)(pol_r * right * (float)DUTY_MAX);
+        int16_t d2 = (int16_t)(pol_l * left  * (float)DUTY_MAX);
+        ret = roboclaw_duty_m1m2(g_rc, RC_ADDRESS, d1, d2);
+        if (ret != ROBOCLAW_OK)
+            LOG_WARN("motor_hal_roboclaw: duty command failed (%d)", ret);
     }
-    return 0;
+
+    pthread_mutex_unlock(&g_rc_mutex);
+    return (ret == ROBOCLAW_OK) ? 0 : -1;
 }
 
 int motor_hal_set(int motor, float duty)

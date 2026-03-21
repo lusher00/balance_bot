@@ -101,6 +101,44 @@ typedef struct {
 // Encoder configuration
 #define ENCODER_TICKS_PER_REV 2400  // TODO: set to actual value
 
+// Motor HAL drive modes (mirror of motor_hal_roboclaw.c defines)
+#define MOTOR_HAL_MODE_DUTY           0  // Raw PWM duty — no encoder feedback required
+#define MOTOR_HAL_MODE_VELOCITY       1  // Closed-loop speed  (MIXEDSPEED,      cmd 37)
+#define MOTOR_HAL_MODE_VELOCITY_ACCEL 2  // Closed-loop speed + accel ramp (cmd 40)
+
+// motor_config defaults — override at runtime via set_motor_config IPC
+#define MOTOR_HAL_MODE_DEFAULT  MOTOR_HAL_MODE_DUTY
+#define MOTOR_QPPS_MAX_DEFAULT  2000    // Measure in Motion Studio at 100% duty
+#define MOTOR_ACCEL_QPPS_DEFAULT 4000   // 2×QPPS_MAX ≈ 0.5 s ramp
+
+/**
+ * @brief Runtime-tunable RoboClaw drive mode and velocity parameters.
+ *
+ * mode       — selects the RoboClaw command used by motor_hal_set_both():
+ *              0 = raw PWM duty (MIXEDDUTY, cmd 34)
+ *              1 = closed-loop velocity (MIXEDSPEED, cmd 37)
+ *              2 = closed-loop velocity + acceleration ramp (MIXEDSPEEDACCEL, cmd 40)
+ *
+ * qpps_max   — top motor speed in encoder pulses/second at ±1.0 normalised output.
+ *              Measure with Basic Micro Motion Studio while commanding 100% duty.
+ *
+ * accel_qpps — acceleration ramp rate (pulses/s²), mode 2 only.
+ *              ~2×qpps_max gives a ≈0.5 s ramp; increase for snappier response.
+ *
+ * pol_l/pol_r — polarity flip per motor (+1.0 or -1.0). Flip if a motor runs
+ *              backwards relative to the robot's forward direction.
+ *
+ * All fields are readable/writable at runtime via the IPC set_motor_config
+ * command and persisted by save_pid.
+ */
+typedef struct {
+    int   mode;         // MOTOR_HAL_MODE_DUTY / _VELOCITY / _VELOCITY_ACCEL
+    int   qpps_max;     // Max encoder speed (pulses/s) at full throttle
+    int   accel_qpps;   // Acceleration ramp rate (pulses/s²), mode 2 only
+    float pol_l;        // Left  motor polarity: +1.0 or -1.0
+    float pol_r;        // Right motor polarity: +1.0 or -1.0
+} motor_config_t;
+
 // ============================================================================
 // DATA STRUCTURES
 // ============================================================================
@@ -200,6 +238,7 @@ extern pid_controller_t drive_pid;
 extern debug_config_t   g_debug_config;
 extern telemetry_data_t g_telemetry_data;
 extern pos_config_t     g_pos_config;
+extern motor_config_t   g_motor_config;
 
 // ============================================================================
 // PID (pid.c)
@@ -294,6 +333,22 @@ int  pos_config_save   (const char *filename, const pos_config_t *cfg);
  * @brief Load pos_config from file, or fill defaults if section absent.
  */
 int  pos_config_load_or_default(const char *filename, pos_config_t *cfg);
+
+// ============================================================================
+// MOTOR CONFIG (pid_config.c)
+// ============================================================================
+
+/** @brief Apply a motor_config_t to the global g_motor_config. */
+void motor_config_apply         (const motor_config_t *cfg);
+
+/** @brief Populate *cfg from the current g_motor_config values. */
+void motor_config_get_current   (motor_config_t *cfg);
+
+/** @brief Save motor_config to file (appended section in pidconfig.txt). */
+int  motor_config_save          (const char *filename, const motor_config_t *cfg);
+
+/** @brief Load motor_config from file, or fill defaults if section absent. */
+int  motor_config_load_or_default(const char *filename, motor_config_t *cfg);
 
 // ============================================================================
 // XBOX CONTROLLER (input_xbox.c)

@@ -20,6 +20,9 @@ pid_controller_t balance_pid, drive_pid, steering_pid;
 // Runtime-tunable position controller parameters (initialised in robot_init)
 pos_config_t g_pos_config;
 
+// Runtime-tunable motor/RoboClaw drive parameters (initialised in robot_init)
+motor_config_t g_motor_config;
+
 // Debug configuration (defined in debug_config.h, initialized in main.c)
 debug_config_t g_debug_config;
 
@@ -177,6 +180,12 @@ int robot_init(void)
     g_pos_config.max_correction    = POS_MAX_CORRECTION_DEFAULT;
     g_pos_config.max_angle_rate    = POS_MAX_ANGLE_RATE_DEFAULT;
     g_pos_config.back_to_spot      = POS_BACK_TO_SPOT_DEFAULT;
+
+    g_motor_config.mode       = MOTOR_HAL_MODE_DEFAULT;
+    g_motor_config.qpps_max   = MOTOR_QPPS_MAX_DEFAULT;
+    g_motor_config.accel_qpps = MOTOR_ACCEL_QPPS_DEFAULT;
+    g_motor_config.pol_l      = 1.0f;
+    g_motor_config.pol_r      = 1.0f;
     LOG_INFO("PID Controllers:");
     LOG_INFO("  D1_balance:  Kp=%.3f Ki=%.3f Kd=%.3f", BALANCE_KP, BALANCE_KI, BALANCE_KD);
     LOG_INFO("  D2_balance:  Kp=%.3f Ki=%.3f Kd=%.3f", DRIVE_KP, DRIVE_KI, DRIVE_KD);

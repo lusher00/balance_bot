@@ -290,6 +290,10 @@ int main(int argc, char *argv[])
 
     pid_config_apply(&pid_config);
 
+    motor_config_t motor_config;
+    motor_config_load_or_default(pid_config_file, &motor_config);
+    motor_config_apply(&motor_config);
+
     /* Input subsystem */
     switch (input_mode)
     {

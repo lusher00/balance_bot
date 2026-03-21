@@ -405,3 +405,78 @@ int pos_config_load_or_default(const char *filename, pos_config_t *cfg)
     LOG_INFO("pos_config loaded from %s", filename);
     return 0;
 }
+
+// ============================================================================
+// MOTOR CONFIG  (runtime RoboClaw drive mode + velocity tuning)
+// ============================================================================
+
+#define MOTOR_CONFIG_SECTION "# motor_config"
+
+void motor_config_apply(const motor_config_t *cfg)
+{
+    g_motor_config = *cfg;
+    LOG_INFO("motor_config applied: mode=%d qpps_max=%d accel_qpps=%d pol_l=%.1f pol_r=%.1f",
+             cfg->mode, cfg->qpps_max, cfg->accel_qpps, cfg->pol_l, cfg->pol_r);
+}
+
+void motor_config_get_current(motor_config_t *cfg)
+{
+    *cfg = g_motor_config;
+}
+
+int motor_config_save(const char *filename, const motor_config_t *cfg)
+{
+    if (!filename) filename = DEFAULT_CONFIG_FILE;
+
+    FILE *f = fopen(filename, "a");
+    if (!f) {
+        LOG_ERROR("motor_config_save: cannot open %s: %s", filename, strerror(errno));
+        return -1;
+    }
+    fprintf(f, "\n%s\n", MOTOR_CONFIG_SECTION);
+    fprintf(f, "mode=%d\n",        cfg->mode);
+    fprintf(f, "qpps_max=%d\n",    cfg->qpps_max);
+    fprintf(f, "accel_qpps=%d\n",  cfg->accel_qpps);
+    fprintf(f, "pol_l=%.1f\n",     cfg->pol_l);
+    fprintf(f, "pol_r=%.1f\n",     cfg->pol_r);
+    fclose(f);
+    LOG_INFO("motor_config saved to %s", filename);
+    return 0;
+}
+
+int motor_config_load_or_default(const char *filename, motor_config_t *cfg)
+{
+    /* Fill defaults first */
+    cfg->mode       = MOTOR_HAL_MODE_DEFAULT;
+    cfg->qpps_max   = MOTOR_QPPS_MAX_DEFAULT;
+    cfg->accel_qpps = MOTOR_ACCEL_QPPS_DEFAULT;
+    cfg->pol_l      = 1.0f;
+    cfg->pol_r      = 1.0f;
+
+    if (!filename) filename = DEFAULT_CONFIG_FILE;
+    FILE *f = fopen(filename, "r");
+    if (!f) return 0;   /* no file yet — defaults are fine */
+
+    char line[128];
+    int in_section = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, MOTOR_CONFIG_SECTION, strlen(MOTOR_CONFIG_SECTION)) == 0) {
+            in_section = 1;
+            continue;
+        }
+        if (!in_section) continue;
+        if (line[0] == '#' || line[0] == '\n') { in_section = 0; continue; }
+
+        char key[64]; float fval;
+        if (sscanf(line, "%63[^=]=%f", key, &fval) == 2) {
+            if      (!strcmp(key, "mode"))       cfg->mode       = (int)fval;
+            else if (!strcmp(key, "qpps_max"))   cfg->qpps_max   = (int)fval;
+            else if (!strcmp(key, "accel_qpps")) cfg->accel_qpps = (int)fval;
+            else if (!strcmp(key, "pol_l"))      cfg->pol_l      = fval;
+            else if (!strcmp(key, "pol_r"))      cfg->pol_r      = fval;
+        }
+    }
+    fclose(f);
+    LOG_INFO("motor_config loaded from %s", filename);
+    return 0;
+}

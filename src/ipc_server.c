@@ -348,7 +348,7 @@ static int parse_json_command(const char* json_cmd) {
         return -1;
     }
 
-    // {"type":"save_pid"}  -- write current PID gains + pos_config to pidconfig.txt
+    // {"type":"save_pid"}  -- write current PID gains + pos_config + motor_config to pidconfig.txt
     if (strstr(json_cmd, "\"type\":\"save_pid\"")) {
         pid_config_file_t cfg;
         pid_config_get_current(&cfg);
@@ -356,7 +356,10 @@ static int parse_json_command(const char* json_cmd) {
             pos_config_t pcfg;
             pos_config_get_current(&pcfg);
             pos_config_save(NULL, &pcfg);
-            LOG_INFO("iPhone: PID + pos config saved to pidconfig.txt");
+            motor_config_t mcfg;
+            motor_config_get_current(&mcfg);
+            motor_config_save(NULL, &mcfg);
+            LOG_INFO("iPhone: PID + pos + motor config saved to pidconfig.txt");
         } else {
             LOG_WARN("iPhone: failed to save PID config");
         }
@@ -397,6 +400,45 @@ static int parse_json_command(const char* json_cmd) {
         return 0;
     }
 
+    // {"type":"set_motor_config",...} -- update RoboClaw drive mode + velocity params at runtime
+    // Fields (all optional — omit any you don't want to change):
+    //   mode       0=duty  1=velocity  2=velocity+accel
+    //   qpps_max   top motor speed in encoder pulses/sec at full throttle
+    //   accel_qpps acceleration ramp rate (pulses/s^2), mode 2 only
+    //   pol_l      left  motor polarity: +1.0 or -1.0
+    //   pol_r      right motor polarity: +1.0 or -1.0
+    if (strstr(json_cmd, "\"type\":\"set_motor_config\"")) {
+        motor_config_t cfg = g_motor_config;
+
+        #define MCFG_INT(key, field) \
+            do { const char *_p = strstr(json_cmd, "\"" key "\":"); \
+                 if (_p) { int _v; if (sscanf(_p + strlen("\"" key "\":"), "%d", &_v)==1) cfg.field=_v; } } while(0)
+        #define MCFG_FLOAT(key, field) \
+            do { const char *_p = strstr(json_cmd, "\"" key "\":"); \
+                 if (_p) sscanf(_p + strlen("\"" key "\":"), "%f", &cfg.field); } while(0)
+
+        MCFG_INT  ("mode",       mode);
+        MCFG_INT  ("qpps_max",   qpps_max);
+        MCFG_INT  ("accel_qpps", accel_qpps);
+        MCFG_FLOAT("pol_l",      pol_l);
+        MCFG_FLOAT("pol_r",      pol_r);
+
+        #undef MCFG_INT
+        #undef MCFG_FLOAT
+
+        if (cfg.mode < 0 || cfg.mode > 2) {
+            LOG_WARN("set_motor_config: invalid mode %d (0-2 only)", cfg.mode);
+            return -1;
+        }
+        if (cfg.qpps_max   < 1) cfg.qpps_max   = 1;
+        if (cfg.accel_qpps < 1) cfg.accel_qpps = 1;
+
+        motor_config_apply(&cfg);
+        LOG_INFO("iPhone: motor_config updated — mode=%d qpps_max=%d accel=%d pol=%.1f/%.1f",
+                 cfg.mode, cfg.qpps_max, cfg.accel_qpps, cfg.pol_l, cfg.pol_r);
+        return 0;
+    }
+
     LOG_WARN("Unknown command type");
     return -1;
 }
@@ -432,6 +474,16 @@ static void build_telemetry_json(char* buffer, size_t size) {
                        (int)g_telemetry_data.system.batt_status);
     }
     
+    // Motor config (always included — small, static, useful for app to confirm active mode)
+    pos += snprintf(buffer + pos, size - pos,
+                   "\"motor_config\":{\"mode\":%d,\"qpps_max\":%d,\"accel_qpps\":%d,"
+                   "\"pol_l\":%.1f,\"pol_r\":%.1f},",
+                   g_motor_config.mode,
+                   g_motor_config.qpps_max,
+                   g_motor_config.accel_qpps,
+                   g_motor_config.pol_l,
+                   g_motor_config.pol_r);
+
     // Encoders
     if (g_debug_config.telemetry.encoders) {
         pos += snprintf(buffer + pos, size - pos,

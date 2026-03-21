@@ -6,6 +6,11 @@ CC = gcc
 CFLAGS = -Wall -Wextra -O2 -Iinclude
 LDFLAGS = -lrobotcontrol -lm -lpthread -lncurses
 
+# Motor HAL drive mode and QPPS are now runtime-tunable via the IPC
+# set_motor_config command — no compile-time flags needed.
+# Defaults are set by MOTOR_HAL_MODE_DEFAULT / MOTOR_QPPS_MAX_DEFAULT
+# / MOTOR_ACCEL_QPPS_DEFAULT in balance_bot.h.
+
 # Source files
 # Motor HAL — RoboClaw packet-serial over UART
 MOTOR_HAL = src/motor_hal_roboclaw.c
@@ -43,6 +48,7 @@ $(BINDIR)/$(TARGET): $(OBJS)
 	@echo ""
 	@echo "✅ Build complete: $(BINDIR)/$(TARGET)"
 	@echo "   Run: sudo ./$(BINDIR)/$(TARGET)"
+	@echo "   Motor mode/QPPS tunable at runtime via set_motor_config IPC"
 	@echo ""
 
 # Compile
