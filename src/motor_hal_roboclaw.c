@@ -68,10 +68,9 @@ static int refresh_encoders(void)
         LOG_WARN("motor_hal_roboclaw: encoder read failed (%d)", ret);
         return -1;
     }
-    // M2 = left wheel, positive when moving forward (M2 & ENC2 are negated in basic micro motion studio)
-    // M1 = right wheel, positive when moving forward.
-    g_enc_r = m1;
-    g_enc_l = m2;
+    // Apply per-motor encoder polarity from motor_config (runtime tunable via IPC)
+    g_enc_r = (int32_t)(g_motor_config.enc_pol_r * (float)m1);
+    g_enc_l = (int32_t)(g_motor_config.enc_pol_l * (float)m2);
     return 0;
 }
 

@@ -415,8 +415,8 @@ int pos_config_load_or_default(const char *filename, pos_config_t *cfg)
 void motor_config_apply(const motor_config_t *cfg)
 {
     g_motor_config = *cfg;
-    LOG_INFO("motor_config applied: mode=%d qpps_max=%d accel_qpps=%d pol_l=%.1f pol_r=%.1f",
-             cfg->mode, cfg->qpps_max, cfg->accel_qpps, cfg->pol_l, cfg->pol_r);
+    LOG_INFO("motor_config applied: mode=%d qpps_max=%d accel_qpps=%d pol_l=%.1f pol_r=%.1f enc_pol_l=%.1f enc_pol_r=%.1f",
+             cfg->mode, cfg->qpps_max, cfg->accel_qpps, cfg->pol_l, cfg->pol_r, cfg->enc_pol_l, cfg->enc_pol_r);
 }
 
 void motor_config_get_current(motor_config_t *cfg)
@@ -439,6 +439,8 @@ int motor_config_save(const char *filename, const motor_config_t *cfg)
     fprintf(f, "accel_qpps=%d\n",  cfg->accel_qpps);
     fprintf(f, "pol_l=%.1f\n",     cfg->pol_l);
     fprintf(f, "pol_r=%.1f\n",     cfg->pol_r);
+    fprintf(f, "enc_pol_l=%.1f\n", cfg->enc_pol_l);
+    fprintf(f, "enc_pol_r=%.1f\n", cfg->enc_pol_r);
     fclose(f);
     LOG_INFO("motor_config saved to %s", filename);
     return 0;
@@ -452,6 +454,8 @@ int motor_config_load_or_default(const char *filename, motor_config_t *cfg)
     cfg->accel_qpps = MOTOR_ACCEL_QPPS_DEFAULT;
     cfg->pol_l      = 1.0f;
     cfg->pol_r      = 1.0f;
+    cfg->enc_pol_l  = 1.0f;
+    cfg->enc_pol_r  = 1.0f;
 
     if (!filename) filename = DEFAULT_CONFIG_FILE;
     FILE *f = fopen(filename, "r");
@@ -474,6 +478,8 @@ int motor_config_load_or_default(const char *filename, motor_config_t *cfg)
             else if (!strcmp(key, "accel_qpps")) cfg->accel_qpps = (int)fval;
             else if (!strcmp(key, "pol_l"))      cfg->pol_l      = fval;
             else if (!strcmp(key, "pol_r"))      cfg->pol_r      = fval;
+            else if (!strcmp(key, "enc_pol_l"))  cfg->enc_pol_l  = fval;
+            else if (!strcmp(key, "enc_pol_r"))  cfg->enc_pol_r  = fval;
         }
     }
     fclose(f);

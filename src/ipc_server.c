@@ -242,13 +242,14 @@ static int parse_json_command(const char* json_cmd) {
     // {"type":"arm","value":true}  or  {"type":"arm","value":false}
     if (strstr(json_cmd, "\"type\":\"arm\"")) {
         if (strstr(json_cmd, "\"value\":true")) {
-            if (fabsf(state.theta - state.theta_offset) > 14.0f) {
-                LOG_WARN("iPhone ARM REJECTED — effective angle too large (%.1f deg)", state.theta - state.theta_offset);
-                return -1;
+            state.trying = 1;
+            if (fabsf(state.theta - state.theta_offset) <= 14.0f) {
+                state.armed = 1;
+                rc_led_set(RC_LED_GREEN, 1);
+                LOG_INFO("iPhone: ARMED (theta=%.2f deg)", state.theta);
+            } else {
+                LOG_INFO("iPhone: auto-arm enabled — waiting for upright (%.1f deg)", state.theta - state.theta_offset);
             }
-            state.armed = 1;
-            rc_led_set(RC_LED_GREEN, 1);
-            LOG_INFO("iPhone: ARMED (theta=%.2f deg)", state.theta);
         } else {
             state.armed  = 0;
             state.trying = 0;   // prevent auto-recovery from immediately re-arming
@@ -284,6 +285,8 @@ static int parse_json_command(const char* json_cmd) {
         pid_config_file_t cfg;
         pid_config_get_current(&cfg);
         pid_config_save(NULL, &cfg);
+        pos_config_t pcfg; pos_config_get_current(&pcfg); pos_config_save(NULL, &pcfg);
+        motor_config_t mcfg; motor_config_get_current(&mcfg); motor_config_save(NULL, &mcfg);
         LOG_INFO("iPhone: IMU zeroed, saved");
         return 0;
     }
@@ -300,6 +303,8 @@ static int parse_json_command(const char* json_cmd) {
         pid_config_file_t cfg;
         pid_config_get_current(&cfg);
         pid_config_save(NULL, &cfg);
+        pos_config_t pcfg; pos_config_get_current(&pcfg); pos_config_save(NULL, &pcfg);
+        motor_config_t mcfg; motor_config_get_current(&mcfg); motor_config_save(NULL, &mcfg);
         LOG_INFO("iPhone: theta_offset = %.2f deg, saved", val);
         return 0;
     }
@@ -422,6 +427,8 @@ static int parse_json_command(const char* json_cmd) {
         MCFG_INT  ("accel_qpps", accel_qpps);
         MCFG_FLOAT("pol_l",      pol_l);
         MCFG_FLOAT("pol_r",      pol_r);
+        MCFG_FLOAT("enc_pol_l",  enc_pol_l);
+        MCFG_FLOAT("enc_pol_r",  enc_pol_r);
 
         #undef MCFG_INT
         #undef MCFG_FLOAT
@@ -477,12 +484,14 @@ static void build_telemetry_json(char* buffer, size_t size) {
     // Motor config (always included — small, static, useful for app to confirm active mode)
     pos += snprintf(buffer + pos, size - pos,
                    "\"motor_config\":{\"mode\":%d,\"qpps_max\":%d,\"accel_qpps\":%d,"
-                   "\"pol_l\":%.1f,\"pol_r\":%.1f},",
+                   "\"pol_l\":%.1f,\"pol_r\":%.1f,\"enc_pol_l\":%.1f,\"enc_pol_r\":%.1f},",
                    g_motor_config.mode,
                    g_motor_config.qpps_max,
                    g_motor_config.accel_qpps,
                    g_motor_config.pol_l,
-                   g_motor_config.pol_r);
+                   g_motor_config.pol_r,
+                   g_motor_config.enc_pol_l,
+                   g_motor_config.enc_pol_r);
 
     // Encoders
     if (g_debug_config.telemetry.encoders) {
@@ -536,12 +545,16 @@ static void build_telemetry_json(char* buffer, size_t size) {
         pos += snprintf(buffer + pos, size - pos,
                        "\"D1_balance\":{\"enabled\":%s,\"setpoint\":%.4f,"
                        "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
+                       "\"p_term\":%.4f,\"i_term\":%.4f,\"d_term\":%.4f,"
                        "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},",
                        g_telemetry_data.D1_balance.enabled ? "true" : "false",
                        g_telemetry_data.D1_balance.setpoint,
                        g_telemetry_data.D1_balance.measurement,
                        g_telemetry_data.D1_balance.error,
                        g_telemetry_data.D1_balance.output,
+                       g_telemetry_data.D1_balance.p_term,
+                       g_telemetry_data.D1_balance.i_term,
+                       g_telemetry_data.D1_balance.d_term,
                        g_telemetry_data.D1_balance.kp,
                        g_telemetry_data.D1_balance.ki,
                        g_telemetry_data.D1_balance.kd);
@@ -549,12 +562,16 @@ static void build_telemetry_json(char* buffer, size_t size) {
         pos += snprintf(buffer + pos, size - pos,
                        "\"D2_drive\":{\"enabled\":%s,\"setpoint\":%.4f,"
                        "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
+                       "\"p_term\":%.4f,\"i_term\":%.4f,\"d_term\":%.4f,"
                        "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},",
                        g_telemetry_data.D2_drive.enabled ? "true" : "false",
                        g_telemetry_data.D2_drive.setpoint,
                        g_telemetry_data.D2_drive.measurement,
                        g_telemetry_data.D2_drive.error,
                        g_telemetry_data.D2_drive.output,
+                       g_telemetry_data.D2_drive.p_term,
+                       g_telemetry_data.D2_drive.i_term,
+                       g_telemetry_data.D2_drive.d_term,
                        g_telemetry_data.D2_drive.kp,
                        g_telemetry_data.D2_drive.ki,
                        g_telemetry_data.D2_drive.kd);
@@ -562,12 +579,16 @@ static void build_telemetry_json(char* buffer, size_t size) {
         pos += snprintf(buffer + pos, size - pos,
                        "\"D3_steering\":{\"enabled\":%s,\"setpoint\":%.4f,"
                        "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
+                       "\"p_term\":%.4f,\"i_term\":%.4f,\"d_term\":%.4f,"
                        "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},",
                        g_telemetry_data.D3_steering.enabled ? "true" : "false",
                        g_telemetry_data.D3_steering.setpoint,
                        g_telemetry_data.D3_steering.measurement,
                        g_telemetry_data.D3_steering.error,
                        g_telemetry_data.D3_steering.output,
+                       g_telemetry_data.D3_steering.p_term,
+                       g_telemetry_data.D3_steering.i_term,
+                       g_telemetry_data.D3_steering.d_term,
                        g_telemetry_data.D3_steering.kp,
                        g_telemetry_data.D3_steering.ki,
                        g_telemetry_data.D3_steering.kd);
