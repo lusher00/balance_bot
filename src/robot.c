@@ -379,7 +379,7 @@ void robot_run(void)
                     state.trying = 0;
                     state.armed = 0;
                     rc_led_set(RC_LED_GREEN, 0);
-                    LOG_WARN("SBUS kill switch — DISARMED");
+                    LOG_WARN("DISARM@kill_switch");
                 }
             }
 
@@ -405,7 +405,7 @@ void robot_run(void)
                 state.trying = 0;
                 state.armed = 0;
                 rc_led_set(RC_LED_GREEN, 0);
-                LOG_INFO("SBUS DISARMED");
+                LOG_INFO("DISARM@sbus_arm_low");
             }
             prev_sbus_arm = arm;
 

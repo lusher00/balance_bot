@@ -156,6 +156,8 @@ typedef struct {
     int   accel_qpps;   // Acceleration ramp rate (pulses/s²), mode 2 only
     float pol_l;        // Left  motor polarity: +1.0 or -1.0
     float pol_r;        // Right motor polarity: +1.0 or -1.0
+    float enc_pol_l;    // Left  encoder polarity: +1.0 or -1.0
+    float enc_pol_r;    // Right encoder polarity: +1.0 or -1.0
 } motor_config_t;
 
 // ============================================================================
