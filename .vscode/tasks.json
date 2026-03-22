@@ -4,7 +4,7 @@
         {
             "label": "build",
             "type": "shell",
-            "command": "ssh boneblue-0 'cd ~/balance_bot && make'",
+            "command": "ssh debian@192.168.1.116 'cd ~/balance_bot && make'",
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -15,7 +15,10 @@
             },
             "problemMatcher": {
                 "owner": "c",
-                "fileLocation": ["relative", "${workspaceFolder}"],
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
                 "pattern": {
                     "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
                     "file": 1,
@@ -29,7 +32,7 @@
         {
             "label": "clean",
             "type": "shell",
-            "command": "ssh boneblue-0 'cd ~/balance_bot && make clean'",
+            "command": "ssh debian@192.168.1.116 'cd ~/balance_bot && make clean'",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -39,7 +42,7 @@
         {
             "label": "install",
             "type": "shell",
-            "command": "ssh boneblue-0 'cd ~/balance_bot && make install'",
+            "command": "ssh debian@192.168.1.116 'cd ~/balance_bot && make install'",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -49,7 +52,7 @@
         {
             "label": "sync and build",
             "type": "shell",
-            "command": "rsync -av --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make'",
+            "command": "rsync -av --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' ${workspaceFolder}/ debian@192.168.1.116:~/balance_bot/ && ssh debian@192.168.1.116 'cd ~/balance_bot && make'",
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -57,7 +60,10 @@
             },
             "problemMatcher": {
                 "owner": "c",
-                "fileLocation": ["relative", "${workspaceFolder}"],
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
                 "pattern": {
                     "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
                     "file": 1,

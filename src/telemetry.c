@@ -134,11 +134,11 @@ static void update_pid_telemetry(void) {
     g_telemetry_data.D2_drive.setpoint    = (float)state.enc_pos_target;
     g_telemetry_data.D2_drive.measurement = (float)state.enc_pos;
     g_telemetry_data.D2_drive.error       = (float)(state.enc_pos - state.enc_pos_target);
-    g_telemetry_data.D2_drive.p_term      = 0.0f;
-    g_telemetry_data.D2_drive.i_term      = 0.0f;
-    g_telemetry_data.D2_drive.d_term      = (float)state.enc_velocity;  // velocity for graph
-    g_telemetry_data.D2_drive.output      = 0.0f; // correction injected; robot.c doesn't track this separately yet
-    g_telemetry_data.D2_drive.kp          = (float)g_pos_config.zone_a;  // expose zone_a as kp for sync
+    g_telemetry_data.D2_drive.p_term      = state.d2_pos_correction;   // position error → lean (deg)
+    g_telemetry_data.D2_drive.i_term      = state.d2_vel_damp;         // velocity damp  → lean (deg)
+    g_telemetry_data.D2_drive.d_term      = (float)state.enc_velocity; // raw tick velocity
+    g_telemetry_data.D2_drive.output      = state.d2_correction_out;   // final lean correction injected (deg)
+    g_telemetry_data.D2_drive.kp          = (float)g_pos_config.zone_a;
     g_telemetry_data.D2_drive.ki          = g_pos_config.scale_a;
     g_telemetry_data.D2_drive.kd          = g_pos_config.max_correction;
 

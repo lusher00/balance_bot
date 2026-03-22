@@ -526,7 +526,10 @@ void robot_run(void)
                 }
 
                 // Velocity damping — resist oscillation around target
-                correction -= (float)state.enc_velocity / g_pos_config.vel_scale_stop;
+                float vel_damp = (float)state.enc_velocity / g_pos_config.vel_scale_stop;
+                state.d2_pos_correction = correction;
+                state.d2_vel_damp       = -vel_damp;
+                correction -= vel_damp;
             }
             else
             {
@@ -553,6 +556,7 @@ void robot_run(void)
             if (correction >  g_pos_config.max_correction) correction =  g_pos_config.max_correction;
             if (correction < -g_pos_config.max_correction) correction = -g_pos_config.max_correction;
 
+            state.d2_correction_out = correction;
             state.theta_ref += correction;
         }
         else

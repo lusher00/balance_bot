@@ -98,8 +98,27 @@ typedef struct {
                             // 0 = only correct inside zone_c (loose hold, Balanduino mode)
 } pos_config_t;
 
-// Encoder configuration
-#define ENCODER_TICKS_PER_REV 2400  // TODO: set to actual value
+// ============================================================================
+// WHEEL & ENCODER PHYSICAL CONSTANTS
+// RS-555 brushed DC, 5.2:1 planetary gearbox, Hall effect quadrature encoder
+//   Motor:   1,150 RPM no-load @ 12V, stall torque 7.9 kg·cm @ 9.2A
+//   Encoder: 28 PPR pre-gearbox → 145.1 PPR at output shaft
+//   Wheel:   155mm diameter (patented)
+//
+// Change WHEEL_DIAMETER_MM if you swap wheels — everything else recalculates.
+// ============================================================================
+#define MOTOR_NO_LOAD_RPM       1150.0f          // RPM @ 12V no load
+#define GEAR_RATIO              5.2f             // (1 + 46/11)
+#define ENCODER_PPR_MOTOR       28.0f            // pulses/rev at motor shaft
+#define ENCODER_TICKS_PER_REV   145.1f           // PPR at output shaft (GEAR_RATIO * 28)
+#define WHEEL_DIAMETER_MM       155.0f           // ← change here if you swap wheels
+#define WHEEL_CIRCUMFERENCE_MM  (WHEEL_DIAMETER_MM * 3.14159265f)  // ~487mm
+#define MM_PER_TICK             (WHEEL_CIRCUMFERENCE_MM / ENCODER_TICKS_PER_REV) // ~3.36 mm
+
+// Derived QPPS ceiling — theoretical max encoder speed at no-load full throttle
+// 1150 RPM / 60 * 145.1 PPR = ~2781 QPPS.  Use ~90% for headroom.
+#define QPPS_NO_LOAD            ((MOTOR_NO_LOAD_RPM / 60.0f) * ENCODER_TICKS_PER_REV) // ~2781
+#define QPPS_RATED              2500             // Conservative working value (~90% of no-load)
 
 // Motor HAL drive modes (mirror of motor_hal_roboclaw.c defines)
 #define MOTOR_HAL_MODE_DUTY           0  // Raw PWM duty — no encoder feedback required
@@ -107,9 +126,9 @@ typedef struct {
 #define MOTOR_HAL_MODE_VELOCITY_ACCEL 2  // Closed-loop speed + accel ramp (cmd 40)
 
 // motor_config defaults — override at runtime via set_motor_config IPC
-#define MOTOR_HAL_MODE_DEFAULT  MOTOR_HAL_MODE_DUTY
-#define MOTOR_QPPS_MAX_DEFAULT  2000    // Measure in Motion Studio at 100% duty
-#define MOTOR_ACCEL_QPPS_DEFAULT 4000   // 2×QPPS_MAX ≈ 0.5 s ramp
+#define MOTOR_HAL_MODE_DEFAULT   MOTOR_HAL_MODE_DUTY
+#define MOTOR_QPPS_MAX_DEFAULT   QPPS_RATED       // 2500 QPPS
+#define MOTOR_ACCEL_QPPS_DEFAULT (QPPS_RATED * 2) // 5000 QPPS/s ≈ 0.5 s ramp
 
 /**
  * @brief Runtime-tunable RoboClaw drive mode and velocity parameters.
@@ -220,6 +239,11 @@ typedef struct {
 
     // External UART input (used only in MODE_EXT_INPUT)
     input_packet_t ext_input;
+
+    // D2 position controller internal signals (for telemetry)
+    float d2_pos_correction;   // lean angle from position error (deg)
+    float d2_vel_damp;         // lean angle from velocity damping (deg)
+    float d2_correction_out;   // final rate-limited, clamped correction injected (deg)
 
     robot_mode_t mode;
     int trying;
