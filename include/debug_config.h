@@ -235,6 +235,7 @@ typedef struct {
     telemetry_enables_t telemetry;      // What telemetry to send
     controller_enables_t controllers;   // Which PIDs are active
     video_overlays_t overlays;          // Video overlay settings
+    bool debug_d2;                      // Verbose D2 position controller logging
     telemetry_rates_t rates;            // Update rates
     logging_config_t logging;           // Logging configuration
     display_config_t display;           // Console display blocks

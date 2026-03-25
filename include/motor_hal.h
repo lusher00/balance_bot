@@ -27,8 +27,8 @@
  * Use these everywhere instead of raw channel numbers so a backend
  * can remap them internally.
  */
-#define MOTOR_LEFT  0
-#define MOTOR_RIGHT 1
+#define MOTOR_RIGHT 0
+#define MOTOR_LEFT  1
 
 /* ── init / cleanup ─────────────────────────────────────────────── */
 

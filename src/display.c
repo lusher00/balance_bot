@@ -32,7 +32,7 @@
 #define DISP_SBUS_MAX  1811
 #define BAR_W           30
 #define MAX_BLOCKS       6
-#define LOG_LINES       8       /* rows in the log panel               */
+#define LOG_LINES       40      /* rows in the log panel               */
 #define LOG_LINE_LEN  256       /* max chars per log line              */
 #define LOG_FILE      "/tmp/balance_bot.log"
 
@@ -140,7 +140,7 @@ static void redirect_output(void)
     /* make read end non-blocking so collector doesn't stall on empty pipe */
     fcntl(g_pipe_fds[0], F_SETFL, O_NONBLOCK);
 
-    g_logfile = fopen(LOG_FILE, "w");
+    g_logfile = fopen(LOG_FILE, "a");
 
     /* save originals */
     g_stdout_saved = dup(STDOUT_FILENO);

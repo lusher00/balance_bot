@@ -166,26 +166,26 @@ int robot_init(void)
     // Initialise position controller config from compile-time defaults.
     // These are overwritten by pid_config_load_or_default() in main(),
     // and can be updated at runtime via IPC set_pos_config.
-    g_pos_config.zone_a            = POS_ZONE_A_DEFAULT;
-    g_pos_config.zone_b            = POS_ZONE_B_DEFAULT;
-    g_pos_config.zone_c            = POS_ZONE_C_DEFAULT;
-    g_pos_config.scale_a           = POS_SCALE_A_DEFAULT;
-    g_pos_config.scale_b           = POS_SCALE_B_DEFAULT;
-    g_pos_config.scale_c           = POS_SCALE_C_DEFAULT;
-    g_pos_config.scale_d           = POS_SCALE_D_DEFAULT;
-    g_pos_config.vel_scale_stop    = POS_VEL_SCALE_STOP_DEFAULT;
-    g_pos_config.vel_scale_move    = POS_VEL_SCALE_MOVE_DEFAULT;
+    g_pos_config.zone_a = POS_ZONE_A_DEFAULT;
+    g_pos_config.zone_b = POS_ZONE_B_DEFAULT;
+    g_pos_config.zone_c = POS_ZONE_C_DEFAULT;
+    g_pos_config.scale_a = POS_SCALE_A_DEFAULT;
+    g_pos_config.scale_b = POS_SCALE_B_DEFAULT;
+    g_pos_config.scale_c = POS_SCALE_C_DEFAULT;
+    g_pos_config.scale_d = POS_SCALE_D_DEFAULT;
+    g_pos_config.vel_scale_stop = POS_VEL_SCALE_STOP_DEFAULT;
+    g_pos_config.vel_scale_move = POS_VEL_SCALE_MOVE_DEFAULT;
     g_pos_config.vel_scale_turning = POS_VEL_SCALE_TURNING_DEFAULT;
-    g_pos_config.stopped_vel       = POS_STOPPED_VEL_DEFAULT;
-    g_pos_config.max_correction    = POS_MAX_CORRECTION_DEFAULT;
-    g_pos_config.max_angle_rate    = POS_MAX_ANGLE_RATE_DEFAULT;
-    g_pos_config.back_to_spot      = POS_BACK_TO_SPOT_DEFAULT;
+    g_pos_config.stopped_vel = POS_STOPPED_VEL_DEFAULT;
+    g_pos_config.max_correction = POS_MAX_CORRECTION_DEFAULT;
+    g_pos_config.max_angle_rate = POS_MAX_ANGLE_RATE_DEFAULT;
+    g_pos_config.back_to_spot = POS_BACK_TO_SPOT_DEFAULT;
 
-    g_motor_config.mode       = MOTOR_HAL_MODE_DEFAULT;
-    g_motor_config.qpps_max   = MOTOR_QPPS_MAX_DEFAULT;
+    g_motor_config.mode = MOTOR_HAL_MODE_DEFAULT;
+    g_motor_config.qpps_max = MOTOR_QPPS_MAX_DEFAULT;
     g_motor_config.accel_qpps = MOTOR_ACCEL_QPPS_DEFAULT;
-    g_motor_config.pol_l      = 1.0f;
-    g_motor_config.pol_r      = 1.0f;
+    g_motor_config.pol_l = 1.0f;
+    g_motor_config.pol_r = 1.0f;
     LOG_INFO("PID Controllers:");
     LOG_INFO("  D1_balance:  Kp=%.3f Ki=%.3f Kd=%.3f", BALANCE_KP, BALANCE_KI, BALANCE_KD);
     LOG_INFO("  D2_balance:  Kp=%.3f Ki=%.3f Kd=%.3f", DRIVE_KP, DRIVE_KI, DRIVE_KD);
@@ -431,13 +431,13 @@ void robot_run(void)
 
             if (turn_centered && !state.steering_latched)
             {
-                state.steering_latch   = phi_diff;
+                state.steering_latch = phi_diff;
                 state.steering_latched = 1;
             }
             else if (!turn_centered)
             {
                 state.steering_latched = 0;
-                state.steering_latch   = 0.0f;
+                state.steering_latch = 0.0f;
 
                 // Velocity-based turning authority reduction (Balanduino pattern):
                 // scale down turning command at high wheel speed so the bot doesn't
@@ -447,12 +447,17 @@ void robot_run(void)
                 {
                     float vel_turndown = fabsf((float)state.enc_velocity /
                                                g_pos_config.vel_scale_turning);
-                    if (state.steering < 0.0f) {
+                    if (state.steering < 0.0f)
+                    {
                         state.steering += vel_turndown;
-                        if (state.steering > 0.0f) state.steering = 0.0f;
-                    } else if (state.steering > 0.0f) {
+                        if (state.steering > 0.0f)
+                            state.steering = 0.0f;
+                    }
+                    else if (state.steering > 0.0f)
+                    {
                         state.steering -= vel_turndown;
-                        if (state.steering < 0.0f) state.steering = 0.0f;
+                        if (state.steering < 0.0f)
+                            state.steering = 0.0f;
                     }
                 }
             }
@@ -467,6 +472,8 @@ void robot_run(void)
         {
             // Fell — cut motors but stay trying if operator hasn't disarmed
             state.armed = 0;
+            motor_output_ready = 0;         // ← discard pending ISR output
+            motor_hal_set_both(0.0f, 0.0f); // ← zero before standby
             motor_hal_standby(1);
             rc_led_set(RC_LED_GREEN, 0);
             LOG_WARN("FELL — auto-disarmed (eff=%.1f deg)", eff_angle);
@@ -493,80 +500,149 @@ void robot_run(void)
         // max_angle_rate limits how fast the correction can change per tick,
         // preventing D2 from slamming theta_ref and causing oscillation.
         // (Balanduino uses 1°/loop at 500 Hz ≈ 5°/loop at our 100 Hz.)
-        if (g_debug_config.controllers.D2_drive && state.armed)
+        // Save raw stick before D2 correction is applied
+        float raw_stick_ref = 0; // state.theta_ref;
         {
-            static float last_correction = 0.0f;
-            float correction = 0.0f;
-            bool stick_centered = (fabsf(state.theta_ref) < 0.5f);
-
-            if (stick_centered)
+            // Track armed transitions for D2 last_correction reset
+            static int prev_armed_d2 = 0;
+            if (g_debug_config.controllers.D2_drive && state.armed)
             {
-                int32_t err    = state.enc_pos - state.enc_pos_target;
-                int32_t absErr = abs(err);
+                static float last_correction = 0.0f;
 
-                if (g_pos_config.back_to_spot)
+                // Reset accumulated correction on re-arm so stale last_correction
+                // doesn't slam theta_ref immediately after a fall/recovery.
+                if (!prev_armed_d2)
+                    last_correction = 0.0f;
+                float correction = 0.0f;
+
+                // Use raw stick only — exclude D2's own correction so it doesn't
+                // trick the hold logic into thinking the user is driving.
+                bool stick_centered = (fabsf(raw_stick_ref) < 0.5f);
+
+                // ── D2 verbose debug (enable via IPC: {"type":"debug_d2","value":true}) ──
+                static uint64_t d2_log_last_us = 0;
+                if (g_debug_config.debug_d2)
                 {
-                    // Full zone-based proportional hold
-                    if      (absErr > g_pos_config.zone_a)
-                        correction = -(float)err / g_pos_config.scale_a;
-                    else if (absErr > g_pos_config.zone_b)
-                        correction = -(float)err / g_pos_config.scale_b;
-                    else if (absErr > g_pos_config.zone_c)
-                        correction = -(float)err / g_pos_config.scale_c;
+                    uint64_t d2_now_us = rc_nanos_since_boot() / 1000;
+                    if (d2_now_us - d2_log_last_us >= 500000) // 2 Hz
+                    {
+                        d2_log_last_us = d2_now_us;
+                        int32_t d2_err = state.enc_pos - state.enc_pos_target;
+                        printf("[D2] armed=%d D2_en=%d stick_cen=%d raw_stick=%.3f\n"
+                               "     enc_pos=%d enc_pos_target=%d err=%d\n"
+                               "     enc_vel=%d stopped_vel=%d back_to_spot=%d\n"
+                               "     last_corr=%.4f theta_ref=%.4f\n",
+                               state.armed,
+                               g_debug_config.controllers.D2_drive,
+                               (int)stick_centered,
+                               raw_stick_ref,
+                               state.enc_pos,
+                               state.enc_pos_target,
+                               d2_err,
+                               state.enc_velocity,
+                               g_pos_config.stopped_vel,
+                               g_pos_config.back_to_spot,
+                               last_correction,
+                               state.theta_ref);
+                        fflush(stdout);
+                    }
+                }
+
+                if (stick_centered)
+                {
+                    /// int32_t err = -(state.enc_pos - state.enc_pos_target);
+                    int32_t err = state.enc_pos_target - state.enc_pos;
+                    int32_t absErr = abs(err);
+                    if (absErr < 2)
+                    {
+                        last_correction = 0.0f;
+                        correction = 0.0f;
+                    }
+
+                    if (g_pos_config.back_to_spot)
+                    {
+                        // Full zone-based proportional hold
+                        if (absErr > g_pos_config.zone_a)
+                            correction = (float)err / g_pos_config.scale_a;
+                        else if (absErr > g_pos_config.zone_b)
+                            correction = (float)err / g_pos_config.scale_b;
+                        else if (absErr > g_pos_config.zone_c)
+                            correction = (float)err / g_pos_config.scale_c;
+                        else
+                            correction = (float)err / g_pos_config.scale_d;
+                    }
                     else
-                        correction = -(float)err / g_pos_config.scale_d;
+                    {
+                        // Loose hold: only correct inside zone_c, otherwise drift free
+                        if (absErr < g_pos_config.zone_c)
+                            correction = -(float)err / g_pos_config.scale_d;
+                        else
+                            state.enc_pos_target = state.enc_pos;
+                    }
+
+                    // Velocity damping — resist oscillation around target
+                    float vel_damp = (float)state.enc_velocity / g_pos_config.vel_scale_stop;
+                    state.d2_pos_correction = correction;
+                    state.d2_vel_damp = -vel_damp;
+                    if (absErr > 5)
+                        correction -= vel_damp;
                 }
                 else
                 {
-                    // Loose hold: only correct inside zone_c, otherwise drift free
-                    if (absErr < g_pos_config.zone_c)
-                        correction = -(float)err / g_pos_config.scale_d;
-                    else
-                        state.enc_pos_target = state.enc_pos;
+                    // Driving — back-EMF compensation to smooth acceleration
+                    float vel_comp = (float)state.enc_velocity / g_pos_config.vel_scale_move;
+                    if ((state.theta_ref > 0.0f && state.enc_velocity < 0) ||
+                        (state.theta_ref < 0.0f && state.enc_velocity > 0) ||
+                        state.theta_ref == 0.0f)
+                    {
+                        correction += vel_comp;
+                    }
+                    state.enc_pos_target = state.enc_pos;
                 }
 
-                // Velocity damping — resist oscillation around target
-                float vel_damp = (float)state.enc_velocity / g_pos_config.vel_scale_stop;
-                state.d2_pos_correction = correction;
-                state.d2_vel_damp       = -vel_damp;
-                correction -= vel_damp;
+                // Rate-limit correction (Balanduino: don't change restAngle by more
+                // than max_angle_rate per loop tick — prevents slamming theta_ref)
+                float delta = correction - last_correction;
+                if (delta > g_pos_config.max_angle_rate)
+                    delta = g_pos_config.max_angle_rate;
+                if (delta < -g_pos_config.max_angle_rate)
+                    delta = -g_pos_config.max_angle_rate;
+                correction = last_correction + delta;
+                last_correction = correction;
+
+                // Hard clamp
+                if (correction > g_pos_config.max_correction)
+                    correction = g_pos_config.max_correction;
+                if (correction < -g_pos_config.max_correction)
+                    correction = -g_pos_config.max_correction;
+
+                state.d2_correction_out = correction;
+                state.theta_ref += correction;
             }
             else
             {
-                // Driving — back-EMF compensation to smooth acceleration
-                float vel_comp = (float)state.enc_velocity / g_pos_config.vel_scale_move;
-                if ((state.theta_ref > 0.0f && state.enc_velocity < 0) ||
-                    (state.theta_ref < 0.0f && state.enc_velocity > 0) ||
-                    state.theta_ref == 0.0f)
+                // D2 disabled — keep target synced so it's ready when re-enabled
+                if (g_debug_config.debug_d2)
                 {
-                    correction += vel_comp;
+                    static uint64_t d2_else_last_us = 0;
+                    uint64_t d2_now_us = rc_nanos_since_boot() / 1000;
+                    if (d2_now_us - d2_else_last_us >= 500000)
+                    {
+                        d2_else_last_us = d2_now_us;
+                        printf("[D2-ELSE] D2_drive=%d armed=%d  => enc_pos_target being synced to %d\n",
+                               g_debug_config.controllers.D2_drive,
+                               state.armed,
+                               state.enc_pos);
+                        fflush(stdout);
+                    }
                 }
                 state.enc_pos_target = state.enc_pos;
+                state.pos_setpoint = state.pos;
+                if (!state.armed)
+                    pid_reset(&drive_pid);
             }
-
-            // Rate-limit correction (Balanduino: don't change restAngle by more
-            // than max_angle_rate per loop tick — prevents slamming theta_ref)
-            float delta = correction - last_correction;
-            if (delta >  g_pos_config.max_angle_rate) delta =  g_pos_config.max_angle_rate;
-            if (delta < -g_pos_config.max_angle_rate) delta = -g_pos_config.max_angle_rate;
-            correction = last_correction + delta;
-            last_correction = correction;
-
-            // Hard clamp
-            if (correction >  g_pos_config.max_correction) correction =  g_pos_config.max_correction;
-            if (correction < -g_pos_config.max_correction) correction = -g_pos_config.max_correction;
-
-            state.d2_correction_out = correction;
-            state.theta_ref += correction;
-        }
-        else
-        {
-            // D2 disabled — keep target synced so it's ready when re-enabled
-            state.enc_pos_target = state.enc_pos;
-            state.pos_setpoint = state.pos;
-            if (!state.armed)
-                pid_reset(&drive_pid);
-        }
+            prev_armed_d2 = state.armed;
+        } // end D2 block
 
         // Saturate references before the next ISR reads them
         rc_saturate_float(&state.theta_ref, -MAX_THETA_REF, MAX_THETA_REF);
