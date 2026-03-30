@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 """
 roboclaw_util.py — RoboClaw packet serial utility
-BBB: /dev/ttyO5 @ 460800, address 0x01
+BBB: /dev/ttyO1 @ 460800, address 0x80
 
 Usage:
   python3 roboclaw_util.py <command> [args]
 
 Commands:
-  status          — read firmware version, voltages, temps, error status
-  encoders        — read encoder counts and speeds
-  currents        — read motor currents
-  pid1            — read velocity PID for M1
-  pid2            — read velocity PID for M2
-  setpid1 Kp Ki Kd qpps  — set velocity PID for M1 and save
-  setpid2 Kp Ki Kd qpps  — set velocity PID for M2 and save
-  stop            — send zero velocity to both motors
-  estop_config    — configure S3/S4/S5 as e-stop inputs and save
-  read_config     — dump raw config register
-  save            — write settings to EEPROM
-  monitor         — loop, print voltage/current/encoders every second
+  probe           -- raw comms test, dumps bytes
+  status          -- firmware version, voltages, temps, error status
+  encoders        -- encoder counts and speeds
+  currents        -- motor currents
+  pid1            -- read velocity PID for M1
+  pid2            -- read velocity PID for M2
+  setpid1 Kp Ki Kd qpps  -- set velocity PID for M1 and save
+  setpid2 Kp Ki Kd qpps  -- set velocity PID for M2 and save
+  stop            -- zero both motors
+  estop_config    -- configure S3/S4/S5 as e-stop inputs and save
+  read_config     -- dump and decode config register
+  save            -- write settings to EEPROM
+  monitor [secs]  -- live table: voltage/temp/current/encoders/speed
 """
 
 import serial
@@ -27,24 +28,11 @@ import time
 import sys
 import argparse
 
-# ── Connection ────────────────────────────────────────────────────────────────
 PORT    = "/dev/ttyO1"
 BAUD    = 460800
-ADDRESS = 0x01
-TIMEOUT = 0.1   # seconds
-
-# ── Command numbers (from Basicmicro packet serial spec) ──────────────────────
-CMD_M1FORWARD           = 0
-CMD_M1BACKWARD          = 1
-CMD_M2FORWARD           = 4
-CMD_M2BACKWARD          = 5
-CMD_MIXED_FWD           = 8
-CMD_MIXED_BACK          = 9
-CMD_MIXED_RIGHT         = 10
-CMD_MIXED_LEFT          = 11
-CMD_DRIVE_M1_SIGNED     = 32
-CMD_DRIVE_M2_SIGNED     = 33
-CMD_DRIVE_MIXED_SIGNED  = 34
+ADDRESS = 0x80
+TIMEOUT = 0.15
+DEBUG   = False
 
 CMD_READ_ENC1           = 16
 CMD_READ_ENC2           = 17
@@ -54,420 +42,323 @@ CMD_RESET_ENCODERS      = 20
 CMD_READ_VERSION        = 21
 CMD_READ_MAIN_BATT      = 24
 CMD_READ_LOGIC_BATT     = 25
-CMD_READ_MOTOR_CURRENTS = 49
-CMD_READ_TEMP           = 82
-CMD_READ_TEMP2          = 83
-CMD_READ_STATUS         = 90
-CMD_READ_ERROR_STATUS   = 90   # same register
-
 CMD_SET_M1_VELPID       = 28
 CMD_SET_M2_VELPID       = 29
+CMD_DRIVE_M1_SIGNED     = 32
+CMD_DRIVE_M2_SIGNED     = 33
+CMD_DRIVE_M1M2_SPEED    = 37
+CMD_READ_MOTOR_CURRENTS = 49
 CMD_READ_M1_VELPID      = 55
 CMD_READ_M2_VELPID      = 56
-
-CMD_GET_CONFIG          = 99
+CMD_READ_TEMP           = 82
+CMD_READ_STATUS         = 90
+CMD_WRITE_SETTINGS      = 94
 CMD_SET_CONFIG          = 98
-CMD_WRITE_SETTINGS      = 94   # write NVM / EEPROM
+CMD_GET_CONFIG          = 99
 
-CMD_DRIVE_M1M2_SPEED    = 37
+PIN_MODE_SHIFT       = 2
+CONFIG_ESTOP_LATCH   = 0b010
+CONFIG_ESTOP_NOLATCH = 0b011
 
-# Config register bit positions (from user manual)
-# Bits 4:2 control S3/S4/S5 pin function
-# 0b000 = default, 0b010 = E-Stop (latching), 0b011 = E-Stop (non-latching)
-CONFIG_ESTOP_LATCH      = 0b010
-CONFIG_ESTOP_NOLATCH    = 0b011
-PIN_MODE_SHIFT          = 2    # bits [4:2]
 
-# ── CRC ───────────────────────────────────────────────────────────────────────
-
-def crc16(data: bytes) -> int:
+def crc16(data):
     crc = 0
     for b in data:
         crc ^= b << 8
         for _ in range(8):
-            if crc & 0x8000:
-                crc = (crc << 1) ^ 0x1021
-            else:
-                crc <<= 1
+            crc = ((crc << 1) ^ 0x1021) if (crc & 0x8000) else (crc << 1)
             crc &= 0xFFFF
     return crc
 
-# ── Low-level send / recv ─────────────────────────────────────────────────────
 
-DEBUG = False  # set True via --debug flag
-
-def send_cmd(ser: serial.Serial, addr: int, cmd: int, payload: bytes = b"") -> None:
-    packet = bytes([addr, cmd]) + payload
-    crc = crc16(packet)
-    full = packet + struct.pack(">H", crc)
-    if DEBUG:
-        print(f"  TX [{len(full)}]: {full.hex(' ')}")
-    ser.write(full)
-
-def read_bytes(ser: serial.Serial, n: int) -> bytes:
-    data = b""
-    deadline = time.time() + TIMEOUT * 10
-    while len(data) < n and time.time() < deadline:
-        chunk = ser.read(n - len(data))
-        data += chunk
-    if DEBUG and data:
-        print(f"  RX [{len(data)}]: {data.hex(' ')}")
-    return data
-
-def check_ack(ser: serial.Serial) -> bool:
-    b = read_bytes(ser, 1)
-    ok = len(b) == 1 and b[0] == 0xFF
-    if DEBUG:
-        print(f"  ACK: {'OK (0xff)' if ok else f'FAIL ({b.hex() if b else 'timeout'})'}")
-    return ok
-
-def send_recv(ser: serial.Serial, addr: int, cmd: int,
-              payload: bytes = b"", recv_n: int = 0) -> bytes | None:
-    """Send command, receive recv_n data bytes + 2 CRC bytes, validate CRC.
-
-    RoboClaw CRC for responses covers only the data bytes, NOT addr+cmd.
-    """
-    send_cmd(ser, addr, cmd, payload)
-    if recv_n == 0:
-        ok = check_ack(ser)
-        return b"\xff" if ok else None
-    total = recv_n + 2
-    raw = read_bytes(ser, total)
-    if len(raw) < total:
-        if DEBUG:
-            print(f"  Short read: got {len(raw)}, wanted {total}")
-        return None
-    data   = raw[:recv_n]
-    rx_crc = struct.unpack(">H", raw[recv_n:recv_n+2])[0]
-    # Response CRC covers only the response data bytes
-    calc   = crc16(data)
-    if rx_crc != calc:
-        # Some firmware versions include addr+cmd in response CRC — try that too
-        calc2 = crc16(bytes([addr, cmd]) + data)
-        if rx_crc == calc2:
-            return data   # alternate CRC format, still valid
-        print(f"  [WARN] CRC mismatch: got {rx_crc:#06x}, expected {calc:#06x}")
-        return None
-    return data
-
-
-def cmd_probe(ser, addr):
-    """Raw probe — try read_version and print raw bytes to diagnose comms."""
-    print(f"=== Raw Probe (addr={addr:#04x}, port={ser.port}, baud={ser.baudrate}) ===")
-    ser.reset_input_buffer()
-    # Try read version (cmd 21) — simplest read command, variable-length response
-    packet = bytes([addr, CMD_READ_VERSION])
-    crc = crc16(packet)
-    full = packet + struct.pack(">H", crc)
-    print(f"  Sending: {full.hex(' ')}")
-    ser.write(full)
-    time.sleep(0.2)
-    raw = ser.read(64)
-    if not raw:
-        print("  No response — check wiring, port, baud rate, address")
-        print("  Try: --addr 0x80  (factory default is sometimes 0x80)")
-    else:
-        print(f"  Got {len(raw)} bytes: {raw.hex(' ')}")
-        try:
-            print(f"  As ASCII: {raw.decode('ascii', errors='replace')}")
-        except Exception:
-            pass
-
-# ── Open serial ───────────────────────────────────────────────────────────────
-
-def open_serial(port=PORT, baud=BAUD) -> serial.Serial:
+def open_serial(port, baud):
     try:
         ser = serial.Serial(port, baud, timeout=TIMEOUT)
         time.sleep(0.05)
         ser.reset_input_buffer()
         return ser
     except serial.SerialException as e:
-        print(f"ERROR: Could not open {port}: {e}")
+        print("ERROR: %s" % e)
         sys.exit(1)
 
-# ── Commands ──────────────────────────────────────────────────────────────────
+
+def send_cmd(ser, addr, cmd, payload=b""):
+    packet = bytes([addr, cmd]) + payload
+    full = packet + struct.pack(">H", crc16(packet))
+    if DEBUG:
+        print("  TX [%d]: %s" % (len(full), full.hex(" ")))
+    ser.write(full)
+
+
+def read_n(ser, n):
+    data = b""
+    deadline = time.time() + TIMEOUT * 8
+    while len(data) < n and time.time() < deadline:
+        data += ser.read(n - len(data))
+    if DEBUG and data:
+        print("  RX [%d]: %s" % (len(data), data.hex(" ")))
+    return data
+
+
+def check_ack(ser):
+    b = read_n(ser, 1)
+    ok = len(b) == 1 and b[0] == 0xFF
+    if DEBUG:
+        print("  ACK: %s" % ("OK" if ok else ("FAIL(%s)" % (b.hex() if b else "timeout"))))
+    return ok
+
+
+def send_recv(ser, addr, cmd, payload=b"", recv_n=0):
+    send_cmd(ser, addr, cmd, payload)
+    if recv_n == 0:
+        return b"\xff" if check_ack(ser) else None
+    raw = read_n(ser, recv_n + 2)
+    if len(raw) < recv_n + 2:
+        if DEBUG:
+            print("  Short: got %d want %d" % (len(raw), recv_n + 2))
+        return None
+    data   = raw[:recv_n]
+    rx_crc = struct.unpack(">H", raw[recv_n:recv_n+2])[0]
+    if crc16(data) == rx_crc:
+        return data
+    if crc16(bytes([addr, cmd]) + data) == rx_crc:
+        return data
+    if DEBUG:
+        print("  CRC fail: rx=0x%04x data=0x%04x hdr=0x%04x" % (
+            rx_crc, crc16(data), crc16(bytes([addr, cmd]) + data)))
+    return None
+
+
+def cmd_probe(ser, addr):
+    print("=== Probe addr=0x%02x port=%s baud=%d ===" % (addr, ser.port, ser.baudrate))
+    ser.reset_input_buffer()
+    packet = bytes([addr, CMD_READ_VERSION])
+    full = packet + struct.pack(">H", crc16(packet))
+    print("  Sending: %s" % full.hex(" "))
+    ser.write(full)
+    time.sleep(0.25)
+    raw = ser.read(64)
+    if not raw:
+        print("  No response. Check port, baud, address (try 0x80 or 0x01).")
+    else:
+        print("  Got %d bytes: %s" % (len(raw), raw.hex(" ")))
+        print("  ASCII: %s" % raw.decode("ascii", errors="replace").strip())
+
 
 def cmd_status(ser, addr):
     print("=== RoboClaw Status ===")
 
-    # Firmware version
+    ser.reset_input_buffer()
     send_cmd(ser, addr, CMD_READ_VERSION)
-    raw = b""
-    for _ in range(48):
-        b = ser.read(1)
-        if not b:
-            break
-        raw += b
-        if b == b"\n":
-            break
-    version = raw.decode("ascii", errors="replace").strip()
-    print(f"  Firmware : {version}")
+    time.sleep(0.15)
+    raw = ser.read(48)
+    if raw:
+        version = raw[:-2].decode("ascii", errors="replace").strip().strip("\x00")
+        print("  Firmware : %s" % version)
+    else:
+        print("  Firmware : (no response)")
 
-    # Main battery
-    data = send_recv(ser, addr, CMD_READ_MAIN_BATT, recv_n=2)
-    if data:
-        v = struct.unpack(">H", data)[0] / 10.0
-        print(f"  Main bat : {v:.1f} V")
+    d = send_recv(ser, addr, CMD_READ_MAIN_BATT, recv_n=2)
+    print("  Main bat : %s" % ("%.1f V" % (struct.unpack(">H", d)[0] / 10.0) if d else "--"))
 
-    # Logic battery
-    data = send_recv(ser, addr, CMD_READ_LOGIC_BATT, recv_n=2)
-    if data:
-        v = struct.unpack(">H", data)[0] / 10.0
-        print(f"  Logic bat: {v:.1f} V")
+    d = send_recv(ser, addr, CMD_READ_LOGIC_BATT, recv_n=2)
+    print("  Logic bat: %s" % ("%.1f V" % (struct.unpack(">H", d)[0] / 10.0) if d else "--"))
 
-    # Temperature
-    data = send_recv(ser, addr, CMD_READ_TEMP, recv_n=2)
-    if data:
-        t = struct.unpack(">H", data)[0] / 10.0
-        print(f"  Temp     : {t:.1f} °C")
+    d = send_recv(ser, addr, CMD_READ_TEMP, recv_n=2)
+    print("  Temp     : %s" % ("%.1f C" % (struct.unpack(">H", d)[0] / 10.0) if d else "--"))
 
-    # Status / error flags
-    data = send_recv(ser, addr, CMD_READ_STATUS, recv_n=4)
-    if data:
-        flags = struct.unpack(">I", data)[0]
-        print(f"  Status   : {flags:#010x}")
+    d = send_recv(ser, addr, CMD_READ_STATUS, recv_n=4)
+    if d:
+        flags = struct.unpack(">I", d)[0]
+        print("  Status   : 0x%08x" % flags)
         if flags == 0:
-            print("             OK — no faults")
+            print("             OK")
         else:
-            STATUS_BITS = {
-                0: "Normal",
-                1: "M1 OverCurrent Warning",
-                2: "M2 OverCurrent Warning",
-                3: "E-Stop",
-                4: "Temperature Error",
-                5: "Temperature2 Error",
-                6: "Main Batt High Error",
-                7: "Logic Batt High Error",
-                8: "Logic Batt Low Error",
-                9: "Main Batt High Warning",
-               10: "Main Batt Low Warning",
-               11: "Temperature Warning",
-               12: "Temperature2 Warning",
-               13: "M1 Home",
-               14: "M2 Home",
+            names = {
+                0: "Normal", 1: "M1 OverCurrent", 2: "M2 OverCurrent",
+                3: "E-Stop", 4: "Temp Error", 5: "Temp2 Error",
+                6: "Main Batt High", 7: "Logic Batt High", 8: "Logic Batt Low",
+                9: "Main Batt High Warn", 10: "Main Batt Low Warn",
+                11: "Temp Warn", 12: "Temp2 Warn", 13: "M1 Home", 14: "M2 Home",
             }
-            for bit, name in STATUS_BITS.items():
+            for bit, name in names.items():
                 if flags & (1 << bit):
-                    print(f"             [!] {name}")
+                    print("             [!] %s" % name)
+    else:
+        print("  Status   : --")
+
 
 def cmd_encoders(ser, addr):
     print("=== Encoders ===")
-    for ch, cmd_enc, cmd_spd in [
-        (1, CMD_READ_ENC1, CMD_READ_SPEED1),
-        (2, CMD_READ_ENC2, CMD_READ_SPEED2),
-    ]:
-        data = send_recv(ser, addr, cmd_enc, recv_n=5)
-        if data:
-            count  = struct.unpack(">i", data[:4])[0]   # signed 32-bit
-            status = data[4]
-            print(f"  M{ch} count : {count:>12d}  (status={status:#04x})")
-        data = send_recv(ser, addr, cmd_spd, recv_n=5)
-        if data:
-            speed  = struct.unpack(">i", data[:4])[0]
-            status = data[4]
-            print(f"  M{ch} speed : {speed:>12d} pps  (status={status:#04x})")
+    for ch, ce, cs in [(1, CMD_READ_ENC1, CMD_READ_SPEED1), (2, CMD_READ_ENC2, CMD_READ_SPEED2)]:
+        d = send_recv(ser, addr, ce, recv_n=5)
+        if d:
+            print("  M%d count : %12d  (status=0x%02x)" % (ch, struct.unpack(">i", d[:4])[0], d[4]))
+        else:
+            print("  M%d count : --" % ch)
+        d = send_recv(ser, addr, cs, recv_n=5)
+        if d:
+            print("  M%d speed : %12d pps  (status=0x%02x)" % (ch, struct.unpack(">i", d[:4])[0], d[4]))
+        else:
+            print("  M%d speed : --" % ch)
+
 
 def cmd_currents(ser, addr):
     print("=== Motor Currents ===")
-    data = send_recv(ser, addr, CMD_READ_MOTOR_CURRENTS, recv_n=4)
-    if data:
-        m1 = struct.unpack(">H", data[0:2])[0] / 100.0
-        m2 = struct.unpack(">H", data[2:4])[0] / 100.0
-        print(f"  M1: {m1:.2f} A")
-        print(f"  M2: {m2:.2f} A")
+    d = send_recv(ser, addr, CMD_READ_MOTOR_CURRENTS, recv_n=4)
+    if d:
+        print("  M1: %.2f A" % (struct.unpack(">H", d[0:2])[0] / 100.0))
+        print("  M2: %.2f A" % (struct.unpack(">H", d[2:4])[0] / 100.0))
+    else:
+        print("  (no response)")
 
-def cmd_read_pid(ser, addr, channel):
-    cmd = CMD_READ_M1_VELPID if channel == 1 else CMD_READ_M2_VELPID
-    data = send_recv(ser, addr, cmd, recv_n=16)
-    if data:
-        p, i, d, qpps = struct.unpack(">IIII", data)
-        kp = p / 65536.0
-        ki = i / 65536.0
-        kd = d / 65536.0
-        print(f"=== M{channel} Velocity PID ===")
-        print(f"  Kp   : {kp}")
-        print(f"  Ki   : {ki}")
-        print(f"  Kd   : {kd}")
-        print(f"  QPPS : {qpps}")
 
-def cmd_set_pid(ser, addr, channel, kp, ki, kd, qpps):
-    cmd = CMD_SET_M1_VELPID if channel == 1 else CMD_SET_M2_VELPID
-    p = int(kp * 65536)
-    i = int(ki * 65536)
-    d = int(kd * 65536)
-    q = int(qpps)
-    payload = struct.pack(">IIII", p, i, d, q)
-    result = send_recv(ser, addr, cmd, payload=payload)
-    if result:
-        print(f"  M{channel} PID set: Kp={kp} Ki={ki} Kd={kd} QPPS={qpps}")
+def cmd_read_pid(ser, addr, ch):
+    cmd = CMD_READ_M1_VELPID if ch == 1 else CMD_READ_M2_VELPID
+    d = send_recv(ser, addr, cmd, recv_n=16)
+    if d:
+        p, i, v, q = struct.unpack(">IIII", d)
+        print("=== M%d Velocity PID ===" % ch)
+        print("  Kp   : %s" % (p / 65536.0))
+        print("  Ki   : %s" % (i / 65536.0))
+        print("  Kd   : %s" % (v / 65536.0))
+        print("  QPPS : %d" % q)
+    else:
+        print("  (no response)")
+
+
+def cmd_set_pid(ser, addr, ch, kp, ki, kd, qpps):
+    cmd = CMD_SET_M1_VELPID if ch == 1 else CMD_SET_M2_VELPID
+    payload = struct.pack(">IIII", int(kp*65536), int(ki*65536), int(kd*65536), int(qpps))
+    r = send_recv(ser, addr, cmd, payload=payload)
+    if r:
+        print("  M%d PID set OK" % ch)
         cmd_save(ser, addr)
     else:
-        print(f"  ERROR: set PID M{channel} failed")
+        print("  ERROR: set PID failed")
+
 
 def cmd_stop(ser, addr):
-    print("=== Stopping Motors ===")
-    # Drive both motors at speed 0
-    payload = struct.pack(">ii", 0, 0)
-    result = send_recv(ser, addr, CMD_DRIVE_M1M2_SPEED, payload=payload)
-    if result:
-        print("  Both motors stopped.")
+    print("=== Stop ===")
+    r = send_recv(ser, addr, CMD_DRIVE_M1M2_SPEED, payload=struct.pack(">ii", 0, 0))
+    if r:
+        print("  Stopped.")
     else:
-        # Fallback: individual signed drive
         send_recv(ser, addr, CMD_DRIVE_M1_SIGNED, payload=struct.pack(">i", 0))
         send_recv(ser, addr, CMD_DRIVE_M2_SIGNED, payload=struct.pack(">i", 0))
-        print("  Stop sent (fallback).")
+        print("  Stopped (fallback).")
+
 
 def cmd_read_config(ser, addr):
-    print("=== Config Register ===")
-    data = send_recv(ser, addr, CMD_GET_CONFIG, recv_n=2)
-    if data:
-        cfg = struct.unpack(">H", data)[0]
-        print(f"  Raw config: {cfg:#06x}  ({cfg:016b}b)")
-        # Decode known bits
-        ctrl_mode = cfg & 0x07
-        modes = {0: "Packet Serial", 1: "Analog", 2: "RC", 3: "Simple Serial"}
-        print(f"  Control mode : {modes.get(ctrl_mode, ctrl_mode)}")
-        pin_mode = (cfg >> PIN_MODE_SHIFT) & 0x07
-        pin_modes = {
-            0b000: "Default / disabled",
-            0b001: "Home/Limit switches",
-            0b010: "E-Stop (latching)",
-            0b011: "E-Stop (non-latching)",
-            0b100: "Voltage clamp output",
-        }
-        print(f"  S3/S4/S5 mode: {pin_modes.get(pin_mode, f'{pin_mode:#05b}')}")
-        return cfg
-    return None
+    print("=== Config ===")
+    d = send_recv(ser, addr, CMD_GET_CONFIG, recv_n=2)
+    if not d:
+        print("  (no response)")
+        return None
+    cfg = struct.unpack(">H", d)[0]
+    print("  Raw      : 0x%04x  (%016b)" % (cfg, cfg))
+    modes = {0: "Packet Serial", 1: "Analog", 2: "RC", 3: "Simple Serial"}
+    print("  Ctrl mode: %s" % modes.get(cfg & 0x07, str(cfg & 0x07)))
+    pm = (cfg >> PIN_MODE_SHIFT) & 0x07
+    pin_modes = {0: "Default", 1: "Home/Limit", 2: "E-Stop (latch)", 3: "E-Stop (no-latch)", 4: "Vclamp out"}
+    print("  Pin mode : %s" % pin_modes.get(pm, "0b%03b" % pm))
+    return cfg
+
 
 def cmd_estop_config(ser, addr, latching=True):
-    """Configure S3, S4, S5 as e-stop inputs."""
-    print("=== Configuring E-Stop Pins ===")
-    data = send_recv(ser, addr, CMD_GET_CONFIG, recv_n=2)
-    if not data:
+    print("=== Configure E-Stop ===")
+    d = send_recv(ser, addr, CMD_GET_CONFIG, recv_n=2)
+    if not d:
         print("  ERROR: could not read config")
         return
-    cfg = struct.unpack(">H", data)[0]
-    print(f"  Current config: {cfg:#06x}")
-
-    # Clear bits [4:2] and set e-stop mode
+    cfg = struct.unpack(">H", d)[0]
+    print("  Current: 0x%04x" % cfg)
     mode = CONFIG_ESTOP_LATCH if latching else CONFIG_ESTOP_NOLATCH
     cfg = (cfg & ~(0x07 << PIN_MODE_SHIFT)) | (mode << PIN_MODE_SHIFT)
-    print(f"  New config    : {cfg:#06x}  ({'latching' if latching else 'non-latching'} e-stop)")
-
-    payload = struct.pack(">H", cfg)
-    result = send_recv(ser, addr, CMD_SET_CONFIG, payload=payload)
-    if result:
-        print("  Config written.")
+    print("  New    : 0x%04x  (%s)" % (cfg, "latching" if latching else "non-latching"))
+    r = send_recv(ser, addr, CMD_SET_CONFIG, payload=struct.pack(">H", cfg))
+    if r:
+        print("  Written.")
         cmd_save(ser, addr)
     else:
         print("  ERROR: set config failed")
 
+
 def cmd_save(ser, addr):
-    result = send_recv(ser, addr, CMD_WRITE_SETTINGS)
-    if result:
-        print("  Settings saved to EEPROM.")
-    else:
-        print("  ERROR: save failed (or command not supported in this firmware)")
+    r = send_recv(ser, addr, CMD_WRITE_SETTINGS)
+    print("  %s" % ("Saved to EEPROM." if r else "Save failed."))
+
 
 def cmd_monitor(ser, addr, interval=1.0):
     print("=== Monitor (Ctrl-C to stop) ===")
-    print(f"{'Time':>6}  {'Vbat':>6}  {'Temp':>6}  {'M1A':>6}  {'M2A':>6}  {'Enc1':>12}  {'Enc2':>12}  {'Spd1':>8}  {'Spd2':>8}")
+    print("%6s  %6s  %6s  %6s  %6s  %12s  %12s  %8s  %8s" % (
+        "Time", "Vbat", "Temp", "M1A", "M2A", "Enc1", "Enc2", "Spd1", "Spd2"))
     t0 = time.time()
     try:
         while True:
-            t = time.time() - t0
-
-            v_data = send_recv(ser, addr, CMD_READ_MAIN_BATT, recv_n=2)
-            v = struct.unpack(">H", v_data)[0] / 10.0 if v_data else float("nan")
-
-            t_data = send_recv(ser, addr, CMD_READ_TEMP, recv_n=2)
-            temp = struct.unpack(">H", t_data)[0] / 10.0 if t_data else float("nan")
-
-            c_data = send_recv(ser, addr, CMD_READ_MOTOR_CURRENTS, recv_n=4)
-            if c_data:
-                m1a = struct.unpack(">H", c_data[0:2])[0] / 100.0
-                m2a = struct.unpack(">H", c_data[2:4])[0] / 100.0
-            else:
-                m1a = m2a = float("nan")
-
-            e1_data = send_recv(ser, addr, CMD_READ_ENC1, recv_n=5)
-            enc1 = struct.unpack(">i", e1_data[:4])[0] if e1_data else 0
-
-            e2_data = send_recv(ser, addr, CMD_READ_ENC2, recv_n=5)
-            enc2 = struct.unpack(">i", e2_data[:4])[0] if e2_data else 0
-
-            s1_data = send_recv(ser, addr, CMD_READ_SPEED1, recv_n=5)
-            spd1 = struct.unpack(">i", s1_data[:4])[0] if s1_data else 0
-
-            s2_data = send_recv(ser, addr, CMD_READ_SPEED2, recv_n=5)
-            spd2 = struct.unpack(">i", s2_data[:4])[0] if s2_data else 0
-
-            print(f"{t:6.1f}  {v:6.1f}  {temp:6.1f}  {m1a:6.2f}  {m2a:6.2f}  {enc1:12d}  {enc2:12d}  {spd1:8d}  {spd2:8d}")
+            t  = time.time() - t0
+            d  = send_recv(ser, addr, CMD_READ_MAIN_BATT, recv_n=2)
+            v  = struct.unpack(">H", d)[0] / 10.0 if d else float("nan")
+            d  = send_recv(ser, addr, CMD_READ_TEMP, recv_n=2)
+            tp = struct.unpack(">H", d)[0] / 10.0 if d else float("nan")
+            d  = send_recv(ser, addr, CMD_READ_MOTOR_CURRENTS, recv_n=4)
+            m1a = struct.unpack(">H", d[0:2])[0] / 100.0 if d else float("nan")
+            m2a = struct.unpack(">H", d[2:4])[0] / 100.0 if d else float("nan")
+            d  = send_recv(ser, addr, CMD_READ_ENC1,   recv_n=5)
+            e1 = struct.unpack(">i", d[:4])[0] if d else 0
+            d  = send_recv(ser, addr, CMD_READ_ENC2,   recv_n=5)
+            e2 = struct.unpack(">i", d[:4])[0] if d else 0
+            d  = send_recv(ser, addr, CMD_READ_SPEED1, recv_n=5)
+            s1 = struct.unpack(">i", d[:4])[0] if d else 0
+            d  = send_recv(ser, addr, CMD_READ_SPEED2, recv_n=5)
+            s2 = struct.unpack(">i", d[:4])[0] if d else 0
+            print("%6.1f  %6.1f  %6.1f  %6.2f  %6.2f  %12d  %12d  %8d  %8d" % (
+                t, v, tp, m1a, m2a, e1, e2, s1, s2))
             time.sleep(interval)
-
     except KeyboardInterrupt:
-        print("\nMonitor stopped.")
+        print("\nStopped.")
 
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="RoboClaw packet serial utility")
-    parser.add_argument("command", help="Command to run (see module docstring)")
-    parser.add_argument("args", nargs="*", help="Command arguments")
-    parser.add_argument("--port", default=PORT)
-    parser.add_argument("--baud", type=int, default=BAUD)
-    parser.add_argument("--addr", type=lambda x: int(x, 0), default=ADDRESS)
-    parser.add_argument("--no-latch", action="store_true",
-                        help="Use non-latching e-stop (default: latching)")
-    parser.add_argument("--debug", action="store_true",
-                        help="Print raw TX/RX bytes")
+    parser = argparse.ArgumentParser(description="RoboClaw utility")
+    parser.add_argument("command")
+    parser.add_argument("args", nargs="*")
+    parser.add_argument("--port",     default=PORT)
+    parser.add_argument("--baud",     type=int, default=BAUD)
+    parser.add_argument("--addr",     type=lambda x: int(x, 0), default=ADDRESS)
+    parser.add_argument("--no-latch", action="store_true")
+    parser.add_argument("--debug",    action="store_true")
     args = parser.parse_args()
 
     global DEBUG
     DEBUG = args.debug
 
-    ser = open_serial(args.port, args.baud)
+    ser  = open_serial(args.port, args.baud)
     addr = args.addr
+    cmd  = args.command.lower()
 
-    cmd = args.command.lower()
-
-    if cmd == "probe":
-        cmd_probe(ser, addr)
-    elif cmd == "status":
-        cmd_status(ser, addr)
-    elif cmd == "encoders":
-        cmd_encoders(ser, addr)
-    elif cmd == "currents":
-        cmd_currents(ser, addr)
-    elif cmd == "pid1":
-        cmd_read_pid(ser, addr, 1)
-    elif cmd == "pid2":
-        cmd_read_pid(ser, addr, 2)
+    if   cmd == "probe":        cmd_probe(ser, addr)
+    elif cmd == "status":       cmd_status(ser, addr)
+    elif cmd == "encoders":     cmd_encoders(ser, addr)
+    elif cmd == "currents":     cmd_currents(ser, addr)
+    elif cmd == "pid1":         cmd_read_pid(ser, addr, 1)
+    elif cmd == "pid2":         cmd_read_pid(ser, addr, 2)
+    elif cmd == "stop":         cmd_stop(ser, addr)
+    elif cmd == "estop_config": cmd_estop_config(ser, addr, latching=not args.no_latch)
+    elif cmd == "read_config":  cmd_read_config(ser, addr)
+    elif cmd == "save":         cmd_save(ser, addr)
     elif cmd == "setpid1":
-        if len(args.args) != 4:
-            print("Usage: setpid1 Kp Ki Kd qpps")
-            sys.exit(1)
-        kp, ki, kd, qpps = map(float, args.args)
-        cmd_set_pid(ser, addr, 1, kp, ki, kd, int(qpps))
+        if len(args.args) != 4: print("Usage: setpid1 Kp Ki Kd qpps"); sys.exit(1)
+        kp, ki, kd, q = map(float, args.args)
+        cmd_set_pid(ser, addr, 1, kp, ki, kd, int(q))
     elif cmd == "setpid2":
-        if len(args.args) != 4:
-            print("Usage: setpid2 Kp Ki Kd qpps")
-            sys.exit(1)
-        kp, ki, kd, qpps = map(float, args.args)
-        cmd_set_pid(ser, addr, 2, kp, ki, kd, int(qpps))
-    elif cmd == "stop":
-        cmd_stop(ser, addr)
-    elif cmd == "estop_config":
-        cmd_estop_config(ser, addr, latching=not args.no_latch)
-    elif cmd == "read_config":
-        cmd_read_config(ser, addr)
-    elif cmd == "save":
-        cmd_save(ser, addr)
+        if len(args.args) != 4: print("Usage: setpid2 Kp Ki Kd qpps"); sys.exit(1)
+        kp, ki, kd, q = map(float, args.args)
+        cmd_set_pid(ser, addr, 2, kp, ki, kd, int(q))
     elif cmd == "monitor":
-        interval = float(args.args[0]) if args.args else 1.0
-        cmd_monitor(ser, addr, interval)
+        cmd_monitor(ser, addr, float(args.args[0]) if args.args else 1.0)
     else:
-        print(f"Unknown command: {cmd}")
+        print("Unknown command: %s" % cmd)
         print(__doc__)
         sys.exit(1)
 
