@@ -94,10 +94,15 @@ def crc16(data: bytes) -> int:
 
 # ── Low-level send / recv ─────────────────────────────────────────────────────
 
+DEBUG = False  # set True via --debug flag
+
 def send_cmd(ser: serial.Serial, addr: int, cmd: int, payload: bytes = b"") -> None:
     packet = bytes([addr, cmd]) + payload
     crc = crc16(packet)
-    ser.write(packet + struct.pack(">H", crc))
+    full = packet + struct.pack(">H", crc)
+    if DEBUG:
+        print(f"  TX [{len(full)}]: {full.hex(' ')}")
+    ser.write(full)
 
 def read_bytes(ser: serial.Serial, n: int) -> bytes:
     data = b""
@@ -105,15 +110,23 @@ def read_bytes(ser: serial.Serial, n: int) -> bytes:
     while len(data) < n and time.time() < deadline:
         chunk = ser.read(n - len(data))
         data += chunk
+    if DEBUG and data:
+        print(f"  RX [{len(data)}]: {data.hex(' ')}")
     return data
 
 def check_ack(ser: serial.Serial) -> bool:
     b = read_bytes(ser, 1)
-    return len(b) == 1 and b[0] == 0xFF
+    ok = len(b) == 1 and b[0] == 0xFF
+    if DEBUG:
+        print(f"  ACK: {'OK (0xff)' if ok else f'FAIL ({b.hex() if b else 'timeout'})'}")
+    return ok
 
 def send_recv(ser: serial.Serial, addr: int, cmd: int,
               payload: bytes = b"", recv_n: int = 0) -> bytes | None:
-    """Send command, receive recv_n data bytes + 2 CRC bytes, validate CRC."""
+    """Send command, receive recv_n data bytes + 2 CRC bytes, validate CRC.
+
+    RoboClaw CRC for responses covers only the data bytes, NOT addr+cmd.
+    """
     send_cmd(ser, addr, cmd, payload)
     if recv_n == 0:
         ok = check_ack(ser)
@@ -121,15 +134,44 @@ def send_recv(ser: serial.Serial, addr: int, cmd: int,
     total = recv_n + 2
     raw = read_bytes(ser, total)
     if len(raw) < total:
+        if DEBUG:
+            print(f"  Short read: got {len(raw)}, wanted {total}")
         return None
     data   = raw[:recv_n]
     rx_crc = struct.unpack(">H", raw[recv_n:recv_n+2])[0]
-    # CRC covers address + cmd + data
-    calc   = crc16(bytes([addr, cmd]) + data)
+    # Response CRC covers only the response data bytes
+    calc   = crc16(data)
     if rx_crc != calc:
+        # Some firmware versions include addr+cmd in response CRC — try that too
+        calc2 = crc16(bytes([addr, cmd]) + data)
+        if rx_crc == calc2:
+            return data   # alternate CRC format, still valid
         print(f"  [WARN] CRC mismatch: got {rx_crc:#06x}, expected {calc:#06x}")
         return None
     return data
+
+
+def cmd_probe(ser, addr):
+    """Raw probe — try read_version and print raw bytes to diagnose comms."""
+    print(f"=== Raw Probe (addr={addr:#04x}, port={ser.port}, baud={ser.baudrate}) ===")
+    ser.reset_input_buffer()
+    # Try read version (cmd 21) — simplest read command, variable-length response
+    packet = bytes([addr, CMD_READ_VERSION])
+    crc = crc16(packet)
+    full = packet + struct.pack(">H", crc)
+    print(f"  Sending: {full.hex(' ')}")
+    ser.write(full)
+    time.sleep(0.2)
+    raw = ser.read(64)
+    if not raw:
+        print("  No response — check wiring, port, baud rate, address")
+        print("  Try: --addr 0x80  (factory default is sometimes 0x80)")
+    else:
+        print(f"  Got {len(raw)} bytes: {raw.hex(' ')}")
+        try:
+            print(f"  As ASCII: {raw.decode('ascii', errors='replace')}")
+        except Exception:
+            pass
 
 # ── Open serial ───────────────────────────────────────────────────────────────
 
@@ -377,14 +419,21 @@ def main():
     parser.add_argument("--addr", type=lambda x: int(x, 0), default=ADDRESS)
     parser.add_argument("--no-latch", action="store_true",
                         help="Use non-latching e-stop (default: latching)")
+    parser.add_argument("--debug", action="store_true",
+                        help="Print raw TX/RX bytes")
     args = parser.parse_args()
+
+    global DEBUG
+    DEBUG = args.debug
 
     ser = open_serial(args.port, args.baud)
     addr = args.addr
 
     cmd = args.command.lower()
 
-    if cmd == "status":
+    if cmd == "probe":
+        cmd_probe(ser, addr)
+    elif cmd == "status":
         cmd_status(ser, addr)
     elif cmd == "encoders":
         cmd_encoders(ser, addr)
