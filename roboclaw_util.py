@@ -28,7 +28,7 @@ import sys
 import argparse
 
 # ── Connection ────────────────────────────────────────────────────────────────
-PORT    = "/dev/ttyO5"
+PORT    = "/dev/ttyO1"
 BAUD    = 460800
 ADDRESS = 0x01
 TIMEOUT = 0.1   # seconds
