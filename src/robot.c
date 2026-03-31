@@ -274,6 +274,7 @@ void robot_run(void)
         {
             motor_output_ready = 0;
             motor_hal_set_both(0.0f, 0.0f);
+            roboclaw_estop_assert();
             pid_reset(&balance_pid);
             pid_reset(&drive_pid);
             pid_reset(&steering_pid);

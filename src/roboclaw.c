@@ -12,6 +12,7 @@
 #include "roboclaw.h"
 
 #include <stdint.h>		//uint8_t, int16_t, int32_t
+#include "roboclaw_estop.h"
 #include <unistd.h>		//read, close
 #include <fcntl.h>		//O_RDWR file open flag
 #include <termios.h>	//struct termios, tcgetattr, tcsetattr, cfsetispeed, tcflush
@@ -556,6 +557,7 @@ struct roboclaw *roboclaw_init_ext(const char *tty, int baudrate, int timeout_ms
 	// this is still edge case to consider, some settings may have not been made
 	// solution tcgetattr and check settings we made for equality
 
+	roboclaw_estop_init();   /* export GPIO57, drive high — deassert e-stop */
 	return rc;
 }
 
@@ -565,6 +567,8 @@ int roboclaw_close(struct roboclaw *rc)
 
 	if (rc == NULL)
 		return ROBOCLAW_OK;
+
+	roboclaw_estop_assert();  /* drive GPIO57 low — safe before closing serial */
 
 	// Note that tcsetattr() returns success if any of the  requested  changes
 	// could  be  successfully  carried  out.  Therefore, when making multiple
