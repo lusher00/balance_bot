@@ -21,7 +21,8 @@ SRCS = src/main.c \
        src/pid.c \
        src/uart_input.c \
        src/roboclaw.c \
-       src/ipc_server.c \
+       src/roboclaw_estop.c \
+	   src/ipc_server.c \
        src/telemetry.c \
        src/pid_config.c \
        src/input_xbox.c \

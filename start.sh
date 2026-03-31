@@ -16,9 +16,12 @@ NODE_BIN="/usr/local/bin/node"
 BALANCE_BOT="/usr/local/bin/balance_bot"
 SERVER_LOG="/tmp/server.log"
 
-# Default args — no input source (arm via iPhone or MODE button)
-# Override on command line e.g: ./start.sh -i sbus -u /dev/ttyO1
-BOT_ARGS="-d all -m /dev/ttyO5 -B 460800 ${@}"
+INPUT_ARGS=""
+if [[ "$1" == "--sbus" ]]; then
+    INPUT_ARGS="-i sbus -u /dev/ttyO5"
+    shift
+fi
+BOT_ARGS="-d all -m /dev/ttyO1 -B 460800 $INPUT_ARGS ${@}"
 
 # ── sanity checks ──────────────────────────────────────────────────
 if [ ! -f "$SERVER_JS" ]; then

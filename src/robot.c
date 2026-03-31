@@ -11,6 +11,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <robotcontrol.h>
+#include <roboclaw_estop.h>
 
 // Global state
 robot_state_t state = {0};
@@ -208,6 +209,8 @@ int robot_init(void)
     rc_mpu_set_dmp_callback(&imu_interrupt);
 
     // Motor HAL initialized by main() before robot_init()
+    // Still need to setup estop
+    roboclaw_estop_init();
 
     // Buttons
     LOG_INFO("Initializing buttons...");
@@ -500,8 +503,10 @@ void robot_run(void)
         // max_angle_rate limits how fast the correction can change per tick,
         // preventing D2 from slamming theta_ref and causing oscillation.
         // (Balanduino uses 1°/loop at 500 Hz ≈ 5°/loop at our 100 Hz.)
-        // Save raw stick before D2 correction is applied
-        float raw_stick_ref = 0; // state.theta_ref;
+        // Save raw stick before D2 correction is applied so D2 can tell
+        // whether the operator is actually driving.  Must be captured here,
+        // before the theta_ref += correction line below mutates it.
+        float raw_stick_ref = state.theta_ref;
         {
             // Track armed transitions for D2 last_correction reset
             static int prev_armed_d2 = 0;
@@ -550,16 +555,16 @@ void robot_run(void)
 
                 if (stick_centered)
                 {
-                    /// int32_t err = -(state.enc_pos - state.enc_pos_target);
                     int32_t err = state.enc_pos_target - state.enc_pos;
                     int32_t absErr = abs(err);
+
                     if (absErr < 2)
                     {
+                        // Inside tight deadband — zero and skip zone logic entirely
                         last_correction = 0.0f;
                         correction = 0.0f;
                     }
-
-                    if (g_pos_config.back_to_spot)
+                    else if (g_pos_config.back_to_spot)
                     {
                         // Full zone-based proportional hold
                         if (absErr > g_pos_config.zone_a)
@@ -573,9 +578,11 @@ void robot_run(void)
                     }
                     else
                     {
-                        // Loose hold: only correct inside zone_c, otherwise drift free
+                        // Loose hold: only correct inside zone_c, otherwise drift free.
+                        // err = target - pos, positive err means bot is behind target,
+                        // so positive correction (lean forward) is correct.
                         if (absErr < g_pos_config.zone_c)
-                            correction = -(float)err / g_pos_config.scale_d;
+                            correction = (float)err / g_pos_config.scale_d;
                         else
                             state.enc_pos_target = state.enc_pos;
                     }

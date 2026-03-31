@@ -199,7 +199,7 @@ static void update_system_telemetry(void)
 
     // Read battery voltage
     // Note: rc_adc_batt() returns battery voltage on BeagleBone Blue
-    g_telemetry_data.system.battery_voltage = rc_adc_batt(); // fallback until batt_status read below
+    g_telemetry_data.system.battery_voltage = 0.0; //rc_adc_batt(); // fallback until batt_status read below
 
     // Robot state
     g_telemetry_data.system.armed = state.armed;
