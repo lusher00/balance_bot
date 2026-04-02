@@ -4,7 +4,7 @@
 TARGET = balance_bot
 CC = gcc
 CFLAGS = -Wall -Wextra -O2 -Iinclude
-LDFLAGS = -lrobotcontrol -lm -lpthread -lncurses
+LDFLAGS = -lm -lpthread -lncurses
 
 # Motor HAL drive mode and QPPS are now runtime-tunable via the IPC
 # set_motor_config command — no compile-time flags needed.
@@ -28,6 +28,8 @@ SRCS = src/main.c \
        src/input_xbox.c \
        src/input_sbus.c \
        src/imu_config.c \
+       src/mpu_dmp.c \
+       src/dmp_firmware.c \
        $(MOTOR_HAL)
 
 # Object files

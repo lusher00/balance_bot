@@ -26,7 +26,7 @@
 #include <pthread.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <robotcontrol.h>
+#include "rc_compat.h"
 
 #define SOCKET_PATH "/tmp/balance_bot.sock"
 #define MAX_CLIENTS 5

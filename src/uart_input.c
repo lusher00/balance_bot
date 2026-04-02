@@ -12,28 +12,42 @@
  *   x    – lateral / steering normalised float  (-1 to +1)
  *   y    – forward / drive normalised float     (-1 to +1)
  *   conf – source confidence                    ( 0 to  1)
- *
- * The prefix ("PKT") is intentionally short to be easy to change from
- * whichever coprocessor (RPi, ESP32, etc.) is sending the data.
- * Lines that don't match the format are silently ignored.
  */
 
 #include "balance_bot.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <termios.h>
 
-#define UART_INPUT_BUS      1           /* default rc_uart bus if none specified */
-#define LINE_BUF_LEN        128
+#define LINE_BUF_LEN  128
 
 static input_packet_t  g_latest      = {0};
 static pthread_mutex_t g_mutex       = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t       g_thread;
 static volatile int    g_running     = 0;
-static int             g_uart_bus    = UART_INPUT_BUS;
+static int             g_fd          = -1;
 static int             g_timeout_ms  = 500;
+
+static speed_t baud_to_speed(int baud)
+{
+    switch (baud) {
+    case 9600:   return B9600;
+    case 19200:  return B19200;
+    case 38400:  return B38400;
+    case 57600:  return B57600;
+    case 115200: return B115200;
+    case 230400: return B230400;
+    case 460800: return B460800;
+    case 921600: return B921600;
+    default:     return B115200;
+    }
+}
 
 static void *reader_thread(void *arg)
 {
@@ -43,26 +57,22 @@ static void *reader_thread(void *arg)
 
     while (g_running) {
         uint8_t byte;
-        int n = rc_uart_read_bytes(g_uart_bus, &byte, 1);
+        int n = (int)read(g_fd, &byte, 1);
 
         if (n != 1) {
-            rc_usleep(1000);    /* 1 ms — avoid busy-spin on empty UART */
+            usleep(1000);
             continue;
         }
 
         if (byte == '\n') {
             line[pos] = '\0';
-
-            /* strip optional trailing \r */
             if (pos > 0 && line[pos - 1] == '\r')
                 line[--pos] = '\0';
 
             if (pos > 0) {
                 float x, y, conf;
-                /* Accept "PKT,x,y,conf" — prefix is exactly 4 chars */
                 if (strncmp(line, "PKT,", 4) == 0 &&
                     sscanf(line + 4, "%f,%f,%f", &x, &y, &conf) == 3) {
-
                     pthread_mutex_lock(&g_mutex);
                     g_latest.x            = x;
                     g_latest.y            = y;
@@ -73,11 +83,9 @@ static void *reader_thread(void *arg)
                 }
             }
             pos = 0;
-
         } else if (pos < LINE_BUF_LEN - 1) {
             line[pos++] = (char)byte;
         } else {
-            /* line too long — discard and start fresh */
             pos = 0;
         }
     }
@@ -87,54 +95,58 @@ static void *reader_thread(void *arg)
 
 int uart_input_init(const char *device, int baud, int timeout_ms)
 {
-    /* rc_uart_init takes a bus index, not a path.
-     * BeagleBone UARTs are numbered 1-5; the caller passes the path
-     * e.g. "/dev/ttyO1" and we strip the index from the last char. */
-    if (device) {
-        int len = (int)strlen(device);
-        if (len > 0) {
-            char last = device[len - 1];
-            if (last >= '0' && last <= '9')
-                g_uart_bus = last - '0';
-        }
-    }
-
+    if (!device) device = "/dev/ttyO1";
     g_timeout_ms = timeout_ms;
 
-    LOG_INFO("uart_input: opening UART%d (%s) at %d baud, timeout %d ms",
-             g_uart_bus, device ? device : "default", baud, timeout_ms);
+    LOG_INFO("uart_input: opening %s at %d baud, timeout %d ms",
+             device, baud, timeout_ms);
 
-    if (rc_uart_init(g_uart_bus, baud, 0.1, 0, 1, 0) < 0) {
-        LOG_ERROR("uart_input: failed to open UART%d", g_uart_bus);
+    g_fd = open(device, O_RDWR | O_NOCTTY | O_NONBLOCK);
+    if (g_fd < 0) {
+        LOG_ERROR("uart_input: open(%s) failed: %s", device, strerror(errno));
         return -1;
     }
+
+    struct termios tty;
+    memset(&tty, 0, sizeof(tty));
+    tcgetattr(g_fd, &tty);
+    speed_t spd = baud_to_speed(baud);
+    cfsetispeed(&tty, spd);
+    cfsetospeed(&tty, spd);
+    cfmakeraw(&tty);
+    tty.c_cc[VMIN]  = 0;
+    tty.c_cc[VTIME] = 1;   /* 100 ms read timeout */
+    if (tcsetattr(g_fd, TCSANOW, &tty) < 0) {
+        LOG_ERROR("uart_input: tcsetattr failed: %s", strerror(errno));
+        close(g_fd); g_fd = -1;
+        return -1;
+    }
+
+    /* switch to blocking for the reader thread */
+    int flags = fcntl(g_fd, F_GETFL, 0);
+    fcntl(g_fd, F_SETFL, flags & ~O_NONBLOCK);
 
     memset(&g_latest, 0, sizeof(g_latest));
     g_running = 1;
 
     if (pthread_create(&g_thread, NULL, reader_thread, NULL) != 0) {
         LOG_ERROR("uart_input: failed to create reader thread");
-        rc_uart_close(g_uart_bus);
-        g_running = 0;
+        close(g_fd); g_fd = -1; g_running = 0;
         return -1;
     }
 
-    LOG_INFO("uart_input: ready on UART%d", g_uart_bus);
+    LOG_INFO("uart_input: ready on %s", device);
     return 0;
 }
 
 int uart_input_get(input_packet_t *pkt)
 {
     pthread_mutex_lock(&g_mutex);
-
-    /* mark stale if we haven't received a packet recently */
     uint64_t age_ms = (rc_nanos_since_boot() - g_latest.timestamp_ns) / 1000000ULL;
     if (age_ms > (uint64_t)g_timeout_ms)
         g_latest.valid = 0;
-
     *pkt = g_latest;
     pthread_mutex_unlock(&g_mutex);
-
     return pkt->valid;
 }
 
@@ -143,6 +155,6 @@ void uart_input_cleanup(void)
     LOG_INFO("uart_input: shutting down");
     g_running = 0;
     pthread_join(g_thread, NULL);
-    rc_uart_close(g_uart_bus);
+    if (g_fd >= 0) { close(g_fd); g_fd = -1; }
     LOG_INFO("uart_input: done");
 }

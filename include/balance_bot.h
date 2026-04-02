@@ -18,7 +18,7 @@
 #ifndef BALANCE_BOT_H
 #define BALANCE_BOT_H
 
-#include <robotcontrol.h>
+#include "rc_compat.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include "debug_config.h"
@@ -63,7 +63,7 @@
 #define POS_VEL_SCALE_TURNING_DEFAULT 70.0f  // Turning authority reduction at speed
 #define POS_STOPPED_VEL_DEFAULT     40
 #define POS_MAX_CORRECTION_DEFAULT  10.0f
-#define POS_MAX_ANGLE_RATE_DEFAULT  5.0f     // deg/tick — Balanduino 1°@500Hz ≈ 5°@100Hz
+#define POS_MAX_ANGLE_RATE_DEFAULT  5.0f     // deg/tick — reference implementation 1°@500Hz ≈ 5°@100Hz
 #define POS_BACK_TO_SPOT_DEFAULT    1        // Full zone hold by default
 #define POS_VEL_PERIOD_MS           100
 
@@ -88,14 +88,14 @@ typedef struct {
     float   scale_d;        // Inside zone C (tightest hold)
     float   vel_scale_stop; // Velocity damp divisor when holding
     float   vel_scale_move; // Back-EMF comp divisor when driving
-    float   vel_scale_turning; // Reduces turning authority at speed (Balanduino-style)
+    float   vel_scale_turning; // Reduces turning authority at speed (position-hold-style)
     int32_t stopped_vel;    // Ticks/100ms threshold for "stopped" detection
     float   max_correction; // Maximum lean-angle correction D2 may inject (deg)
     float   max_angle_rate; // Max correction change per main loop tick (deg/tick)
                             // Rate-limits D2 output to prevent slamming theta_ref.
-                            // Balanduino uses 1°/loop at 500Hz ≈ 5°/loop at 100Hz.
+                            // reference implementation uses 1°/loop at 500Hz ≈ 5°/loop at 100Hz.
     int     back_to_spot;   // 1 = full zone-based hold (A/B/C/D);
-                            // 0 = only correct inside zone_c (loose hold, Balanduino mode)
+                            // 0 = only correct inside zone_c (loose hold, position hold mode)
 } pos_config_t;
 
 // ============================================================================

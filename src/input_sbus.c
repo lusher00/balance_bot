@@ -51,7 +51,7 @@
 // Custom baud rate support (115200 baud for SBUS).
 // We define our own struct and ioctl numbers rather than pulling in
 // linux/termios.h which conflicts with the glibc termios.h already included
-// via robotcontrol.h. The values match the kernel ABI exactly.
+// These values match the Linux kernel SBUS ABI exactly.
 #define SBUS_TCGETS2  _IOR('T', 0x2A, struct sbus_termios2)
 #define SBUS_TCSETS2  _IOW('T', 0x2B, struct sbus_termios2)
 #define SBUS_BOTHER   0010000

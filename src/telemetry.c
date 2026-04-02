@@ -11,7 +11,7 @@
 
 #include "debug_config.h"
 #include "balance_bot.h"
-#include <robotcontrol.h>
+#include "rc_compat.h"
 #include <math.h>
 
 // Global telemetry data (shared with IPC server)

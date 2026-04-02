@@ -9,6 +9,8 @@
 #ifndef DEBUG_CONFIG_H
 #define DEBUG_CONFIG_H
 
+#include "rc_compat.h"
+
 #include <stdint.h>
 #include <stdbool.h>
 

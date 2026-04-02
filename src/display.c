@@ -24,7 +24,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <ncurses.h>
-#include <robotcontrol.h>   /* rc_set_state, EXITING */
+#include "rc_compat.h"
 
 /* ── constants ──────────────────────────────────────────────────── */
 

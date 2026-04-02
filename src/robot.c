@@ -10,8 +10,10 @@
 #include <stdlib.h>
 #include <math.h>
 #include <stdbool.h>
-#include <robotcontrol.h>
 #include <roboclaw_estop.h>
+
+/* Process state — used by rc_get_state()/rc_set_state() in rc_compat.h */
+volatile rc_state_t g_rc_state = UNINITIALIZED;
 
 // Global state
 robot_state_t state = {0};
@@ -156,8 +158,7 @@ int robot_init(void)
         return -1;
     }
 
-    if (rc_adc_init() < 0)
-        LOG_WARN("ADC init failed — battery readings unavailable");
+    rc_adc_init(); /* stub — battery reading handled by telemetry */
 
     // PIDs
     pid_init(&balance_pid, BALANCE_KP, BALANCE_KI, BALANCE_KD, DT);
@@ -214,18 +215,13 @@ int robot_init(void)
 
     // Buttons
     LOG_INFO("Initializing buttons...");
+    /* Buttons — non-fatal: robot can balance without physical buttons */
     if (rc_button_init(RC_BTN_PIN_PAUSE, RC_BTN_POLARITY_NORM_HIGH,
-                       RC_BTN_DEBOUNCE_DEFAULT_US) == -1)
-    {
-        fprintf(stderr, "ERROR: Pause button init failed\n");
-        return -1;
-    }
+                       RC_BTN_DEBOUNCE_DEFAULT_US) < 0)
+        LOG_WARN("Pause button init failed — SBUS/IPC arm only");
     if (rc_button_init(RC_BTN_PIN_MODE, RC_BTN_POLARITY_NORM_HIGH,
-                       RC_BTN_DEBOUNCE_DEFAULT_US) == -1)
-    {
-        fprintf(stderr, "ERROR: Mode button init failed\n");
-        return -1;
-    }
+                       RC_BTN_DEBOUNCE_DEFAULT_US) < 0)
+        LOG_WARN("Mode button init failed — SBUS/IPC arm only");
     rc_button_set_callbacks(RC_BTN_PIN_PAUSE, on_pause_press, NULL);
     rc_button_set_callbacks(RC_BTN_PIN_MODE, NULL, on_mode_release);
 
@@ -280,8 +276,11 @@ void robot_run(void)
             pid_reset(&steering_pid);
             last_left_duty = 0.0f;
             last_right_duty = 0.0f;
-            // Sync D2 target so position hold starts fresh on next arm
-            state.enc_pos_target = state.enc_pos;
+            state.enc_pos_target = state.enc_pos; /* D2: snap target on disarm */
+        }
+        if (!prev_armed && state.armed)
+        {
+            state.enc_pos_target = state.enc_pos; /* D2: snap target on arm */
         }
         prev_armed = state.armed;
 
@@ -425,7 +424,7 @@ void robot_run(void)
         // as the D3 setpoint.  This prevents D3 from fighting back to zero
         // after the bot comes to rest at an asymmetric wheel position.
         //
-        // Also applies Balanduino-style turning velocity scale: reduces turning
+        // Also applies position-hold-style turning velocity scale: reduces turning
         // authority at speed so the bot doesn't spin out. The raw stick value
         // is reduced by |enc_velocity| / vel_scale_turning, clamped back toward
         // zero (never past it).
@@ -443,7 +442,7 @@ void robot_run(void)
                 state.steering_latched = 0;
                 state.steering_latch = 0.0f;
 
-                // Velocity-based turning authority reduction (Balanduino pattern):
+                // Velocity-based turning authority reduction (position hold pattern):
                 // scale down turning command at high wheel speed so the bot doesn't
                 // spin out. The reduction is subtracted in the direction of the
                 // command, clamped so it never reverses sign.
@@ -494,16 +493,16 @@ void robot_run(void)
         // ── D2 position (drive) controller ───────────────────────────────
         // When D2 is enabled: the stick command sets a *rate* (ticks/s target).
         // With stick centered: hold enc_pos_target using zone-based lean-angle
-        // bias + velocity damping (Balanduino style).
+        // bias + velocity damping (position-hold-style).
         // When driving: let the bot move, damp with velocity feed-forward.
         // All parameters are in g_pos_config (runtime-tunable via IPC).
         //
         // back_to_spot=1: full zone-based hold (A/B/C/D proportional)
-        // back_to_spot=0: only correct inside zone_c — loose hold (Balanduino mode)
+        // back_to_spot=0: only correct inside zone_c — loose hold (position hold mode)
         //
         // max_angle_rate limits how fast the correction can change per tick,
         // preventing D2 from slamming theta_ref and causing oscillation.
-        // (Balanduino uses 1°/loop at 500 Hz ≈ 5°/loop at our 100 Hz.)
+        // (reference implementation uses 1°/loop at 500 Hz ≈ 5°/loop at our 100 Hz.)
         // Save raw stick before D2 correction is applied so D2 can tell
         // whether the operator is actually driving.  Must be captured here,
         // before the theta_ref += correction line below mutates it.
@@ -523,7 +522,7 @@ void robot_run(void)
 
                 // Use raw stick only — exclude D2's own correction so it doesn't
                 // trick the hold logic into thinking the user is driving.
-                bool stick_centered = (fabsf(raw_stick_ref) < 0.5f);
+                bool stick_centered = (fabsf(raw_stick_ref) < 0.5f); /* 0.5 deg ~3% of MAX_THETA_REF */
 
                 // ── D2 verbose debug (enable via IPC: {"type":"debug_d2","value":true}) ──
                 static uint64_t d2_log_last_us = 0;
@@ -608,7 +607,7 @@ void robot_run(void)
                     state.enc_pos_target = state.enc_pos;
                 }
 
-                // Rate-limit correction (Balanduino: don't change restAngle by more
+                // Rate-limit correction (reference implementation: don't change restAngle by more
                 // than max_angle_rate per loop tick — prevents slamming theta_ref)
                 float delta = correction - last_correction;
                 if (delta > g_pos_config.max_angle_rate)

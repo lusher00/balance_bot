@@ -1,5 +1,5 @@
 #include "balance_bot.h"
-#include <robotcontrol.h>
+#include "rc_compat.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
