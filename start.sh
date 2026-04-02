@@ -41,7 +41,6 @@ pkill -f server.js 2>/dev/null
 sleep 0.5
 
 python3 /home/debian/balance_bot/roboclaw_reset.py || { echo "RoboClaw reset failed"; exit 1; }
-/usr/local/bin/balance_bot -m /dev/ttyO1 -B 460800
 
 # ── start server.js in background, output to log only ─────────────
 echo "Starting server.js (log: $SERVER_LOG)..."
