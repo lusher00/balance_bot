@@ -41,7 +41,7 @@
 #include <pthread.h>
 
 /* ── wiring ──────────────────────────────────────────────────────────────── */
-#define RC_ADDRESS 0x01 /* confirmed address for this robot */
+#define RC_ADDRESS 0x80 /* confirmed address for this robot */
 
 /* duty range the RoboClaw expects for MIXEDDUTY (cmd 34): -32767 .. +32767 */
 #define DUTY_MAX 32767
