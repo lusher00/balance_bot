@@ -34,8 +34,8 @@ static int ext_uart_baud = 115200;
 static int ext_uart_timeout = 500; /* ms */
 
 /* RoboClaw motor driver — always used */
-static char *roboclaw_device = NULL; /* default: /dev/ttyO2 */
-static int roboclaw_baud = 38400;
+static char *roboclaw_device = NULL; /* default: /dev/ttyO1 */
+static int roboclaw_baud = 460800;
 
 static bool quiet_mode = false;
 
@@ -63,12 +63,12 @@ static void print_usage(void)
     printf("                       xbox  — Xbox controller\n");
     printf("                       sbus  — FrSky R-XSR via UART (T16 transmitter)\n");
     printf("  -u <device>        UART device for SBUS or EXT input\n");
-    printf("                     (default: /dev/ttyO4 for SBUS, /dev/ttyO1 for EXT)\n");
+    printf("                     (default: /dev/ttyO5 for SBUS, /dev/ttyO1 for EXT)\n");
     printf("  -b <baud>          Baud rate for EXT UART input (default: 115200)\n");
     printf("  -t <ms>            Stale-packet timeout for EXT input (default: 500 ms)\n");
     printf("\n");
     printf("Motor options:\n");
-    printf("  -m <device>        RoboClaw UART device (default: /dev/ttyO2)\n");
+    printf("  -m <device>        RoboClaw UART device (default: /dev/ttyO1)\n");
     printf("  -B <baud>          RoboClaw baud rate   (default: 38400)\n");
     printf("\n");
     printf("Other options:\n");
@@ -80,11 +80,11 @@ static void print_usage(void)
     printf("\n");
     printf("Examples:\n");
     printf("  balance_bot                            # Balance only\n");
-    printf("  balance_bot -i sbus                    # T16 via R-XSR on /dev/ttyO4\n");
-    printf("  balance_bot -i sbus -u /dev/ttyO4      # Same, explicit device\n");
+    printf("  balance_bot -i sbus                    # T16 via R-XSR on /dev/ttyO5\n");
+    printf("  balance_bot -i sbus -u /dev/ttyO5      # Same, explicit device\n");
     printf("  balance_bot -i ext  -u /dev/ttyO1      # Generic UART packet input\n");
-    printf("  balance_bot -m /dev/ttyO2              # Use RoboClaw for motors\n");
-    printf("  balance_bot -i sbus -m /dev/ttyO2      # SBUS + RoboClaw\n");
+    printf("  balance_bot -m /dev/ttyO1              # Use RoboClaw for motors\n");
+    printf("  balance_bot -i sbus -m /dev/ttyO1      # SBUS + RoboClaw\n");
     printf("  balance_bot -i xbox /dev/input/js0     # Xbox controller\n");
     printf("  balance_bot -d imu -d pid              # Show IMU + PID display panels\n");
     printf("\n");
@@ -223,14 +223,14 @@ int main(int argc, char *argv[])
         break;
     case INPUT_SBUS:
         printf("  Input:      SBUS / FrSky R-XSR (%s)\n",
-               sbus_device ? sbus_device : "/dev/ttyO4");
+               sbus_device ? sbus_device : "/dev/ttyO5");
         break;
     case INPUT_NONE:
         printf("  Input:      Balance only (no drive input)\n");
         break;
     }
     printf("  Motors:     RoboClaw on %s at %d baud\n",
-           roboclaw_device ? roboclaw_device : "/dev/ttyO2", roboclaw_baud);
+           roboclaw_device ? roboclaw_device : "/dev/ttyO1", roboclaw_baud);
 
     printf("  PID config: %s\n", pid_config_file ? pid_config_file : "pidconfig.txt");
     printf("  Log level:  %s\n", quiet_mode ? "WARN" : "INFO");
@@ -325,7 +325,7 @@ int main(int argc, char *argv[])
         if (sbus_init(sbus_device) < 0)
         {
             fprintf(stderr, "Error: SBUS init failed on %s\n",
-                    sbus_device ? sbus_device : "/dev/ttyO4");
+                    sbus_device ? sbus_device : "/dev/ttyO5");
             robot_cleanup();
             ipc_server_cleanup();
             return -1;

@@ -35,13 +35,13 @@
 #include "motor_hal.h"
 #include "balance_bot.h"
 #include "roboclaw.h"
-
+#include "roboclaw_estop.h"
 #include <string.h>
 #include <stdint.h>
 #include <pthread.h>
 
 /* ── wiring ──────────────────────────────────────────────────────────────── */
-#define RC_ADDRESS 0x01   /* confirmed address for this robot */
+#define RC_ADDRESS 0x01 /* confirmed address for this robot */
 
 /* duty range the RoboClaw expects for MIXEDDUTY (cmd 34): -32767 .. +32767 */
 #define DUTY_MAX 32767
@@ -93,6 +93,8 @@ int motor_hal_init(const char *device, int baud)
         return -1;
     }
 
+    roboclaw_estop_init();
+
     motor_hal_set_both(0.0f, 0.0f);
 
     if (roboclaw_reset_encoders(g_rc, RC_ADDRESS) != ROBOCLAW_OK)
@@ -122,40 +124,47 @@ int motor_hal_set_both(float left, float right)
         return -1;
 
     /* clamp to ±1.0 */
-    if (left  >  1.0f) left  =  1.0f;
-    if (left  < -1.0f) left  = -1.0f;
-    if (right >  1.0f) right =  1.0f;
-    if (right < -1.0f) right = -1.0f;
+    if (left > 1.0f)
+        left = 1.0f;
+    if (left < -1.0f)
+        left = -1.0f;
+    if (right > 1.0f)
+        right = 1.0f;
+    if (right < -1.0f)
+        right = -1.0f;
 
-    const float pol_l    = g_motor_config.pol_l;
-    const float pol_r    = g_motor_config.pol_r;
-    const int   mode     = g_motor_config.mode;
-    const int   qpps_max = g_motor_config.qpps_max;
-    const int   accel    = g_motor_config.accel_qpps;
+    const float pol_l = g_motor_config.pol_l;
+    const float pol_r = g_motor_config.pol_r;
+    const int mode = g_motor_config.mode;
+    const int qpps_max = g_motor_config.qpps_max;
+    const int accel = g_motor_config.accel_qpps;
 
     int ret;
     pthread_mutex_lock(&g_rc_mutex);
 
-    if (mode == MOTOR_HAL_MODE_VELOCITY_ACCEL) {
+    if (mode == MOTOR_HAL_MODE_VELOCITY_ACCEL)
+    {
         /* closed-loop velocity + acceleration ramp (MIXEDSPEEDACCEL, cmd 40) */
         int32_t spd_r = (int32_t)(pol_r * right * (float)qpps_max);
-        int32_t spd_l = (int32_t)(pol_l * left  * (float)qpps_max);
+        int32_t spd_l = (int32_t)(pol_l * left * (float)qpps_max);
         ret = roboclaw_speed_accel_m1m2(g_rc, RC_ADDRESS, spd_r, spd_l, accel);
         if (ret != ROBOCLAW_OK)
             LOG_WARN("motor_hal_roboclaw: speed_accel command failed (%d)", ret);
-
-    } else if (mode == MOTOR_HAL_MODE_VELOCITY) {
+    }
+    else if (mode == MOTOR_HAL_MODE_VELOCITY)
+    {
         /* closed-loop velocity, no ramp (MIXEDSPEED, cmd 37) */
         int32_t spd_r = (int32_t)(pol_r * right * (float)qpps_max);
-        int32_t spd_l = (int32_t)(pol_l * left  * (float)qpps_max);
+        int32_t spd_l = (int32_t)(pol_l * left * (float)qpps_max);
         ret = roboclaw_speed_m1m2(g_rc, RC_ADDRESS, spd_r, spd_l);
         if (ret != ROBOCLAW_OK)
             LOG_WARN("motor_hal_roboclaw: speed command failed (%d)", ret);
-
-    } else {
+    }
+    else
+    {
         /* raw PWM duty cycle (MIXEDDUTY, cmd 34) — default, no encoder feedback */
         int16_t d1 = (int16_t)(pol_r * right * (float)DUTY_MAX);
-        int16_t d2 = (int16_t)(pol_l * left  * (float)DUTY_MAX);
+        int16_t d2 = (int16_t)(pol_l * left * (float)DUTY_MAX);
         ret = roboclaw_duty_m1m2(g_rc, RC_ADDRESS, d1, d2);
         if (ret != ROBOCLAW_OK)
             LOG_WARN("motor_hal_roboclaw: duty command failed (%d)", ret);
