@@ -50,9 +50,19 @@
             "problemMatcher": []
         },
         {
+            "label": "sync only",
+            "type": "shell",
+            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' ${workspaceFolder}/ boneblue-0:~/balance_bot/",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "sync and build",
             "type": "shell",
-            "command": "rsync -av --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make'",
+            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make'",
             "group": "build",
             "presentation": {
                 "reveal": "always",

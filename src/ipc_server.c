@@ -286,23 +286,23 @@ static int parse_json_command(const char *json_cmd)
     {
         if (strstr(json_cmd, "\"value\":true"))
         {
-            state.trying = 1;
-            if (fabsf(state.theta - state.theta_offset) <= 14.0f)
+            if (fabsf(state.theta - state.theta_offset) > 14.0f)
             {
+                LOG_WARN("ARM REJECTED — angle too large (%.1f deg)", state.theta - state.theta_offset);
+            }
+            else
+            {
+                state.trying = 1;
                 state.armed = 1;
                 rc_led_set(RC_LED_GREEN, 1);
                 LOG_INFO("iPhone: ARMED (theta=%.2f deg)", state.theta);
             }
-            else
-            {
-                LOG_INFO("iPhone: auto-arm enabled — waiting for upright (%.1f deg)", state.theta - state.theta_offset);
-            }
         }
         else
         {
+            state.trying = 0;
             state.armed = 0;
-            state.trying = 0;               // prevent auto-recovery from immediately re-arming
-            motor_hal_set_both(0.0f, 0.0f); // zero output before standby
+            motor_hal_set_both(0.0f, 0.0f);
             motor_hal_standby(1);
             rc_led_set(RC_LED_GREEN, 0);
             LOG_INFO("iPhone: DISARMED");
@@ -336,9 +336,9 @@ static int parse_json_command(const char *json_cmd)
 
     if (strstr(json_cmd, "\"type\":\"zero_imu\""))
     {
-        // Capture current raw angle as the mounting offset — stored in radians
-        // inside imu_config so apply_transform outputs 0 when upright.
-        imu_offsets_calibrate(&mpu_data, &g_imu_offsets);
+        // Use state.theta which is already computed by imu_interrupt — no race.
+        // Add the current reading to the existing offset so we zero from wherever we are.
+        g_imu_offsets.pitch_offset += state.theta;
         imu_offsets_save(&g_imu_offsets);
         // Reset the PID balance trim — the mounting offset now handles zeroing.
         state.theta_offset = 0.0f;

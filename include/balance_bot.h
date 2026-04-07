@@ -445,9 +445,11 @@ void imu_apply_transform  (const rc_mpu_data_t *raw, imu_transform_t *out,
 // UTILITY MACROS
 // ============================================================================
 
+#ifndef rc_saturate_float
 #define rc_saturate_float(val, mn, mx) \
     do { if (*(val) < (mn)) *(val) = (mn); \
          else if (*(val) > (mx)) *(val) = (mx); } while(0)
+#endif
 
 #ifndef DEG_TO_RAD
 #define DEG_TO_RAD (M_PI / 180.0)

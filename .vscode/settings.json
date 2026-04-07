@@ -7,5 +7,6 @@
     "C_Cpp.default.includePath": [
         "${workspaceFolder}/include"
     ],
-    "terminal.integrated.defaultProfile.osx": "bash"
+    "terminal.integrated.defaultProfile.osx": "bash",
+    "cmake.configureOnOpen": false
 }

@@ -97,54 +97,6 @@ static void imu_interrupt(void)
 }
 
 /**
- * @brief Pause button — cycle operating mode
- */
-static void on_pause_press(void)
-{
-    switch (state.mode)
-    {
-    case MODE_BALANCE:
-        state.mode = MODE_EXT_INPUT;
-        LOG_INFO("Mode: EXT INPUT");
-        rc_led_set(RC_LED_RED, 1);
-        break;
-    case MODE_EXT_INPUT:
-        state.mode = MODE_BALANCE;
-        LOG_INFO("Mode: BALANCE");
-        rc_led_set(RC_LED_RED, 0);
-        break;
-    default:
-        state.mode = MODE_BALANCE;
-        break;
-    }
-}
-
-/**
- * @brief Mode button release — toggle arm/disarm
- */
-static void on_mode_release(void)
-{
-    state.armed = !state.armed;
-
-    if (state.armed)
-    {
-        LOG_INFO("ARMED");
-        rc_led_set(RC_LED_GREEN, 1);
-        motor_hal_standby(0);
-    }
-    else
-    {
-        LOG_INFO("DISARMED");
-        rc_led_set(RC_LED_GREEN, 0);
-        motor_hal_standby(1);
-        motor_hal_set_both(0.0f, 0.0f);
-        pid_reset(&balance_pid);
-        pid_reset(&drive_pid);
-        pid_reset(&steering_pid);
-    }
-}
-
-/**
  * @brief Initialize robot hardware and control system
  */
 int robot_init(void)
@@ -210,20 +162,9 @@ int robot_init(void)
     rc_mpu_set_dmp_callback(&imu_interrupt);
 
     // Motor HAL initialized by main() before robot_init()
-    // Still need to setup estop
+    // Estop: init GPIO but leave deasserted — roboclaw_reset.py brings unit up clean.
+    // Estop is asserted on disarm/fall and deasserted on arm via robot_run transitions.
     roboclaw_estop_init();
-
-    // Buttons
-    LOG_INFO("Initializing buttons...");
-    /* Buttons — non-fatal: robot can balance without physical buttons */
-    if (rc_button_init(RC_BTN_PIN_PAUSE, RC_BTN_POLARITY_NORM_HIGH,
-                       RC_BTN_DEBOUNCE_DEFAULT_US) < 0)
-        LOG_WARN("Pause button init failed — SBUS/IPC arm only");
-    if (rc_button_init(RC_BTN_PIN_MODE, RC_BTN_POLARITY_NORM_HIGH,
-                       RC_BTN_DEBOUNCE_DEFAULT_US) < 0)
-        LOG_WARN("Mode button init failed — SBUS/IPC arm only");
-    rc_button_set_callbacks(RC_BTN_PIN_PAUSE, on_pause_press, NULL);
-    rc_button_set_callbacks(RC_BTN_PIN_MODE, NULL, on_mode_release);
 
     // LEDs
     rc_led_set(RC_LED_GREEN, 0);
@@ -270,7 +211,6 @@ void robot_run(void)
         {
             motor_output_ready = 0;
             motor_hal_set_both(0.0f, 0.0f);
-            roboclaw_estop_assert();
             pid_reset(&balance_pid);
             pid_reset(&drive_pid);
             pid_reset(&steering_pid);
@@ -367,56 +307,11 @@ void robot_run(void)
         xbox_update();
         sbus_update();
 
-        // ── SBUS arming / drive commands ──────────────────────────────────
-        // state.trying  — operator wants the robot to balance (arm switch)
-        // state.armed   — actually driving motors (cleared on fall, restored when upright)
-        if (sbus_is_connected())
+        // ── SBUS drive commands (no arming via SBUS — IPC only) ───────────
+        if (sbus_is_connected() && state.armed && state.mode == MODE_BALANCE)
         {
-            int kill = sbus_get_kill();
-            int arm = sbus_get_arm();
-
-            if (kill < 2)
-            {
-                if (state.trying)
-                {
-                    state.trying = 0;
-                    state.armed = 0;
-                    rc_led_set(RC_LED_GREEN, 0);
-                    LOG_WARN("DISARM@kill_switch");
-                }
-            }
-
-            static int prev_sbus_arm = 0;
-            if (arm == 2 && prev_sbus_arm < 2 && kill == 2)
-            {
-                if (fabsf(state.theta - state.theta_offset) > 14.0f)
-                {
-                    LOG_WARN("SBUS ARM REJECTED — angle too large (%.1f deg)",
-                             state.theta - state.theta_offset);
-                }
-                else
-                {
-                    state.trying = 1;
-                    state.armed = 1;
-                    motor_hal_standby(0);
-                    rc_led_set(RC_LED_GREEN, 1);
-                    LOG_INFO("SBUS ARMED (theta=%.2f deg)", state.theta);
-                }
-            }
-            else if (arm < 2 && prev_sbus_arm == 2)
-            {
-                state.trying = 0;
-                state.armed = 0;
-                rc_led_set(RC_LED_GREEN, 0);
-                LOG_INFO("DISARM@sbus_arm_low");
-            }
-            prev_sbus_arm = arm;
-
-            if (state.armed && state.mode == MODE_BALANCE)
-            {
-                state.theta_ref = sbus_get_drive() * MAX_THETA_REF;
-                state.steering = sbus_get_turn() * MAX_STEERING;
-            }
+            state.theta_ref = sbus_get_drive() * MAX_THETA_REF;
+            state.steering  = sbus_get_turn()  * MAX_STEERING;
         }
 
         // ── D3 steering latch ─────────────────────────────────────────────
@@ -469,21 +364,21 @@ void robot_run(void)
                 state.steering = state.steering_latch;
         }
 
-        // ── Fall detection / auto-recovery ───────────────────────────────
+        // ── Fall detection / auto-recovery ────────────────────────────────
         float eff_angle = fabsf(state.theta - state.theta_offset);
         if (state.armed && eff_angle > 15.0f)
         {
-            // Fell — cut motors but stay trying if operator hasn't disarmed
+            // Fell — cut motors. Stay trying so recovery re-arms automatically.
             state.armed = 0;
-            motor_output_ready = 0;         // ← discard pending ISR output
-            motor_hal_set_both(0.0f, 0.0f); // ← zero before standby
+            motor_output_ready = 0;
+            motor_hal_set_both(0.0f, 0.0f);
             motor_hal_standby(1);
             rc_led_set(RC_LED_GREEN, 0);
-            LOG_WARN("FELL — auto-disarmed (eff=%.1f deg)", eff_angle);
+            LOG_WARN("FELL — disarmed (eff=%.1f deg)", eff_angle);
         }
         else if (!state.armed && state.trying && eff_angle < 10.0f)
         {
-            // Back within range — re-arm
+            // Back within range — re-arm automatically
             state.armed = 1;
             motor_hal_standby(0);
             rc_led_set(RC_LED_GREEN, 1);
