@@ -5,20 +5,20 @@
 0.010 0.010 0.000
 
 # pos_config
-zone_a=8000
-zone_b=4000
-zone_c=1000
-scale_a=600.000
-scale_b=800.000
-scale_c=1000.000
-scale_d=500.000
-vel_scale_stop=60.000
+zone_a=8000.0
+zone_b=4000.0
+zone_c=500.0
+scale_a=60.000
+scale_b=80.000
+scale_c=200.000
+scale_d=200.000
+vel_scale_stop=30.000
 vel_scale_move=70.000
 vel_scale_turning=70.000
-stopped_vel=100
-max_correction=0.15000
-max_angle_rate=0.02000
-back_to_spot=1
+stopped_vel=5.0
+max_correction=1.000
+max_angle_rate=0.020
+back_to_spot=1.0
 
 # motor_config
 mode=0

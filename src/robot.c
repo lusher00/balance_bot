@@ -221,6 +221,7 @@ void robot_run(void)
         if (!prev_armed && state.armed)
         {
             state.enc_pos_target = state.enc_pos; /* D2: snap target on arm */
+            state.theta_ref = 0.0f;               /* D2: start correction from zero */
         }
         prev_armed = state.armed;
 
@@ -250,7 +251,6 @@ void robot_run(void)
             static int32_t last_enc_pos = 0;
             static uint64_t last_vel_us = 0;
             static bool vel_init = false;
-            static bool stopped = true;
 
             uint64_t now_us = rc_nanos_since_boot() / 1000;
 
@@ -259,7 +259,6 @@ void robot_run(void)
                 last_enc_pos = state.enc_pos; // == 0 after zero_encoders
                 last_vel_us = now_us;
                 vel_init = true;
-                stopped = true;
                 state.enc_vel_reset = 0;
             }
             else if (!vel_init)
@@ -276,14 +275,8 @@ void robot_run(void)
                 last_enc_pos = state.enc_pos;
                 last_vel_us = now_us;
 
-                // Latch target when the bot comes to a stop (stick centered)
-                if (abs(delta) <= g_pos_config.stopped_vel && !stopped)
-                {
-                    state.enc_pos_target = state.enc_pos;
-                    stopped = true;
-                }
-                if (abs(delta) > g_pos_config.stopped_vel)
-                    stopped = false;
+                // enc_pos_target is set on arm and updated by the driving branch.
+                // No latch here — the velocity block must not chase the bot.
             }
         }
 
@@ -308,11 +301,25 @@ void robot_run(void)
         sbus_update();
 
         // ── SBUS drive commands (no arming via SBUS — IPC only) ───────────
+        // stick_input tracks operator drive intent only — never touched by D2.
+        // This is what raw_stick_ref must read, not state.theta_ref which
+        // accumulates D2 correction across loops.
+        static float stick_input = 0.0f;
         if (sbus_is_connected() && state.armed && state.mode == MODE_BALANCE)
         {
-            state.theta_ref = sbus_get_drive() * MAX_THETA_REF;
-            state.steering  = sbus_get_turn()  * MAX_STEERING;
+            stick_input = sbus_get_drive() * MAX_THETA_REF;
+            state.theta_ref = stick_input;
+            state.steering = sbus_get_turn() * MAX_STEERING;
         }
+        else if (!sbus_is_connected())
+        {
+            stick_input = 0.0f;
+        }
+
+        // Capture stick input before D2 adds its correction.
+        // theta_ref may have accumulated D2 correction from previous loops,
+        // so raw_stick_ref must reflect only the operator's input.
+        float raw_stick_ref = stick_input;
 
         // ── D3 steering latch ─────────────────────────────────────────────
         // When the turn stick returns to centre, latch the current phi_diff
@@ -374,6 +381,15 @@ void robot_run(void)
             motor_hal_set_both(0.0f, 0.0f);
             motor_hal_standby(1);
             rc_led_set(RC_LED_GREEN, 0);
+            // Reset encoders and theta_ref so re-arm starts from a clean position.
+            motor_hal_encoder_reset_all();
+            state.enc_left = 0;
+            state.enc_right = 0;
+            state.enc_pos = 0;
+            state.enc_pos_target = 0;
+            state.enc_velocity = 0;
+            state.enc_vel_reset = 1;
+            state.theta_ref = 0.0f;
             LOG_WARN("FELL — disarmed (eff=%.1f deg)", eff_angle);
         }
         else if (!state.armed && state.trying && eff_angle < 10.0f)
@@ -401,7 +417,6 @@ void robot_run(void)
         // Save raw stick before D2 correction is applied so D2 can tell
         // whether the operator is actually driving.  Must be captured here,
         // before the theta_ref += correction line below mutates it.
-        float raw_stick_ref = state.theta_ref;
         {
             // Track armed transitions for D2 last_correction reset
             static int prev_armed_d2 = 0;
@@ -520,6 +535,11 @@ void robot_run(void)
 
                 state.d2_correction_out = correction;
                 state.theta_ref += correction;
+                // Clamp total lean D2 can command — not just per-tick step
+                if (state.theta_ref >  g_pos_config.max_correction)
+                    state.theta_ref =  g_pos_config.max_correction;
+                if (state.theta_ref < -g_pos_config.max_correction)
+                    state.theta_ref = -g_pos_config.max_correction;
             }
             else
             {
@@ -545,6 +565,31 @@ void robot_run(void)
             }
             prev_armed_d2 = state.armed;
         } // end D2 block
+
+        // ── D2/D3 diagnostic log (2 Hz, always-on while armed) ───────────
+        if (state.armed)
+        {
+            static uint64_t diag_last_us = 0;
+            uint64_t diag_now_us = rc_nanos_since_boot() / 1000;
+            if (diag_now_us - diag_last_us >= 500000)
+            {
+                diag_last_us = diag_now_us;
+                int32_t d2_err = state.enc_pos_target - state.enc_pos;
+                float phi_diff = (state.phi_left - state.phi_right) / 2.0f;
+                printf("[D2] en=%d  pos=%d  tgt=%d  err=%d  vel=%d  corr_out=%.3f  theta_ref=%.3f\n",
+                       g_debug_config.controllers.D2_drive,
+                       state.enc_pos, state.enc_pos_target, d2_err,
+                       state.enc_velocity,
+                       state.d2_correction_out,
+                       state.theta_ref);
+                printf("[D3] en=%d  psi=%.2f  phi_diff=%.2f  steering=%.3f  latch=%.3f  latched=%d\n",
+                       g_debug_config.controllers.D3_steering,
+                       state.psi, phi_diff,
+                       state.steering, state.steering_latch,
+                       state.steering_latched);
+                fflush(stdout);
+            }
+        }
 
         // Saturate references before the next ISR reads them
         rc_saturate_float(&state.theta_ref, -MAX_THETA_REF, MAX_THETA_REF);

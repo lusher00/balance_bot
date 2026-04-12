@@ -318,30 +318,22 @@ static int parse_json_command(const char *json_cmd)
         return 0;
     }
 
-    // {"type":"zero_imu"}  — set balance trim to current pitch, save to pidconfig.txt
-    if (strstr(json_cmd, "\"type\":\"zero_encoders\""))
+    // {"type":"zero_imu"} — zero pitch offset + encoders, save all config
+    if (strstr(json_cmd, "\"type\":\"zero_imu\""))
     {
+        g_imu_offsets.pitch_offset += state.theta;
+        imu_offsets_save(&g_imu_offsets);
+        state.theta_offset = 0.0f;
+        // Also zero encoders so D2 starts from a clean position
         motor_hal_encoder_reset_all();
         state.enc_left = 0;
         state.enc_right = 0;
         state.phi_left = 0.0f;
         state.phi_right = 0.0f;
         state.enc_pos = 0;
-        state.enc_pos_target = 0; // D2 hold target — reset with encoders
+        state.enc_pos_target = 0;
         state.enc_velocity = 0;
-        state.enc_vel_reset = 1; // signal robot.c to resync velocity window
-        LOG_INFO("iPhone: encoders zeroed");
-        return 0;
-    }
-
-    if (strstr(json_cmd, "\"type\":\"zero_imu\""))
-    {
-        // Use state.theta which is already computed by imu_interrupt — no race.
-        // Add the current reading to the existing offset so we zero from wherever we are.
-        g_imu_offsets.pitch_offset += state.theta;
-        imu_offsets_save(&g_imu_offsets);
-        // Reset the PID balance trim — the mounting offset now handles zeroing.
-        state.theta_offset = 0.0f;
+        state.enc_vel_reset = 1;
         pid_config_file_t cfg;
         pid_config_get_current(&cfg);
         pid_config_save(NULL, &cfg);
@@ -351,7 +343,23 @@ static int parse_json_command(const char *json_cmd)
         motor_config_t mcfg;
         motor_config_get_current(&mcfg);
         motor_config_save(NULL, &mcfg);
-        LOG_INFO("iPhone: IMU zeroed, saved");
+        LOG_INFO("iPhone: IMU zeroed + encoders reset, saved");
+        return 0;
+    }
+
+    // {"type":"zero_encoders"} — reset encoder position only
+    if (strstr(json_cmd, "\"type\":\"zero_encoders\""))
+    {
+        motor_hal_encoder_reset_all();
+        state.enc_left = 0;
+        state.enc_right = 0;
+        state.phi_left = 0.0f;
+        state.phi_right = 0.0f;
+        state.enc_pos = 0;
+        state.enc_pos_target = 0;
+        state.enc_velocity = 0;
+        state.enc_vel_reset = 1;
+        LOG_INFO("iPhone: encoders zeroed");
         return 0;
     }
 

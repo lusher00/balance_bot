@@ -289,6 +289,11 @@ int main(int argc, char *argv[])
     }
 
     pid_config_apply(&pid_config);
+    if (pos_config_load_or_default(pid_config_file, &g_pos_config) < 0)
+    {
+        fprintf(stderr, "Error: Failed to load position config\n");
+        return -1;
+    }
 
     motor_config_t motor_config;
     motor_config_load_or_default(pid_config_file, &motor_config);

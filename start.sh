@@ -40,6 +40,7 @@ sudo pkill -f balance_bot 2>/dev/null
 pkill -f server.js 2>/dev/null
 sleep 0.5
 
+sudo /home/debian/balance_bot/estop_clear.sh || { echo "E-stop clear failed"; exit 1; }
 python3 /home/debian/balance_bot/roboclaw_reset.py || { echo "RoboClaw reset failed"; exit 1; }
 
 # ── start server.js in background, output to log only ─────────────
