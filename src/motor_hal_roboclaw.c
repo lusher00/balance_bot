@@ -49,6 +49,10 @@
 static struct roboclaw *g_rc = NULL;
 static pthread_mutex_t g_rc_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* stored at init so reset can reopen without needing the caller to pass them again */
+static char  g_device[64] = "/dev/ttyO1";
+static int   g_baud        = 460800;
+
 /* last encoder values — cached so motor_hal_encoder_read() works per-side */
 static int32_t g_enc_l = 0;
 static int32_t g_enc_r = 0;
@@ -83,6 +87,9 @@ int motor_hal_init(const char *device, int baud)
     if (baud <= 0)
         baud = 460800;
 
+    strncpy(g_device, device, sizeof(g_device) - 1);
+    g_baud = baud;
+
     LOG_INFO("motor_hal_roboclaw: opening %s at %d baud (addr 0x%02X)",
              device, baud, RC_ADDRESS);
 
@@ -114,6 +121,55 @@ void motor_hal_cleanup(void)
     roboclaw_close(g_rc);
     g_rc = NULL;
     LOG_INFO("motor_hal_roboclaw: cleaned up");
+}
+
+/**
+ * @brief Reset RoboClaw after a latched e-stop.
+ *
+ * The RoboClaw latches its e-stop internally and won't respond to motor
+ * commands until a WriteNVM (cmd 94) reset clears it.  This function:
+ *   1. Zeros motors and closes the serial connection (asserts e-stop GPIO).
+ *   2. Runs roboclaw_reset.py which sends the WriteNVM reset and waits 2s.
+ *   3. Re-initializes the connection (deasserts e-stop GPIO).
+ *
+ * Blocks for ~2 seconds while the RoboClaw comes back up.
+ * Call this from the IPC thread — NOT from the IMU interrupt.
+ */
+int motor_hal_roboclaw_reset(void)
+{
+    LOG_INFO("motor_hal_roboclaw: resetting RoboClaw (WriteNVM)…");
+
+    /* 1. Stop motors and close serial — roboclaw_close asserts e-stop GPIO */
+    pthread_mutex_lock(&g_rc_mutex);
+    if (g_rc)
+    {
+        motor_hal_set_both(0.0f, 0.0f);
+        roboclaw_close(g_rc);
+        g_rc = NULL;
+    }
+    pthread_mutex_unlock(&g_rc_mutex);
+
+    /* 2. Run reset script — sends WriteNVM, waits 2 s for unit to come up */
+    int ret = system("python3 /home/debian/balance_bot/roboclaw_reset.py");
+    if (ret != 0)
+        LOG_WARN("motor_hal_roboclaw: reset script exited %d — continuing", ret);
+
+    /* 3. Re-open serial + deassert e-stop via roboclaw_init → roboclaw_estop_init */
+    pthread_mutex_lock(&g_rc_mutex);
+    g_rc = roboclaw_init(g_device, g_baud);
+    pthread_mutex_unlock(&g_rc_mutex);
+
+    if (!g_rc)
+    {
+        LOG_ERROR("motor_hal_roboclaw: reinit failed after reset");
+        return -1;
+    }
+
+    roboclaw_estop_init();   /* deasserts GPIO57 */
+    motor_hal_set_both(0.0f, 0.0f);
+
+    LOG_INFO("motor_hal_roboclaw: reset complete, e-stop cleared");
+    return 0;
 }
 
 /* ── motor output ───────────────────────────────────────────────── */

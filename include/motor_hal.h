@@ -104,4 +104,15 @@ int motor_hal_encoder_reset(int motor);
  */
 int motor_hal_encoder_reset_all(void);
 
+/**
+ * @brief Reset RoboClaw after a latched e-stop.
+ *
+ * Closes the serial connection, runs roboclaw_reset.py (WriteNVM cmd 94),
+ * then reinitialises.  Blocks ~2 s while the unit comes back up.
+ * Only meaningful for the RoboClaw backend; the rc_motor backend is a no-op.
+ *
+ * @return 0 on success, -1 if reinit failed
+ */
+int motor_hal_roboclaw_reset(void);
+
 #endif /* MOTOR_HAL_H */

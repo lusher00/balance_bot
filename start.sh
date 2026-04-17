@@ -15,6 +15,8 @@ SERVER_JS="/home/debian/balance_bot/server/server.js"
 NODE_BIN="/usr/local/bin/node"
 BALANCE_BOT="/usr/local/bin/balance_bot"
 SERVER_LOG="/tmp/server.log"
+WEB_SCRIPT="/home/debian/balance_bot/web/serve_web.py"
+WEB_PORT=8888
 
 INPUT_ARGS=""
 if [[ "$1" == "--sbus" ]]; then
@@ -38,6 +40,7 @@ fi
 sudo systemctl stop balance_bot 2>/dev/null
 sudo pkill -f balance_bot 2>/dev/null
 pkill -f server.js 2>/dev/null
+pkill -f serve_web.py 2>/dev/null
 sleep 0.5
 
 sudo /home/debian/balance_bot/estop_clear.sh || { echo "E-stop clear failed"; exit 1; }
@@ -58,10 +61,17 @@ fi
 
 echo "server.js running (pid $SERVER_PID)"
 
+# ── start web dashboard server ─────────────────────────────────────
+python3 "$WEB_SCRIPT" &
+WEB_PID=$!
+echo "Web dashboard: http://boneblue-0:$WEB_PORT/bbot_dashboard.html"
+
 # ── cleanup on exit ────────────────────────────────────────────────
 cleanup() {
     kill "$SERVER_PID" 2>/dev/null
+    kill "$WEB_PID"    2>/dev/null
     wait "$SERVER_PID" 2>/dev/null
+    wait "$WEB_PID"    2>/dev/null
 }
 trap cleanup EXIT INT TERM
 

@@ -62,7 +62,14 @@ static void imu_interrupt(void)
     state.psi = t.yaw;             // deg
 
     if (!state.armed)
+    {
+        // Ensure any previously queued output is zeroed — main loop may not
+        // have consumed it yet before armed went to 0.
+        pending_left_duty = 0.0f;
+        pending_right_duty = 0.0f;
+        motor_output_ready = 0;
         return;
+    }
 
     // PID — setpoints and encoder positions are maintained by the main loop.
     float balance_output = 0.0f;
@@ -209,19 +216,23 @@ void robot_run(void)
         static int prev_armed = 0;
         if (prev_armed && !state.armed)
         {
+            pending_left_duty = 0.0f;
+            pending_right_duty = 0.0f;
             motor_output_ready = 0;
             motor_hal_set_both(0.0f, 0.0f);
+            roboclaw_estop_assert();
             pid_reset(&balance_pid);
             pid_reset(&drive_pid);
             pid_reset(&steering_pid);
             last_left_duty = 0.0f;
             last_right_duty = 0.0f;
-            state.enc_pos_target = state.enc_pos; /* D2: snap target on disarm */
+            state.enc_pos_target = state.enc_pos;
         }
         if (!prev_armed && state.armed)
         {
-            state.enc_pos_target = state.enc_pos; /* D2: snap target on arm */
-            state.theta_ref = 0.0f;               /* D2: start correction from zero */
+            roboclaw_estop_deassert();
+            state.enc_pos_target = state.enc_pos;
+            state.theta_ref = 0.0f;
         }
         prev_armed = state.armed;
 
@@ -372,33 +383,53 @@ void robot_run(void)
         }
 
         // ── Fall detection / auto-recovery ────────────────────────────────
+        // trying  = angle is within recoverable range (<10°), managed automatically
+        // armed   = operator intent, set/cleared by IPC only — never auto-set here
+        //
+        // States:
+        //   armed=1, trying=1  → running normally
+        //   armed=0, trying=1  → operator disarmed but angle ok (standby)
+        //   armed=0, trying=0  → out of range / fell — motors off
+        //   armed=1, trying=0  → can't happen (arm requires trying=1)
         float eff_angle = fabsf(state.theta - state.theta_offset);
-        if (state.armed && eff_angle > 15.0f)
+        if (eff_angle > 15.0f)
         {
-            // Fell — cut motors. Stay trying so recovery re-arms automatically.
-            state.armed = 0;
-            motor_output_ready = 0;
-            motor_hal_set_both(0.0f, 0.0f);
-            motor_hal_standby(1);
-            rc_led_set(RC_LED_GREEN, 0);
-            // Reset encoders and theta_ref so re-arm starts from a clean position.
-            motor_hal_encoder_reset_all();
-            state.enc_left = 0;
-            state.enc_right = 0;
-            state.enc_pos = 0;
-            state.enc_pos_target = 0;
-            state.enc_velocity = 0;
-            state.enc_vel_reset = 1;
-            state.theta_ref = 0.0f;
-            LOG_WARN("FELL — disarmed (eff=%.1f deg)", eff_angle);
+            // Out of bounds — cut motors regardless of armed state
+            if (state.armed || state.trying)
+            {
+                state.armed = 0;
+                state.trying = 0;
+                pending_left_duty = 0.0f;
+                pending_right_duty = 0.0f;
+                motor_output_ready = 0;
+                motor_hal_set_both(0.0f, 0.0f);
+                roboclaw_estop_assert();
+                motor_hal_standby(1);
+                rc_led_set(RC_LED_GREEN, 0);
+                motor_hal_encoder_reset_all();
+                state.enc_left = 0;
+                state.enc_right = 0;
+                state.enc_pos = 0;
+                state.enc_pos_target = 0;
+                state.enc_velocity = 0;
+                state.enc_vel_reset = 1;
+                state.theta_ref = 0.0f;
+                LOG_WARN("FELL — disarmed (eff=%.1f deg)", eff_angle);
+            }
         }
-        else if (!state.armed && state.trying && eff_angle < 10.0f)
+        else if (eff_angle < 10.0f)
         {
-            // Back within range — re-arm automatically
-            state.armed = 1;
-            motor_hal_standby(0);
-            rc_led_set(RC_LED_GREEN, 1);
-            LOG_INFO("RECOVERED — re-armed (eff=%.1f deg)", eff_angle);
+            // Within range — set trying if not already set
+            if (!state.trying)
+            {
+                state.trying = 1;
+                LOG_INFO("IN RANGE — ready to arm (eff=%.1f deg)", eff_angle);
+            }
+        }
+        else
+        {
+            // Between 10° and 15° — clear trying so arm is blocked until stable
+            state.trying = 0;
         }
 
         // ── D2 position (drive) controller ───────────────────────────────
@@ -534,12 +565,7 @@ void robot_run(void)
                     correction = -g_pos_config.max_correction;
 
                 state.d2_correction_out = correction;
-                state.theta_ref += correction;
-                // Clamp total lean D2 can command — not just per-tick step
-                if (state.theta_ref >  g_pos_config.max_correction)
-                    state.theta_ref =  g_pos_config.max_correction;
-                if (state.theta_ref < -g_pos_config.max_correction)
-                    state.theta_ref = -g_pos_config.max_correction;
+                state.theta_ref = correction;
             }
             else
             {

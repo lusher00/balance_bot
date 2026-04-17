@@ -15,6 +15,7 @@
 #include "debug_config.h"
 #include "balance_bot.h"
 #include "motor_hal.h"
+#include "roboclaw_estop.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -286,14 +287,15 @@ static int parse_json_command(const char *json_cmd)
     {
         if (strstr(json_cmd, "\"value\":true"))
         {
-            if (fabsf(state.theta - state.theta_offset) > 14.0f)
+            if (!state.trying || fabsf(state.theta - state.theta_offset) > 14.0f)
             {
-                LOG_WARN("ARM REJECTED — angle too large (%.1f deg)", state.theta - state.theta_offset);
+                LOG_WARN("ARM REJECTED — angle too large or not in range (%.1f deg)", state.theta - state.theta_offset);
             }
             else
             {
                 state.trying = 1;
                 state.armed = 1;
+                motor_hal_standby(0);
                 rc_led_set(RC_LED_GREEN, 1);
                 LOG_INFO("iPhone: ARMED (theta=%.2f deg)", state.theta);
             }
@@ -310,6 +312,27 @@ static int parse_json_command(const char *json_cmd)
         return 0;
     }
 
+    // {"type":"e_stop"} -- immediate stop + latch hardware e-stop
+    if (strstr(json_cmd, "\"type\":\"e_stop\""))
+    {
+        state.armed  = 0;
+        state.trying = 0;
+        motor_hal_set_both(0.0f, 0.0f);
+        motor_hal_standby(1);
+        roboclaw_estop_assert();
+        rc_led_set(RC_LED_GREEN, 0);
+        LOG_INFO("iPhone: E-STOP asserted");
+        return 0;
+    }
+
+    // {"type":"reset_estop"} -- WriteNVM reset + reinit (~2s), call after a fall or e_stop
+    if (strstr(json_cmd, "\"type\":\"reset_estop\""))
+    {
+        LOG_INFO("iPhone: resetting e-stop...");
+        motor_hal_roboclaw_reset();
+        return 0;
+    }
+
     // {"type":"debug_d2","value":true}  -- toggle verbose D2 position logging
     if (strstr(json_cmd, "\"type\":\"debug_d2\""))
     {
@@ -321,7 +344,7 @@ static int parse_json_command(const char *json_cmd)
     // {"type":"zero_imu"} — zero pitch offset + encoders, save all config
     if (strstr(json_cmd, "\"type\":\"zero_imu\""))
     {
-        g_imu_offsets.pitch_offset += state.theta;
+        g_imu_offsets.pitch_offset -= state.theta;  // state.theta = -(pitch_deg - offset) so -= corrects sign
         imu_offsets_save(&g_imu_offsets);
         state.theta_offset = 0.0f;
         // Also zero encoders so D2 starts from a clean position

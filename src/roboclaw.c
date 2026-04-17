@@ -11,7 +11,7 @@
 
 #include "roboclaw.h"
 
-#include <stdint.h>		//uint8_t, int16_t, int32_t
+#include <stdint.h> //uint8_t, int16_t, int32_t
 #include "roboclaw_estop.h"
 #include <unistd.h>		//read, close
 #include <fcntl.h>		//O_RDWR file open flag
@@ -207,6 +207,14 @@ static int encode_uint32(uint8_t *buffer, int bytes, uint32_t value)
 	memcpy(buffer + bytes, &value, sizeof(value));
 	return sizeof(value);
 }
+static int encode_int32(uint8_t *buffer, int bytes, int32_t value)
+{
+	uint32_t uval;
+	memcpy(&uval, &value, sizeof(uval));
+	uval = htobe32(uval);
+	memcpy(buffer + bytes, &uval, sizeof(uval));
+	return sizeof(uval);
+}
 static uint32_t decode_uint32_t(uint8_t *buffer)
 {
 	uint32_t value;
@@ -267,8 +275,8 @@ static int encode_speed_m1m2(uint8_t *buffer, uint8_t address, int32_t speed1, i
 	uint8_t bytes = 0;
 	buffer[bytes++] = address;
 	buffer[bytes++] = MIXEDSPEED;
-	bytes += encode_uint32(buffer, bytes, speed1);
-	bytes += encode_uint32(buffer, bytes, speed2);
+	bytes += encode_int32(buffer, bytes, speed1);
+	bytes += encode_int32(buffer, bytes, speed2);
 	bytes += encode_checksum(buffer, bytes);
 
 	return bytes;
@@ -280,8 +288,8 @@ static int encode_speed_accel_m1m2(uint8_t *buffer, uint8_t address, int32_t spe
 	buffer[bytes++] = address;
 	buffer[bytes++] = MIXEDSPEEDACCEL;
 	bytes += encode_uint32(buffer, bytes, accel);
-	bytes += encode_uint32(buffer, bytes, speed1);
-	bytes += encode_uint32(buffer, bytes, speed2);
+	bytes += encode_int32(buffer, bytes, speed1);
+	bytes += encode_int32(buffer, bytes, speed2);
 	bytes += encode_checksum(buffer, bytes);
 
 	return bytes;
@@ -557,7 +565,7 @@ struct roboclaw *roboclaw_init_ext(const char *tty, int baudrate, int timeout_ms
 	// this is still edge case to consider, some settings may have not been made
 	// solution tcgetattr and check settings we made for equality
 
-	roboclaw_estop_init();   /* export GPIO57, drive high — deassert e-stop */
+	roboclaw_estop_init(); /* export GPIO57, drive high — deassert e-stop */
 	return rc;
 }
 
@@ -568,7 +576,7 @@ int roboclaw_close(struct roboclaw *rc)
 	if (rc == NULL)
 		return ROBOCLAW_OK;
 
-	roboclaw_estop_assert();  /* drive GPIO57 low — safe before closing serial */
+	roboclaw_estop_assert(); /* drive GPIO57 low — safe before closing serial */
 
 	// Note that tcsetattr() returns success if any of the  requested  changes
 	// could  be  successfully  carried  out.  Therefore, when making multiple

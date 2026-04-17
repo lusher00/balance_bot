@@ -66,11 +66,13 @@ clean:
 
 # Service name
 SERVICE = balance_bot.service
+SERVER_SERVICE = balance_bot_server.service
 
 # Install to system
 install: $(BINDIR)/$(TARGET)
-	@echo "Stopping $(SERVICE)..."
+	@echo "Stopping $(SERVICE) and $(SERVER_SERVICE)..."
 	sudo systemctl stop $(SERVICE) || true
+	sudo systemctl stop $(SERVER_SERVICE) || true
 	@echo "Installing $(TARGET) to /usr/local/bin/..."
 	sudo cp $(BINDIR)/$(TARGET) /usr/local/bin/$(TARGET)
 	@if [ ! -f pidconfig.txt ]; then \
@@ -81,8 +83,9 @@ install: $(BINDIR)/$(TARGET)
 		echo "15.0 0.0 1.5" >> pidconfig.txt; \
 		echo "Created default pidconfig.txt"; \
 	fi
-	@echo "Restarting $(SERVICE)..."
+	@echo "Restarting $(SERVICE) and $(SERVER_SERVICE)..."
 	sudo systemctl start $(SERVICE) || true
+	sudo systemctl start $(SERVER_SERVICE) || true
 	@echo ""
 	@echo "✅ Installed and restarted: /usr/local/bin/$(TARGET)"
 	@echo ""
