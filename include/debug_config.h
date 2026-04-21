@@ -154,18 +154,6 @@ typedef struct {
 } telemetry_enables_t;
 
 /**
- * @brief PID controller enable flags
- * 
- * These flags control which PID controllers are active in the cascade.
- * D1_balance should always be enabled when armed.
- */
-typedef struct {
-    bool D1_balance;         // Balance controller (REQUIRED when armed)
-    bool D2_drive;           // Drive controller (position hold)
-    bool D3_steering;        // Steering controller
-} controller_enables_t;
-
-/**
  * @brief Video overlay configuration
  *
  * Flags forwarded to an external coprocessor (e.g. RPi) to control
@@ -235,7 +223,6 @@ typedef struct {
  */
 typedef struct {
     telemetry_enables_t telemetry;      // What telemetry to send
-    controller_enables_t controllers;   // Which PIDs are active
     video_overlays_t overlays;          // Video overlay settings
     bool debug_d2;                      // Verbose D2 position controller logging
     telemetry_rates_t rates;            // Update rates
@@ -322,12 +309,7 @@ static inline debug_config_t get_default_debug_config(void) {
             .ext_input = true,
             .system_status = true
         },
-        .controllers = {
-            .D1_balance = true,        // Always enabled
-            .D2_drive = true,         
-            .D3_steering = true
-        },
-        .overlays = {
+.overlays = {
             .crosshair = true,
             .stats = false
         },

@@ -20,7 +20,7 @@ telemetry_data_t g_telemetry_data = {0};
 // External references to robot state
 extern robot_state_t state;
 extern rc_mpu_data_t mpu_data;
-extern pid_controller_t balance_pid, drive_pid, steering_pid;
+extern pid_controller_t balance_pid, steering_pid;
 
 // Encoder tracking for velocity calculation
 static int32_t prev_left_ticks = 0;
@@ -115,7 +115,7 @@ static void update_pid_telemetry(void)
         return;
 
     // D1: Balance controller
-    g_telemetry_data.D1_balance.enabled = g_debug_config.controllers.D1_balance;
+    g_telemetry_data.D1_balance.enabled = g_controllers.D1_balance;
     g_telemetry_data.D1_balance.setpoint = state.theta_ref + state.theta_offset;
     g_telemetry_data.D1_balance.measurement = state.theta;
     g_telemetry_data.D1_balance.error = balance_pid.prev_error;
@@ -135,7 +135,7 @@ static void update_pid_telemetry(void)
     //   output      = last correction injected into theta_ref (deg) -- tracked via
     //                 the steering_latch field reuse; approximate from error/scale
     //   kp/ki/kd    = not applicable; send pos_config zone/scale summary as kp
-    g_telemetry_data.D2_drive.enabled = g_debug_config.controllers.D2_drive;
+    g_telemetry_data.D2_drive.enabled = g_controllers.D2_drive;
     g_telemetry_data.D2_drive.setpoint = (float)state.enc_pos_target;
     g_telemetry_data.D2_drive.measurement = (float)state.enc_pos;
     g_telemetry_data.D2_drive.error = (float)(state.enc_pos - state.enc_pos_target);
@@ -148,9 +148,9 @@ static void update_pid_telemetry(void)
     g_telemetry_data.D2_drive.kd = g_pos_config.max_correction;
 
     // D3: Steering controller
-    g_telemetry_data.D3_steering.enabled = g_debug_config.controllers.D3_steering;
+    g_telemetry_data.D3_steering.enabled = g_controllers.D3_steering;
     g_telemetry_data.D3_steering.setpoint = state.steering;
-    g_telemetry_data.D3_steering.measurement = (state.phi_left - state.phi_right) / 2.0f;
+    g_telemetry_data.D3_steering.measurement = (state.phi_left - state.phi_right) / 2.0f;  // deg diff
     g_telemetry_data.D3_steering.error = steering_pid.prev_error;
     g_telemetry_data.D3_steering.p_term = steering_pid.kp * steering_pid.prev_error;
     g_telemetry_data.D3_steering.i_term = steering_pid.ki * steering_pid.integrator;

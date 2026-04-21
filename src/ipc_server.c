@@ -15,7 +15,6 @@
 #include "debug_config.h"
 #include "balance_bot.h"
 #include "motor_hal.h"
-#include "roboclaw_estop.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +27,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include "rc_compat.h"
+#include "roboclaw_estop.h"
 
 #define SOCKET_PATH "/tmp/balance_bot.sock"
 #define MAX_CLIENTS 5
@@ -197,6 +197,15 @@ static int handle_command(const char *json_cmd, char *response, size_t response_
  * @param json_cmd JSON command string
  * @return 0 on success, -1 on error
  */
+static void *ipc_estop_reset_thread(void *arg)
+{
+    (void)arg;
+    motor_hal_roboclaw_reset();
+    state.estop_latched = 0;
+    state.trying = 0;  // let angle logic re-set cleanly
+    return NULL;
+}
+
 static int parse_json_command(const char *json_cmd)
 {
     // Simple JSON parsing (in production, use json-c library)
@@ -209,12 +218,12 @@ static int parse_json_command(const char *json_cmd)
         {
             if (strstr(json_cmd, "\"enabled\":true"))
             {
-                g_debug_config.controllers.D1_balance = true;
+                g_controllers.D1_balance = true;
                 LOG_INFO("D1_balance enabled");
             }
             else if (strstr(json_cmd, "\"enabled\":false"))
             {
-                g_debug_config.controllers.D1_balance = false;
+                g_controllers.D1_balance = false;
                 LOG_WARN("D1_balance disabled - robot will fall!");
             }
         }
@@ -222,12 +231,12 @@ static int parse_json_command(const char *json_cmd)
         {
             if (strstr(json_cmd, "\"enabled\":true"))
             {
-                g_debug_config.controllers.D2_drive = true;
+                g_controllers.D2_drive = true;
                 LOG_INFO("D2_drive enabled");
             }
             else
             {
-                g_debug_config.controllers.D2_drive = false;
+                g_controllers.D2_drive = false;
                 LOG_INFO("D2_drive disabled");
             }
         }
@@ -235,12 +244,12 @@ static int parse_json_command(const char *json_cmd)
         {
             if (strstr(json_cmd, "\"enabled\":true"))
             {
-                g_debug_config.controllers.D3_steering = true;
+                g_controllers.D3_steering = true;
                 LOG_INFO("D3_steering enabled");
             }
             else
             {
-                g_debug_config.controllers.D3_steering = false;
+                g_controllers.D3_steering = false;
                 LOG_INFO("D3_steering disabled");
             }
         }
@@ -287,17 +296,19 @@ static int parse_json_command(const char *json_cmd)
     {
         if (strstr(json_cmd, "\"value\":true"))
         {
-            if (!state.trying || fabsf(state.theta - state.theta_offset) > 14.0f)
+            if (state.estop_latched)
             {
-                LOG_WARN("ARM REJECTED — angle too large or not in range (%.1f deg)", state.theta - state.theta_offset);
+                LOG_WARN("ARM rejected — estop latched, press CLR ESTOP first");
             }
             else
             {
-                state.trying = 1;
                 state.armed = 1;
+                // Set trying only if currently in bounds — fall detection manages it otherwise
+                if (fabsf(state.theta - state.theta_offset) < 14.0f)
+                    state.trying = 1;
                 motor_hal_standby(0);
                 rc_led_set(RC_LED_GREEN, 1);
-                LOG_INFO("iPhone: ARMED (theta=%.2f deg)", state.theta);
+                LOG_INFO("iPhone: ARMED (theta=%.2f trying=%d)", state.theta, state.trying);
             }
         }
         else
@@ -312,11 +323,12 @@ static int parse_json_command(const char *json_cmd)
         return 0;
     }
 
-    // {"type":"e_stop"} -- immediate stop + latch hardware e-stop
+    // {"type":"e_stop"} -- assert hardware e-stop
     if (strstr(json_cmd, "\"type\":\"e_stop\""))
     {
-        state.armed  = 0;
-        state.trying = 0;
+        state.armed        = 0;
+        state.trying       = 0;
+        state.estop_latched = 1;
         motor_hal_set_both(0.0f, 0.0f);
         motor_hal_standby(1);
         roboclaw_estop_assert();
@@ -325,11 +337,13 @@ static int parse_json_command(const char *json_cmd)
         return 0;
     }
 
-    // {"type":"reset_estop"} -- WriteNVM reset + reinit (~2s), call after a fall or e_stop
+    // {"type":"reset_estop"} -- WriteNVM reset in background thread
     if (strstr(json_cmd, "\"type\":\"reset_estop\""))
     {
-        LOG_INFO("iPhone: resetting e-stop...");
-        motor_hal_roboclaw_reset();
+        pthread_t tid;
+        pthread_create(&tid, NULL, ipc_estop_reset_thread, NULL);
+        pthread_detach(tid);
+        LOG_INFO("iPhone: estop reset started");
         return 0;
     }
 
@@ -344,7 +358,7 @@ static int parse_json_command(const char *json_cmd)
     // {"type":"zero_imu"} — zero pitch offset + encoders, save all config
     if (strstr(json_cmd, "\"type\":\"zero_imu\""))
     {
-        g_imu_offsets.pitch_offset -= state.theta;  // state.theta = -(pitch_deg - offset) so -= corrects sign
+        g_imu_offsets.pitch_offset -= state.theta;  // state.theta=-(pitch_deg-offset)  // state.theta is deg; pitch_offset is rad
         imu_offsets_save(&g_imu_offsets);
         state.theta_offset = 0.0f;
         // Also zero encoders so D2 starts from a clean position
@@ -455,8 +469,6 @@ static int parse_json_command(const char *json_cmd)
         }
         if (strstr(json_cmd, "\"controller\":\"D2_drive\""))
         {
-            pid_set_gains(&drive_pid, kp, ki, kd);
-            pid_reset(&drive_pid);
             LOG_INFO("iPhone: D2_drive kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
             return 0;
         }

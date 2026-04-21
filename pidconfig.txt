@@ -1,8 +1,7 @@
 0
 0.000
-0.050 0.010 0.005
-0.000 0.000 0.000
-0.010 0.010 0.000
+0.070 0.020 0.005
+0.010 0.005 0.000
 
 # pos_config
 zone_a=8000.0
@@ -17,14 +16,14 @@ vel_scale_move=70.000
 vel_scale_turning=70.000
 stopped_vel=5.0
 max_correction=2.000
-max_angle_rate=0.001
+max_angle_rate=0.01
 back_to_spot=1.0
 
 # motor_config
-mode=0
+mode=2
 qpps_max=2500
 accel_qpps=5000
-pol_l=1.0
-pol_r=1.0
-enc_pol_l=1.0
-enc_pol_r=1.0
+pol_l=-1.0
+pol_r=-1.0
+enc_pol_l=-1.0
+enc_pol_r=-1.0

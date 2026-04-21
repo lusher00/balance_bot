@@ -9,7 +9,6 @@
  * Line 1: holdPosition (0 or 1) - currently unused
  * Line 2: balance_angle (float) - balance angle offset
  * Line 3: D1_balance Kp Ki Kd
- * Line 4: D2_drive Kp Ki Kd
  * Line 5: D3_steering Kp Ki Kd
  *
  * Example pidconfig.txt:
@@ -83,19 +82,7 @@ int pid_config_load(const char *filename, pid_config_file_t *config)
         return -1;
     }
 
-    // Line 4: D2_drive (Kp Ki Kd)
-    fields_read = fscanf(file, "%f %f %f",
-                         &config->D2_drive.kp,
-                         &config->D2_drive.ki,
-                         &config->D2_drive.kd);
-    if (fields_read != 3)
-    {
-        LOG_ERROR("Failed to read D2_drive PID gains");
-        fclose(file);
-        return -1;
-    }
-
-    // Line 5: D3_steering (Kp Ki Kd)
+    // Line 4: D3_steering (Kp Ki Kd)
     fields_read = fscanf(file, "%f %f %f",
                          &config->D3_steering.kp,
                          &config->D3_steering.ki,
@@ -113,8 +100,6 @@ int pid_config_load(const char *filename, pid_config_file_t *config)
     LOG_INFO("  Balance angle: %.3f", config->balance_angle);
     LOG_INFO("  D1_balance: Kp=%.1f Ki=%.1f Kd=%.1f",
              config->D1_balance.kp, config->D1_balance.ki, config->D1_balance.kd);
-    LOG_INFO("  D2_drive: Kp=%.1f Ki=%.1f Kd=%.1f",
-             config->D2_drive.kp, config->D2_drive.ki, config->D2_drive.kd);
     LOG_INFO("  D3_steering: Kp=%.1f Ki=%.1f Kd=%.1f",
              config->D3_steering.kp, config->D3_steering.ki, config->D3_steering.kd);
 
@@ -150,8 +135,6 @@ int pid_config_save(const char *filename, const pid_config_file_t *config)
     fprintf(file, "%.3f %.3f %.3f\n",
             config->D1_balance.kp, config->D1_balance.ki, config->D1_balance.kd);
     fprintf(file, "%.3f %.3f %.3f\n",
-            config->D2_drive.kp, config->D2_drive.ki, config->D2_drive.kd);
-    fprintf(file, "%.3f %.3f %.3f\n",
             config->D3_steering.kp, config->D3_steering.ki, config->D3_steering.kd);
 
     fclose(file);
@@ -177,20 +160,11 @@ void pid_config_apply(const pid_config_file_t *config)
                   config->D1_balance.ki,
                   config->D1_balance.kd);
 
-    // Update drive PID
-    pid_set_gains(&drive_pid,
-                  config->D2_drive.kp,
-                  config->D2_drive.ki,
-                  config->D2_drive.kd);
-
     // Update steering PID
     pid_set_gains(&steering_pid,
                   config->D3_steering.kp,
                   config->D3_steering.ki,
                   config->D3_steering.kd);
-
-    // D2_drive not implemented yet
-    // TODO: Apply D2 gains when drive controller is added
 
     // Apply balance angle offset as runtime trim
     state.theta_offset = config->balance_angle;
@@ -215,10 +189,6 @@ void pid_config_get_current(pid_config_file_t *config)
     config->D1_balance.ki = balance_pid.ki;
     config->D1_balance.kd = balance_pid.kd;
 
-    config->D2_drive.kp = drive_pid.kp;
-    config->D2_drive.ki = drive_pid.ki;
-    config->D2_drive.kd = drive_pid.kd;
-
     config->D3_steering.kp = steering_pid.kp;
     config->D3_steering.ki = steering_pid.ki;
     config->D3_steering.kd = steering_pid.kd;
@@ -237,7 +207,6 @@ int pid_config_create_default(const char *filename)
     pid_config_file_t default_config = {
         .balance_angle = 0.0,
         .D1_balance = {.kp = BALANCE_KP, .ki = BALANCE_KI, .kd = BALANCE_KD},
-        .D2_drive = {.kp = DRIVE_KP, .ki = DRIVE_KI, .kd = DRIVE_KD},
         .D3_steering = {.kp = STEERING_KP, .ki = STEERING_KI, .kd = STEERING_KD}};
 
     if (!filename)
@@ -296,9 +265,6 @@ void pid_config_print(const pid_config_file_t *config)
     printf("  Ki = %.2f\n", config->D1_balance.ki);
     printf("  Kd = %.2f\n", config->D1_balance.kd);
     printf("\nD2 Drive Controller:\n");
-    printf("  Kp = %.2f\n", config->D2_drive.kp);
-    printf("  Ki = %.2f\n", config->D2_drive.ki);
-    printf("  Kd = %.2f\n", config->D2_drive.kd);
     printf("\nD3 Steering Controller:\n");
     printf("  Kp = %.2f\n", config->D3_steering.kp);
     printf("  Ki = %.2f\n", config->D3_steering.ki);

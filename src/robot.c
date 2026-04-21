@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <stdbool.h>
+#include <pthread.h>
 #include <roboclaw_estop.h>
 
 /* Process state — used by rc_get_state()/rc_set_state() in rc_compat.h */
@@ -18,7 +19,13 @@ volatile rc_state_t g_rc_state = UNINITIALIZED;
 // Global state
 robot_state_t state = {0};
 rc_mpu_data_t mpu_data;
-pid_controller_t balance_pid, drive_pid, steering_pid;
+pid_controller_t balance_pid, steering_pid;
+
+controller_enables_t g_controllers = {
+    .D1_balance = true,
+    .D2_drive = true,
+    .D3_steering = true,
+};
 
 // Runtime-tunable position controller parameters (initialised in robot_init)
 pos_config_t g_pos_config;
@@ -61,10 +68,9 @@ static void imu_interrupt(void)
     state.theta_dot = t.pitch_dot; // deg/s
     state.psi = t.yaw;             // deg
 
-    if (!state.armed)
+    // Motors only run when armed AND in safe angle range (trying)
+    if (!state.armed || !state.trying)
     {
-        // Ensure any previously queued output is zeroed — main loop may not
-        // have consumed it yet before armed went to 0.
         pending_left_duty = 0.0f;
         pending_right_duty = 0.0f;
         motor_output_ready = 0;
@@ -75,16 +81,16 @@ static void imu_interrupt(void)
     float balance_output = 0.0f;
     float steering_output = 0.0f;
 
-    if (g_debug_config.controllers.D1_balance)
+    if (g_controllers.D1_balance)
     {
         balance_output = pid_update(&balance_pid,
                                     state.theta_ref + state.theta_offset,
                                     state.theta);
     }
 
-    if (g_debug_config.controllers.D3_steering)
+    if (g_controllers.D3_steering)
     {
-        float phi_diff = (state.phi_left - state.phi_right) / 2.0f;
+        float phi_diff = (state.phi_right - state.phi_left) / 2.0f;
         steering_output = pid_update(&steering_pid, state.steering, phi_diff);
     }
     else
@@ -121,7 +127,6 @@ int robot_init(void)
 
     // PIDs
     pid_init(&balance_pid, BALANCE_KP, BALANCE_KI, BALANCE_KD, DT);
-    pid_init(&drive_pid, DRIVE_KP, DRIVE_KI, DRIVE_KD, DT);
     pid_init(&steering_pid, STEERING_KP, STEERING_KI, STEERING_KD, DT);
 
     // Initialise position controller config from compile-time defaults.
@@ -149,7 +154,6 @@ int robot_init(void)
     g_motor_config.pol_r = 1.0f;
     LOG_INFO("PID Controllers:");
     LOG_INFO("  D1_balance:  Kp=%.3f Ki=%.3f Kd=%.3f", BALANCE_KP, BALANCE_KI, BALANCE_KD);
-    LOG_INFO("  D2_balance:  Kp=%.3f Ki=%.3f Kd=%.3f", DRIVE_KP, DRIVE_KI, DRIVE_KD);
     LOG_INFO("  D3_steering: Kp=%.3f Ki=%.3f Kd=%.3f", STEERING_KP, STEERING_KI, STEERING_KD);
 
     // IMU config
@@ -216,13 +220,12 @@ void robot_run(void)
         static int prev_armed = 0;
         if (prev_armed && !state.armed)
         {
+            // Disarm: stop motors, reset PIDs. No estop — that's only for E-STOP button.
             pending_left_duty = 0.0f;
             pending_right_duty = 0.0f;
             motor_output_ready = 0;
             motor_hal_set_both(0.0f, 0.0f);
-            roboclaw_estop_assert();
             pid_reset(&balance_pid);
-            pid_reset(&drive_pid);
             pid_reset(&steering_pid);
             last_left_duty = 0.0f;
             last_right_duty = 0.0f;
@@ -230,9 +233,11 @@ void robot_run(void)
         }
         if (!prev_armed && state.armed)
         {
-            roboclaw_estop_deassert();
             state.enc_pos_target = state.enc_pos;
             state.theta_ref = 0.0f;
+            // If already in bounds when armed, enable motor output immediately
+            if (fabsf(state.theta - state.theta_offset) < 14.0f)
+                state.trying = 1;
         }
         prev_armed = state.armed;
 
@@ -333,32 +338,26 @@ void robot_run(void)
         float raw_stick_ref = stick_input;
 
         // ── D3 steering latch ─────────────────────────────────────────────
-        // When the turn stick returns to centre, latch the current phi_diff
-        // as the D3 setpoint.  This prevents D3 from fighting back to zero
-        // after the bot comes to rest at an asymmetric wheel position.
+        // When the turn stick returns to centre AFTER an active turn, latch
+        // the current phi_diff as the D3 setpoint so the bot holds its heading
+        // instead of fighting back to zero.
         //
-        // Also applies position-hold-style turning velocity scale: reduces turning
-        // authority at speed so the bot doesn't spin out. The raw stick value
-        // is reduced by |enc_velocity| / vel_scale_turning, clamped back toward
-        // zero (never past it).
+        // The latch only fires on a non-zero→zero transition.  With SBUS
+        // disconnected (steering always 0), was_turning is never set and the
+        // latch never fires, so D3 always targets phi_diff=0 (go straight).
         {
             float phi_diff = (state.phi_left - state.phi_right) / 2.0f;
             bool turn_centered = (fabsf(state.steering) < 0.05f);
+            static bool was_turning = false;
 
-            if (turn_centered && !state.steering_latched)
+            if (!turn_centered)
             {
-                state.steering_latch = phi_diff;
-                state.steering_latched = 1;
-            }
-            else if (!turn_centered)
-            {
+                // Active turn input — mark that we were turning and clear latch
+                was_turning = true;
                 state.steering_latched = 0;
                 state.steering_latch = 0.0f;
 
-                // Velocity-based turning authority reduction (position hold pattern):
-                // scale down turning command at high wheel speed so the bot doesn't
-                // spin out. The reduction is subtracted in the direction of the
-                // command, clamped so it never reverses sign.
+                // Velocity-based turning authority reduction
                 if (g_pos_config.vel_scale_turning > 0.0f)
                 {
                     float vel_turndown = fabsf((float)state.enc_velocity /
@@ -377,8 +376,15 @@ void robot_run(void)
                     }
                 }
             }
+            else if (was_turning && !state.steering_latched)
+            {
+                // Stick just returned to centre after an active turn — latch now
+                state.steering_latch = phi_diff;
+                state.steering_latched = 1;
+                was_turning = false;
+            }
 
-            if (state.steering_latched && g_debug_config.controllers.D3_steering)
+            if (state.steering_latched && g_controllers.D3_steering)
                 state.steering = state.steering_latch;
         }
 
@@ -394,42 +400,44 @@ void robot_run(void)
         float eff_angle = fabsf(state.theta - state.theta_offset);
         if (eff_angle > 15.0f)
         {
-            // Out of bounds — cut motors regardless of armed state
-            if (state.armed || state.trying)
+            // OOB: always stop motors regardless of whether trying was already 0.
+            // (e.g. angle passed through the 10–15° zone first, clearing trying
+            // without stopping motors — then the old if(trying) guard was a no-op.)
+            motor_hal_set_both(0.0f, 0.0f);
+            motor_hal_standby(1);
+            if (state.trying)
             {
-                state.armed = 0;
                 state.trying = 0;
-                pending_left_duty = 0.0f;
-                pending_right_duty = 0.0f;
-                motor_output_ready = 0;
-                motor_hal_set_both(0.0f, 0.0f);
-                roboclaw_estop_assert();
-                motor_hal_standby(1);
                 rc_led_set(RC_LED_GREEN, 0);
-                motor_hal_encoder_reset_all();
-                state.enc_left = 0;
-                state.enc_right = 0;
-                state.enc_pos = 0;
-                state.enc_pos_target = 0;
+                state.enc_pos_target = state.enc_pos;
                 state.enc_velocity = 0;
                 state.enc_vel_reset = 1;
                 state.theta_ref = 0.0f;
-                LOG_WARN("FELL — disarmed (eff=%.1f deg)", eff_angle);
+                if (state.armed)
+                    LOG_WARN("OOB — motors cut (eff=%.1f deg), staying armed", eff_angle);
             }
         }
         else if (eff_angle < 10.0f)
         {
-            // Within range — set trying if not already set
             if (!state.trying)
             {
                 state.trying = 1;
-                LOG_INFO("IN RANGE — ready to arm (eff=%.1f deg)", eff_angle);
+                if (state.armed)
+                    motor_hal_standby(0);
+                LOG_INFO("IN RANGE — trying=1, armed=%d", state.armed);
             }
         }
         else
         {
-            // Between 10° and 15° — clear trying so arm is blocked until stable
-            state.trying = 0;
+            // Between 10° and 15° — clear trying so arm is blocked until stable.
+            // Must also explicitly stop motors: ISR will stop queuing commands
+            // (motor_output_ready stays 0) but the H-bridge holds its last value
+            // unless we zero it here.
+            if (state.trying)
+            {
+                state.trying = 0;
+                motor_hal_set_both(0.0f, 0.0f);
+            }
         }
 
         // ── D2 position (drive) controller ───────────────────────────────
@@ -451,7 +459,7 @@ void robot_run(void)
         {
             // Track armed transitions for D2 last_correction reset
             static int prev_armed_d2 = 0;
-            if (g_debug_config.controllers.D2_drive && state.armed)
+            if (g_controllers.D2_drive && state.armed)
             {
                 static float last_correction = 0.0f;
 
@@ -473,24 +481,21 @@ void robot_run(void)
                     if (d2_now_us - d2_log_last_us >= 500000) // 2 Hz
                     {
                         d2_log_last_us = d2_now_us;
-                        int32_t d2_err = state.enc_pos - state.enc_pos_target;
-                        printf("[D2] armed=%d D2_en=%d stick_cen=%d raw_stick=%.3f\n"
-                               "     enc_pos=%d enc_pos_target=%d err=%d\n"
-                               "     enc_vel=%d stopped_vel=%d back_to_spot=%d\n"
-                               "     last_corr=%.4f theta_ref=%.4f\n",
-                               state.armed,
-                               g_debug_config.controllers.D2_drive,
-                               (int)stick_centered,
-                               raw_stick_ref,
-                               state.enc_pos,
-                               state.enc_pos_target,
-                               d2_err,
-                               state.enc_velocity,
-                               g_pos_config.stopped_vel,
-                               g_pos_config.back_to_spot,
-                               last_correction,
-                               state.theta_ref);
-                        fflush(stdout);
+                        int32_t d2_err = state.enc_pos_target - state.enc_pos;
+                        LOG_INFO("[D2] armed=%d D2_en=%d stick_cen=%d raw_stick=%.3f "
+                                 "pos=%d tgt=%d err=%d vel=%d stopped_vel=%d "
+                                 "last_corr=%.4f theta_ref=%.4f",
+                                 state.armed,
+                                 g_controllers.D2_drive,
+                                 (int)stick_centered,
+                                 raw_stick_ref,
+                                 state.enc_pos,
+                                 state.enc_pos_target,
+                                 d2_err,
+                                 state.enc_velocity,
+                                 g_pos_config.stopped_vel,
+                                 last_correction,
+                                 state.theta_ref);
                     }
                 }
 
@@ -498,6 +503,7 @@ void robot_run(void)
                 {
                     int32_t err = state.enc_pos_target - state.enc_pos;
                     int32_t absErr = abs(err);
+                    float vel_damp = (float)state.enc_velocity / g_pos_config.vel_scale_stop;
 
                     if (absErr < 2)
                     {
@@ -519,21 +525,36 @@ void robot_run(void)
                     }
                     else
                     {
-                        // Loose hold: only correct inside zone_c, otherwise drift free.
-                        // err = target - pos, positive err means bot is behind target,
-                        // so positive correction (lean forward) is correct.
                         if (absErr < g_pos_config.zone_c)
                             correction = (float)err / g_pos_config.scale_d;
                         else
                             state.enc_pos_target = state.enc_pos;
                     }
 
-                    // Velocity damping — resist oscillation around target
-                    float vel_damp = (float)state.enc_velocity / g_pos_config.vel_scale_stop;
                     state.d2_pos_correction = correction;
                     state.d2_vel_damp = -vel_damp;
+
+                    // Rate-limit the position correction — prevents slamming theta_ref
+                    float delta = correction - last_correction;
+                    if (delta > g_pos_config.max_angle_rate)
+                        delta = g_pos_config.max_angle_rate;
+                    if (delta < -g_pos_config.max_angle_rate)
+                        delta = -g_pos_config.max_angle_rate;
+                    correction = last_correction + delta;
+                    last_correction = correction;
+
+                    // Apply vel_damp after rate limiter so decel/accel acts at full speed
                     if (absErr > 5)
                         correction -= vel_damp;
+
+                    // Hard clamp
+                    if (correction > g_pos_config.max_correction)
+                        correction = g_pos_config.max_correction;
+                    if (correction < -g_pos_config.max_correction)
+                        correction = -g_pos_config.max_correction;
+
+                    state.d2_correction_out = correction;
+                    state.theta_ref = correction;
                 }
                 else
                 {
@@ -547,26 +568,7 @@ void robot_run(void)
                     }
                     state.enc_pos_target = state.enc_pos;
                 }
-
-                // Rate-limit correction (reference implementation: don't change restAngle by more
-                // than max_angle_rate per loop tick — prevents slamming theta_ref)
-                float delta = correction - last_correction;
-                if (delta > g_pos_config.max_angle_rate)
-                    delta = g_pos_config.max_angle_rate;
-                if (delta < -g_pos_config.max_angle_rate)
-                    delta = -g_pos_config.max_angle_rate;
-                correction = last_correction + delta;
-                last_correction = correction;
-
-                // Hard clamp
-                if (correction > g_pos_config.max_correction)
-                    correction = g_pos_config.max_correction;
-                if (correction < -g_pos_config.max_correction)
-                    correction = -g_pos_config.max_correction;
-
-                state.d2_correction_out = correction;
-                state.theta_ref = correction;
-            }
+            } // end if (g_controllers.D2_drive && state.armed)
             else
             {
                 // D2 disabled — keep target synced so it's ready when re-enabled
@@ -577,17 +579,14 @@ void robot_run(void)
                     if (d2_now_us - d2_else_last_us >= 500000)
                     {
                         d2_else_last_us = d2_now_us;
-                        printf("[D2-ELSE] D2_drive=%d armed=%d  => enc_pos_target being synced to %d\n",
-                               g_debug_config.controllers.D2_drive,
-                               state.armed,
-                               state.enc_pos);
-                        fflush(stdout);
+                        LOG_INFO("[D2-ELSE] D2_drive=%d armed=%d enc_pos_target synced to %d",
+                                 g_controllers.D2_drive,
+                                 state.armed,
+                                 state.enc_pos);
                     }
                 }
                 state.enc_pos_target = state.enc_pos;
                 state.pos_setpoint = state.pos;
-                if (!state.armed)
-                    pid_reset(&drive_pid);
             }
             prev_armed_d2 = state.armed;
         } // end D2 block
@@ -602,18 +601,15 @@ void robot_run(void)
                 diag_last_us = diag_now_us;
                 int32_t d2_err = state.enc_pos_target - state.enc_pos;
                 float phi_diff = (state.phi_left - state.phi_right) / 2.0f;
-                printf("[D2] en=%d  pos=%d  tgt=%d  err=%d  vel=%d  corr_out=%.3f  theta_ref=%.3f\n",
-                       g_debug_config.controllers.D2_drive,
-                       state.enc_pos, state.enc_pos_target, d2_err,
-                       state.enc_velocity,
-                       state.d2_correction_out,
-                       state.theta_ref);
-                printf("[D3] en=%d  psi=%.2f  phi_diff=%.2f  steering=%.3f  latch=%.3f  latched=%d\n",
-                       g_debug_config.controllers.D3_steering,
-                       state.psi, phi_diff,
-                       state.steering, state.steering_latch,
-                       state.steering_latched);
-                fflush(stdout);
+                LOG_INFO("[D2] en=%d pos=%d tgt=%d err=%d vel=%d corr_out=%.3f theta_ref=%.3f",
+                         g_controllers.D2_drive,
+                         state.enc_pos, state.enc_pos_target, d2_err,
+                         state.enc_velocity,
+                         state.d2_correction_out,
+                         state.theta_ref);
+                LOG_INFO("[D3] en=%d psi=%.2f phi_diff=%.2f steering=%.3f",
+                         g_controllers.D3_steering,
+                         state.psi, phi_diff, state.steering);
             }
         }
 

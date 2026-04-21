@@ -1,1159 +1,2074 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>BBotHUD</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
-<style>
-:root {
-  --bg:        #080b10;
-  --bg1:       #0d1117;
-  --bg2:       #131820;
-  --bg3:       #1c2330;
-  --border:    #1e2d40;
-  --border2:   #2a3a50;
-  --accent:    #00c8ff;
-  --accent2:   #0090cc;
-  --green:     #00e676;
-  --yellow:    #ffca28;
-  --red:       #ff3d3d;
-  --orange:    #ff9500;
-  --purple:    #b388ff;
-  --cyan:      #00e5ff;
-  --mint:      #64ffda;
-  --txt:       #c9d6e3;
-  --txt2:      #5d7a96;
-  --txt3:      #3a5068;
-  --mono:      'JetBrains Mono', monospace;
-  --sans:      'Syne', sans-serif;
-  --r:         6px;
-  --r2:        10px;
-}
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; background: var(--bg); color: var(--txt); font-family: var(--mono); font-size: 13px; overflow: hidden; }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>BBotHUD</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --bg: #080b10;
+      --bg1: #0d1117;
+      --bg2: #131820;
+      --bg3: #1c2330;
+      --border: #1e2d40;
+      --border2: #2a3a50;
+      --accent: #00c8ff;
+      --accent2: #0090cc;
+      --green: #00e676;
+      --yellow: #ffca28;
+      --red: #ff3d3d;
+      --orange: #ff9500;
+      --purple: #b388ff;
+      --cyan: #00e5ff;
+      --mint: #64ffda;
+      --txt: #c9d6e3;
+      --txt2: #5d7a96;
+      --txt3: #3a5068;
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'Syne', sans-serif;
+      --r: 6px;
+      --r2: 10px;
+    }
 
-/* ── Header ─────────────────────────────────────────────────────────────── */
-#header {
-  display: flex; align-items: center; gap: 12px;
-  padding: 0 16px; height: 44px;
-  background: var(--bg1); border-bottom: 1px solid var(--border);
-}
-#header .logo {
-  font-family: var(--sans); font-weight: 800; font-size: 15px;
-  color: var(--accent); letter-spacing: 0.04em; white-space: nowrap;
-}
-#header .stat { display: flex; flex-direction: column; align-items: center; min-width: 52px; }
-#header .stat .label { font-size: 9px; color: var(--txt3); letter-spacing: 0.08em; text-transform: uppercase; }
-#header .stat .val   { font-size: 12px; font-weight: 500; line-height: 1.2; }
-.sep { width: 1px; height: 24px; background: var(--border); flex-shrink: 0; }
-#conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--txt3); flex-shrink: 0;
-  box-shadow: 0 0 0 0 transparent; transition: background .3s, box-shadow .3s; }
-#conn-dot.on  { background: var(--green); box-shadow: 0 0 8px var(--green); }
-#conn-dot.off { background: var(--red);   animation: blink 1.5s ease-in-out infinite; }
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-#conn-label { font-size: 10px; color: var(--txt2); }
-#pkt-count  { font-size: 9px; color: var(--txt3); margin-left: auto; }
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
 
-/* ── Tabs ────────────────────────────────────────────────────────────────── */
-#tabs {
-  display: flex; height: 36px;
-  background: var(--bg1); border-bottom: 1px solid var(--border);
-}
-.tab {
-  flex: 1; display: flex; align-items: center; justify-content: center;
-  font-family: var(--sans); font-size: 11px; font-weight: 600;
-  letter-spacing: 0.06em; text-transform: uppercase; color: var(--txt3);
-  cursor: pointer; border-bottom: 2px solid transparent;
-  transition: color .2s, border-color .2s;
-}
-.tab:hover { color: var(--txt2); }
-.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    html,
+    body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--txt);
+      font-family: var(--mono);
+      font-size: 13px;
+      overflow: hidden;
+    }
 
-/* ── Panels ──────────────────────────────────────────────────────────────── */
-#panels { position: relative; height: calc(100vh - 80px); overflow: hidden; }
-.panel { position: absolute; inset: 0; overflow-y: auto; display: none; padding: 12px; }
-.panel.active { display: block; }
+    /* ── Header ─────────────────────────────────────────────────────────────── */
+    #header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      height: 44px;
+      background: var(--bg1);
+      border-bottom: 1px solid var(--border);
+    }
 
-/* ── Shared components ───────────────────────────────────────────────────── */
-.card {
-  background: var(--bg2); border: 1px solid var(--border);
-  border-radius: var(--r2); padding: 12px; margin-bottom: 10px;
-}
-.card-title { font-family: var(--sans); font-weight: 700; font-size: 12px; color: var(--txt); margin-bottom: 10px; letter-spacing: 0.04em; }
-.sub-label { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--txt3); margin-bottom: 6px; display: block; }
+    #header .logo {
+      font-family: var(--sans);
+      font-weight: 800;
+      font-size: 15px;
+      color: var(--accent);
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
 
-.stat-row { display: flex; gap: 8px; margin-bottom: 10px; }
-.stat-box { flex: 1; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--r); padding: 8px; text-align: center; }
-.stat-box .s-label { font-size: 9px; color: var(--txt3); letter-spacing: 0.08em; text-transform: uppercase; }
-.stat-box .s-val   { font-size: 16px; font-weight: 700; margin-top: 2px; }
+    #header .stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-width: 52px;
+    }
 
-/* Arm button */
-#arm-btn {
-  width: 100%; height: 56px; border: none; border-radius: var(--r2);
-  font-family: var(--sans); font-size: 18px; font-weight: 800; letter-spacing: 0.08em;
-  cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px;
-  transition: background .2s, transform .1s, box-shadow .2s;
-}
-#arm-btn.armed {
-  background: var(--red); color: #fff;
-  box-shadow: 0 0 20px rgba(255,61,61,.4);
-}
-#arm-btn.armed-oob {
-  background: var(--yellow); color: #000;
-  box-shadow: 0 0 12px rgba(255,202,40,.4);
-}
-#arm-btn.disarmed {
-  background: var(--green); color: #000;
-  box-shadow: 0 0 20px rgba(0,230,118,.3);
-}
-#arm-btn:active { transform: scale(.97); }
+    #header .stat .label {
+      font-size: 9px;
+      color: var(--txt3);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
 
-.icon-btn {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 3px; padding: 8px 12px; background: var(--bg3); border: 1px solid var(--border2);
-  border-radius: var(--r); cursor: pointer; color: var(--txt); font-family: var(--mono);
-  font-size: 10px; font-weight: 500; white-space: nowrap; transition: background .15s, border-color .15s;
-}
-.icon-btn:hover { background: var(--border); border-color: var(--accent2); }
-.icon-btn svg { width: 18px; height: 18px; }
+    #header .stat .val {
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1.2;
+    }
 
-.seg-group { display: flex; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
-.seg-btn {
-  flex: 1; padding: 7px 4px; background: transparent; border: none; border-right: 1px solid var(--border);
-  color: var(--txt2); font-family: var(--mono); font-size: 11px; cursor: pointer;
-  transition: background .15s, color .15s;
-}
-.seg-btn:last-child { border-right: none; }
-.seg-btn.active { background: var(--accent2); color: #fff; }
-.seg-btn:hover:not(.active) { background: var(--bg3); color: var(--txt); }
+    .sep {
+      width: 1px;
+      height: 24px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
 
-/* Toggle / enable button */
-.enable-btn {
-  padding: 5px 14px; border: none; border-radius: 20px;
-  font-family: var(--mono); font-size: 11px; font-weight: 700; cursor: pointer;
-  transition: background .2s, color .2s;
-}
-.enable-btn.on  { background: var(--green); color: #000; }
-.enable-btn.off { background: var(--bg3);   color: var(--txt3); border: 1px solid var(--border2); }
+    #conn-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--txt3);
+      flex-shrink: 0;
+      box-shadow: 0 0 0 0 transparent;
+      transition: background .3s, box-shadow .3s;
+    }
 
-/* PID Slider row */
-.pid-row {
-  display: grid; grid-template-columns: 80px 1fr 90px; align-items: center;
-  gap: 8px; margin-bottom: 8px;
-}
-.pid-label { font-size: 11px; color: var(--txt2); }
-.pid-slider { width: 100%; accent-color: var(--accent); height: 3px; cursor: pointer; }
-.pid-ctrl { display: flex; align-items: center; gap: 4px; }
-.pid-ctrl .step-btn {
-  width: 22px; height: 22px; border: 1px solid var(--border2); background: var(--bg3);
-  border-radius: 4px; color: var(--txt2); font-size: 14px; cursor: pointer; display: flex;
-  align-items: center; justify-content: center; line-height: 1;
-  transition: background .1s;
-}
-.pid-ctrl .step-btn:hover { background: var(--border); }
-.pid-ctrl .val-box {
-  width: 64px; background: var(--bg3); border: 1px solid var(--border2); border-radius: 4px;
-  padding: 3px 6px; color: var(--accent); font-family: var(--mono); font-size: 12px; font-weight: 700;
-  text-align: center; outline: none;
-}
-.pid-ctrl .val-box:focus { border-color: var(--accent); }
-.mult-sel { display: flex; gap: 2px; }
-.mult-btn {
-  padding: 2px 5px; border: 1px solid var(--border); background: transparent;
-  border-radius: 3px; color: var(--txt3); font-family: var(--mono); font-size: 9px;
-  cursor: pointer; transition: background .1s, color .1s;
-}
-.mult-btn.active { background: var(--accent2); color: #fff; border-color: var(--accent2); }
+    #conn-dot.on {
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+    }
 
-/* Error bar */
-.err-bar-wrap { height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; margin-top: 4px; }
-.err-bar { height: 100%; border-radius: 3px; transition: width .1s, background .2s; }
+    #conn-dot.off {
+      background: var(--red);
+      animation: blink 1.5s ease-in-out infinite;
+    }
 
-/* Video */
-#video-wrap { position: relative; background: #000; border-radius: var(--r); overflow: hidden; width: 100%; aspect-ratio: 4/3; margin-bottom: 10px; display: none; }
-#video-wrap.active { display: block; }
-#video-feed { width: 100%; height: 100%; object-fit: contain; }
-#cat-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-#video-no { display: none; }
+    @keyframes blink {
 
-/* Graph */
-#graph-panel { display: none; flex-direction: column; padding: 0; }
-#graph-panel.active { display: flex; }
-#graph-toolbar {
-  display: flex; align-items: center; gap: 8px; padding: 7px 12px;
-  background: var(--bg1); border-bottom: 1px solid var(--border); flex-shrink: 0;
-}
-#graph-canvas-wrap { flex: 1; position: relative; overflow: hidden; min-height: 0; }
-#graph-canvas { width: 100%; height: 100%; display: block; }
-#graph-legend {
-  display: flex; align-items: center; gap: 10px; padding: 5px 12px;
-  background: var(--bg1); border-top: 1px solid var(--border);
-  overflow-x: auto; flex-shrink: 0; height: 28px;
-}
-.legend-item { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
-.legend-swatch { width: 14px; height: 2px; flex-shrink: 0; }
-.legend-name { font-size: 9px; color: var(--txt2); }
-.g-picker { display: flex; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
-.g-seg {
-  padding: 4px 8px; background: transparent; border: none; border-right: 1px solid var(--border);
-  color: var(--txt2); font-family: var(--mono); font-size: 10px; cursor: pointer;
-  transition: background .1s, color .1s;
-}
-.g-seg:last-child { border-right: none; }
-.g-seg.active { background: var(--accent2); color: #fff; }
-.g-btn {
-  padding: 4px 8px; background: var(--bg3); border: 1px solid var(--border2);
-  border-radius: var(--r); color: var(--txt2); font-family: var(--mono);
-  font-size: 10px; cursor: pointer; white-space: nowrap;
-  transition: background .1s, color .1s;
-}
-.g-btn:hover { background: var(--border); color: var(--txt); }
-.g-btn.rec { color: var(--red); border-color: var(--red); }
-.g-btn.rec-active { background: var(--red); color: #fff; animation: recpulse 1s ease-in-out infinite; }
-@keyframes recpulse { 0%,100%{opacity:1} 50%{opacity:.6} }
-.series-menu { position: relative; }
-.series-dropdown {
-  position: absolute; top: 100%; left: 0; z-index: 100; margin-top: 4px;
-  background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--r2);
-  padding: 6px; display: none; min-width: 160px; box-shadow: 0 8px 24px rgba(0,0,0,.5);
-}
-.series-dropdown.open { display: block; }
-.s-check { display: flex; align-items: center; gap: 8px; padding: 4px 6px; cursor: pointer; border-radius: 4px; }
-.s-check:hover { background: var(--bg3); }
-.s-check input { accent-color: var(--accent); cursor: pointer; }
-.s-check span { font-size: 11px; color: var(--txt2); }
+      0%,
+      100% {
+        opacity: 1
+      }
 
-/* Debug */
-#debug-out {
-  font-family: var(--mono); font-size: 10px; color: var(--txt2);
-  white-space: pre-wrap; word-break: break-all; line-height: 1.6;
-  background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r);
-  padding: 10px; min-height: 200px; max-height: calc(100vh - 160px); overflow-y: auto;
-}
-.key   { color: var(--accent2); }
-.vnum  { color: var(--green); }
-.vbool { color: var(--orange); }
-.vstr  { color: var(--yellow); }
+      50% {
+        opacity: .3
+      }
+    }
 
-/* Settings */
-.field { margin-bottom: 10px; }
-.field label { display: block; font-size: 10px; color: var(--txt3); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 4px; }
-.field input {
-  width: 100%; background: var(--bg3); border: 1px solid var(--border2);
-  border-radius: var(--r); padding: 8px 10px; color: var(--txt); font-family: var(--mono);
-  font-size: 12px; outline: none;
-}
-.field input:focus { border-color: var(--accent); }
-.btn-primary {
-  width: 100%; padding: 10px; border: none; border-radius: var(--r); cursor: pointer;
-  font-family: var(--sans); font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
-  transition: opacity .2s;
-}
-.btn-primary:hover { opacity: .85; }
-.btn-primary.connect    { background: var(--green);  color: #000; margin-bottom: 6px; }
-.btn-primary.disconnect { background: var(--bg3); color: var(--txt2); border: 1px solid var(--border2); margin-bottom: 6px; }
-.btn-primary.save-pid { background: var(--accent2); color: #fff; }
+    #conn-label {
+      font-size: 10px;
+      color: var(--txt2);
+    }
 
-/* Cat badge */
-#cat-badge {
-  display: none; align-items: center; gap: 8px; padding: 8px 12px;
-  background: rgba(255,149,0,.1); border: 1px solid rgba(255,149,0,.3);
-  border-radius: var(--r); margin-bottom: 10px;
-}
-#cat-badge.visible { display: flex; }
-.cat-icon { font-size: 18px; }
+    #pkt-count {
+      font-size: 9px;
+      color: var(--txt3);
+      margin-left: auto;
+    }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+    /* ── Tabs ────────────────────────────────────────────────────────────────── */
+    #tabs {
+      display: flex;
+      height: 36px;
+      background: var(--bg1);
+      border-bottom: 1px solid var(--border);
+    }
 
-/* Utility */
-.row { display: flex; gap: 8px; align-items: center; }
-.row.spaced { justify-content: space-between; }
-.mt8 { margin-top: 8px; }
-.divider { height: 1px; background: var(--border); margin: 10px 0; }
-.dimmed { opacity: .35; pointer-events: none; }
-</style>
+    .tab {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--sans);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--txt3);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: color .2s, border-color .2s;
+    }
+
+    .tab:hover {
+      color: var(--txt2);
+    }
+
+    .tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    /* ── Panels ──────────────────────────────────────────────────────────────── */
+    #panels {
+      position: relative;
+      height: calc(100vh - 80px);
+      overflow: hidden;
+    }
+
+    .panel {
+      position: absolute;
+      inset: 0;
+      overflow-y: auto;
+      display: none;
+      padding: 12px;
+    }
+
+    .panel.active {
+      display: block;
+    }
+
+    /* ── Shared components ───────────────────────────────────────────────────── */
+    .card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--r2);
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+
+    .card-title {
+      font-family: var(--sans);
+      font-weight: 700;
+      font-size: 12px;
+      color: var(--txt);
+      margin-bottom: 10px;
+      letter-spacing: 0.04em;
+    }
+
+    .sub-label {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--txt3);
+      margin-bottom: 6px;
+      display: block;
+    }
+
+    .stat-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .stat-box {
+      flex: 1;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 8px;
+      text-align: center;
+    }
+
+    .stat-box .s-label {
+      font-size: 9px;
+      color: var(--txt3);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .stat-box .s-val {
+      font-size: 16px;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+
+    /* Arm button */
+    #arm-btn {
+      width: 100%;
+      height: 56px;
+      border: none;
+      border-radius: var(--r2);
+      font-family: var(--sans);
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      transition: background .2s, transform .1s, box-shadow .2s;
+    }
+
+    #arm-btn.armed {
+      background: var(--red);
+      color: #fff;
+      box-shadow: 0 0 20px rgba(255, 61, 61, .4);
+    }
+
+    #arm-btn.armed-oob {
+      background: var(--yellow);
+      color: #000;
+      box-shadow: 0 0 12px rgba(255, 202, 40, .4);
+    }
+
+    #arm-btn.disarmed {
+      background: var(--green);
+      color: #000;
+      box-shadow: 0 0 20px rgba(0, 230, 118, .3);
+    }
+
+    #arm-btn:active {
+      transform: scale(.97);
+    }
+
+    .icon-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      padding: 8px 12px;
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: var(--r);
+      cursor: pointer;
+      color: var(--txt);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      white-space: nowrap;
+      transition: background .15s, border-color .15s;
+    }
+
+    .icon-btn:hover {
+      background: var(--border);
+      border-color: var(--accent2);
+    }
+
+    .icon-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .seg-group {
+      display: flex;
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      overflow: hidden;
+    }
+
+    .seg-btn {
+      flex: 1;
+      padding: 7px 4px;
+      background: transparent;
+      border: none;
+      border-right: 1px solid var(--border);
+      color: var(--txt2);
+      font-family: var(--mono);
+      font-size: 11px;
+      cursor: pointer;
+      transition: background .15s, color .15s;
+    }
+
+    .seg-btn:last-child {
+      border-right: none;
+    }
+
+    .seg-btn.active {
+      background: var(--accent2);
+      color: #fff;
+    }
+
+    .seg-btn:hover:not(.active) {
+      background: var(--bg3);
+      color: var(--txt);
+    }
+
+    /* Toggle / enable button */
+    .enable-btn {
+      padding: 5px 14px;
+      border: none;
+      border-radius: 20px;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background .2s, color .2s;
+    }
+
+    .enable-btn.on {
+      background: var(--green);
+      color: #000;
+    }
+
+    .enable-btn.off {
+      background: var(--bg3);
+      color: var(--txt3);
+      border: 1px solid var(--border2);
+    }
+
+    /* PID Slider row */
+    .pid-row {
+      display: grid;
+      grid-template-columns: 80px 1fr 90px;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .pid-label {
+      font-size: 11px;
+      color: var(--txt2);
+    }
+
+    .pid-slider {
+      width: 100%;
+      accent-color: var(--accent);
+      height: 3px;
+      cursor: pointer;
+    }
+
+    .pid-ctrl {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .pid-ctrl .step-btn {
+      width: 22px;
+      height: 22px;
+      border: 1px solid var(--border2);
+      background: var(--bg3);
+      border-radius: 4px;
+      color: var(--txt2);
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+      transition: background .1s;
+    }
+
+    .pid-ctrl .step-btn:hover {
+      background: var(--border);
+    }
+
+    .pid-ctrl .val-box {
+      width: 64px;
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      padding: 3px 6px;
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+      outline: none;
+    }
+
+    .pid-ctrl .val-box:focus {
+      border-color: var(--accent);
+    }
+
+    .mult-sel {
+      display: flex;
+      gap: 2px;
+    }
+
+    .mult-btn {
+      padding: 2px 5px;
+      border: 1px solid var(--border);
+      background: transparent;
+      border-radius: 3px;
+      color: var(--txt3);
+      font-family: var(--mono);
+      font-size: 9px;
+      cursor: pointer;
+      transition: background .1s, color .1s;
+    }
+
+    .mult-btn.active {
+      background: var(--accent2);
+      color: #fff;
+      border-color: var(--accent2);
+    }
+
+    /* Error bar */
+    .err-bar-wrap {
+      height: 6px;
+      background: var(--bg3);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+
+    .err-bar {
+      height: 100%;
+      border-radius: 3px;
+      transition: width .1s, background .2s;
+    }
+
+    /* Video */
+    #video-wrap {
+      position: relative;
+      background: #000;
+      border-radius: var(--r);
+      overflow: hidden;
+      width: 100%;
+      aspect-ratio: 4/3;
+      margin-bottom: 10px;
+      display: none;
+    }
+
+    #video-wrap.active {
+      display: block;
+    }
+
+    #video-feed {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    #cat-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    #video-no {
+      display: none;
+    }
+
+    /* Graph */
+    #panel-graph {
+      /* override .panel's position:absolute + overflow-y:auto */
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 0;
+    }
+
+    #panel-graph.active {
+      display: flex;
+    }
+
+    #graph-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      background: var(--bg1);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    #graph-plots-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .plot-block {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .plot-block:last-child {
+      border-bottom: none;
+    }
+
+    .plot-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      background: var(--bg1);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    .plot-header .plot-num {
+      font-size: 9px;
+      color: var(--txt3);
+      font-weight: 700;
+      letter-spacing: .1em;
+      flex-shrink: 0;
+    }
+
+    .series-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 2px 6px 2px 7px;
+      border-radius: 10px;
+      font-size: 9px;
+      font-weight: 600;
+      cursor: default;
+      border: 1px solid rgba(255, 255, 255, .12);
+    }
+
+    .series-chip .chip-x {
+      cursor: pointer;
+      opacity: .6;
+      font-size: 10px;
+      line-height: 1;
+      padding-left: 2px;
+    }
+
+    .series-chip .chip-x:hover {
+      opacity: 1;
+    }
+
+    .plot-add-btn {
+      padding: 2px 7px;
+      background: transparent;
+      border: 1px dashed var(--border2);
+      border-radius: 10px;
+      color: var(--txt3);
+      font-size: 9px;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .plot-add-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .plot-remove-btn {
+      margin-left: auto;
+      padding: 1px 5px;
+      background: transparent;
+      border: none;
+      color: var(--txt3);
+      font-size: 12px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .plot-remove-btn:hover {
+      color: var(--red);
+    }
+
+    .plot-canvas-wrap {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .plot-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .series-add-dropdown {
+      position: absolute;
+      z-index: 200;
+      margin-top: 2px;
+      background: var(--bg2);
+      border: 1px solid var(--border2);
+      border-radius: var(--r2);
+      padding: 4px;
+      min-width: 190px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .6);
+      display: none;
+      max-height: 260px;
+      overflow-y: auto;
+    }
+
+    .series-add-dropdown.open {
+      display: block;
+    }
+
+    .sad-group {
+      font-size: 9px;
+      color: var(--txt3);
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      padding: 4px 6px 2px;
+    }
+
+    .sad-item {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 4px 8px;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--txt2);
+    }
+
+    .sad-item:hover {
+      background: var(--bg3);
+    }
+
+    .sad-item.active {
+      opacity: .4;
+      pointer-events: none;
+    }
+
+    .sad-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .g-picker {
+      display: flex;
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      overflow: hidden;
+    }
+
+    .g-seg {
+      padding: 4px 8px;
+      background: transparent;
+      border: none;
+      border-right: 1px solid var(--border);
+      color: var(--txt2);
+      font-family: var(--mono);
+      font-size: 10px;
+      cursor: pointer;
+      transition: background .1s, color .1s;
+    }
+
+    .g-seg:last-child {
+      border-right: none;
+    }
+
+    .g-seg.active {
+      background: var(--accent2);
+      color: #fff;
+    }
+
+    .g-btn {
+      padding: 4px 8px;
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: var(--r);
+      color: var(--txt2);
+      font-family: var(--mono);
+      font-size: 10px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background .1s, color .1s;
+    }
+
+    .g-btn:hover {
+      background: var(--border);
+      color: var(--txt);
+    }
+
+    .g-btn.rec {
+      color: var(--red);
+      border-color: var(--red);
+    }
+
+    .g-btn.rec-active {
+      background: var(--red);
+      color: #fff;
+      animation: recpulse 1s ease-in-out infinite;
+    }
+
+    @keyframes recpulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .6
+      }
+    }
+
+    /* Debug */
+    #debug-out {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--txt2);
+      white-space: pre-wrap;
+      word-break: break-all;
+      line-height: 1.6;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 10px;
+      min-height: 200px;
+      max-height: calc(100vh - 160px);
+      overflow-y: auto;
+    }
+
+    .key {
+      color: var(--accent2);
+    }
+
+    .vnum {
+      color: var(--green);
+    }
+
+    .vbool {
+      color: var(--orange);
+    }
+
+    .vstr {
+      color: var(--yellow);
+    }
+
+    /* Settings */
+    .field {
+      margin-bottom: 10px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 10px;
+      color: var(--txt3);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .field input {
+      width: 100%;
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: var(--r);
+      padding: 8px 10px;
+      color: var(--txt);
+      font-family: var(--mono);
+      font-size: 12px;
+      outline: none;
+    }
+
+    .field input:focus {
+      border-color: var(--accent);
+    }
+
+    .btn-primary {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: var(--r);
+      cursor: pointer;
+      font-family: var(--sans);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      transition: opacity .2s;
+    }
+
+    .btn-primary:hover {
+      opacity: .85;
+    }
+
+    .btn-primary.connect {
+      background: var(--green);
+      color: #000;
+      margin-bottom: 6px;
+    }
+
+    .btn-primary.disconnect {
+      background: var(--bg3);
+      color: var(--txt2);
+      border: 1px solid var(--border2);
+      margin-bottom: 6px;
+    }
+
+    .btn-primary.save-pid {
+      background: var(--accent2);
+      color: #fff;
+    }
+
+    /* Cat badge */
+    #cat-badge {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: rgba(255, 149, 0, .1);
+      border: 1px solid rgba(255, 149, 0, .3);
+      border-radius: var(--r);
+      margin-bottom: 10px;
+    }
+
+    #cat-badge.visible {
+      display: flex;
+    }
+
+    .cat-icon {
+      font-size: 18px;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--border2);
+      border-radius: 2px;
+    }
+
+    /* Utility */
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .row.spaced {
+      justify-content: space-between;
+    }
+
+    .mt8 {
+      margin-top: 8px;
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 10px 0;
+    }
+
+    .dimmed {
+      opacity: .35;
+      pointer-events: none;
+    }
+  </style>
 </head>
+
 <body>
 
-<!-- ── Header ─────────────────────────────────────────────────────────────── -->
-<div id="header">
-  <span class="logo">BBotHUD</span>
-  <div class="sep"></div>
-  <div id="conn-dot" class="off"></div>
-  <span id="conn-label">Offline</span>
-  <div class="sep"></div>
-  <div class="stat">
-    <span class="label">Batt</span>
-    <span class="val" id="h-batt" style="color:var(--txt3)">––</span>
-  </div>
-  <div class="stat">
-    <span class="label">Angle</span>
-    <span class="val" id="h-angle" style="color:var(--txt3)">––</span>
-  </div>
-  <div class="stat">
-    <span class="label">Loop</span>
-    <span class="val" id="h-loop" style="color:var(--txt3)">––</span>
-  </div>
-  <span id="pkt-count">pkts: 0</span>
-</div>
-
-<!-- ── Tab bar ────────────────────────────────────────────────────────────── -->
-<div id="tabs">
-  <div class="tab active" data-tab="control">Control</div>
-  <div class="tab" data-tab="pid">PID</div>
-  <div class="tab" data-tab="graph">Graph</div>
-  <div class="tab" data-tab="debug">Debug</div>
-  <div class="tab" data-tab="settings">Settings</div>
-</div>
-
-<!-- ── Panels ─────────────────────────────────────────────────────────────── -->
-<div id="panels">
-
-  <!-- CONTROL -->
-  <div class="panel active" id="panel-control">
-    <div id="video-wrap">
-      <img id="video-feed" alt="">
-      <canvas id="cat-canvas"></canvas>
-      <div id="video-no">No video feed configured</div>
+  <!-- ── Header ─────────────────────────────────────────────────────────────── -->
+  <div id="header">
+    <span class="logo">BBotHUD</span>
+    <div class="sep"></div>
+    <div id="conn-dot" class="off"></div>
+    <span id="conn-label">Offline</span>
+    <div class="sep"></div>
+    <div class="stat">
+      <span class="label">Batt</span>
+      <span class="val" id="h-batt" style="color:var(--txt3)">––</span>
     </div>
-
-    <div class="stat-row">
-      <div class="stat-box"><div class="s-label">Battery</div><div class="s-val" id="c-batt" style="color:var(--txt3)">––</div></div>
-      <div class="stat-box"><div class="s-label">Angle</div><div class="s-val" id="c-angle" style="color:var(--txt3)">––°</div></div>
-      <div class="stat-box"><div class="s-label">Loop Hz</div><div class="s-val" id="c-loop" style="color:var(--txt3)">––</div></div>
+    <div class="stat">
+      <span class="label">Angle</span>
+      <span class="val" id="h-angle" style="color:var(--txt3)">––</span>
     </div>
-
-    <div id="cat-badge" class="card">
-      <span class="cat-icon">🐱</span>
-      <div>
-        <div style="font-size:11px;font-weight:600">Cat Detected</div>
-        <div id="cat-info" style="font-size:9px;color:var(--txt3)"></div>
-      </div>
+    <div class="stat">
+      <span class="label">Loop</span>
+      <span class="val" id="h-loop" style="color:var(--txt3)">––</span>
     </div>
-
-    <div class="card">
-      <button id="arm-btn" class="disarmed" onclick="toggleArm()">
-        <svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M8 5v14l11-7z"/></svg>
-        ARM
-      </button>
-      <div class="row mt8" style="gap:8px">
-        <button class="icon-btn" style="flex:1" onclick="sendCmd({type:'zero_imu'})">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9" stroke-dasharray="4 2"/></svg>
-          ZERO IMU
-        </button>
-        <button class="icon-btn" style="flex:1" onclick="sendCmd({type:'zero_encoders'})">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.95"/></svg>
-          ENC 0
-        </button>
-        <button class="icon-btn" style="flex:1;color:var(--red);border-color:var(--red)" onclick="sendCmd({type:'e_stop'})">
-          <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-          E-STOP
-        </button>
-        <button class="icon-btn" style="flex:1;color:var(--yellow);border-color:var(--yellow)" onclick="resetEstop()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-          CLR ESTOP
-        </button>
-      </div>
-    </div>
-
-    <div class="card">
-      <span class="sub-label">Robot Mode</span>
-      <div class="seg-group" id="mode-seg">
-        <button class="seg-btn active" data-mode="1" onclick="setMode(1)">Balance</button>
-        <button class="seg-btn" data-mode="2" onclick="setMode(2)">Ext Ctrl</button>
-        <button class="seg-btn" data-mode="3" onclick="setMode(3)">Manual</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <span class="sub-label">RoboClaw Mode</span>
-      <div class="seg-group" id="motor-seg">
-        <button class="seg-btn active" data-mmode="0" onclick="setMotorMode(0)">Duty</button>
-        <button class="seg-btn" data-mmode="1" onclick="setMotorMode(1)">Velocity</button>
-        <button class="seg-btn" data-mmode="2" onclick="setMotorMode(2)">Vel+Acc</button>
-      </div>
-    </div>
-
-    <div class="card" id="enc-card">
-      <span class="sub-label">Encoders</span>
-      <div class="row" style="gap:16px">
-        <div><span style="color:var(--txt3);font-size:9px">L TICKS</span><br><span id="enc-l" style="font-size:13px">0</span></div>
-        <div><span style="color:var(--txt3);font-size:9px">R TICKS</span><br><span id="enc-r" style="font-size:13px">0</span></div>
-        <div><span style="color:var(--txt3);font-size:9px">L VEL</span><br><span id="enc-lv" style="font-size:13px">0</span></div>
-        <div><span style="color:var(--txt3);font-size:9px">R VEL</span><br><span id="enc-rv" style="font-size:13px">0</span></div>
-      </div>
-    </div>
+    <span id="pkt-count">pkts: 0</span>
   </div>
 
-  <!-- PID -->
-  <div class="panel" id="panel-pid">
-    <div class="row spaced" style="margin-bottom:10px">
-      <div class="g-picker" id="pid-ctrl-picker">
-        <button class="g-seg active" data-pidctrl="d1" onclick="selectPIDCtrl('d1')">D1 Balance</button>
-        <button class="g-seg" data-pidctrl="d2" onclick="selectPIDCtrl('d2')">D2 Position</button>
-        <button class="g-seg" data-pidctrl="d3" onclick="selectPIDCtrl('d3')">D3 Steering</button>
-      </div>
-      <div class="row" style="gap:6px">
-        <button class="g-btn" onclick="sendCmd({type:'get_config'})">↻ Refresh</button>
-        <button class="g-btn save-pid" onclick="sendCmd({type:'save_pid'})" style="background:var(--accent2);color:#fff">Save</button>
-      </div>
-    </div>
+  <!-- ── Tab bar ────────────────────────────────────────────────────────────── -->
+  <div id="tabs">
+    <div class="tab active" data-tab="control">Control</div>
+    <div class="tab" data-tab="pid">PID</div>
+    <div class="tab" data-tab="graph">Graph</div>
+    <div class="tab" data-tab="debug">Debug</div>
+    <div class="tab" data-tab="settings">Settings</div>
+  </div>
 
-    <!-- D1 / D3 card -->
-    <div id="pid-d1-card" class="card">
-      <div class="row spaced" style="margin-bottom:10px">
+  <!-- ── Panels ─────────────────────────────────────────────────────────────── -->
+  <div id="panels">
+
+    <!-- CONTROL -->
+    <div class="panel active" id="panel-control">
+      <div id="video-wrap">
+        <img id="video-feed" alt="">
+        <canvas id="cat-canvas"></canvas>
+        <div id="video-no">No video feed configured</div>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat-box">
+          <div class="s-label">Battery</div>
+          <div class="s-val" id="c-batt" style="color:var(--txt3)">––</div>
+        </div>
+        <div class="stat-box">
+          <div class="s-label">Angle</div>
+          <div class="s-val" id="c-angle" style="color:var(--txt3)">––°</div>
+        </div>
+        <div class="stat-box">
+          <div class="s-label">Loop Hz</div>
+          <div class="s-val" id="c-loop" style="color:var(--txt3)">––</div>
+        </div>
+      </div>
+
+      <div id="cat-badge" class="card">
+        <span class="cat-icon">🐱</span>
         <div>
-          <div class="card-title" id="pid-d1-title">D1: Balance</div>
-          <div style="font-size:9px;color:var(--txt3)">Angle → Motor torque · Keeps robot upright</div>
-        </div>
-        <button class="enable-btn off" id="pid-d1-en" onclick="toggleCtrl('D1_balance','d1')">OFF</button>
-      </div>
-      <div id="pid-d1-gains">
-        <div class="pid-row">
-          <span class="pid-label">Kp</span>
-          <input type="range" class="pid-slider" id="sl-d1-kp" min="-200" max="200" step="0.1" oninput="onPIDSlider('d1','kp',this.value)">
-          <div class="pid-ctrl">
-            <button class="step-btn" onclick="stepPID('d1','kp',-1)">−</button>
-            <input class="val-box" id="vb-d1-kp" value="40" onchange="onPIDValBox('d1','kp',this.value)" onblur="onPIDValBox('d1','kp',this.value)">
-            <button class="step-btn" onclick="stepPID('d1','kp',1)">+</button>
-          </div>
-        </div>
-        <div class="pid-row">
-          <span class="pid-label">Ki</span>
-          <input type="range" class="pid-slider" id="sl-d1-ki" min="-10" max="10" step="0.01" oninput="onPIDSlider('d1','ki',this.value)">
-          <div class="pid-ctrl">
-            <button class="step-btn" onclick="stepPID('d1','ki',-1)">−</button>
-            <input class="val-box" id="vb-d1-ki" value="0" onchange="onPIDValBox('d1','ki',this.value)" onblur="onPIDValBox('d1','ki',this.value)">
-            <button class="step-btn" onclick="stepPID('d1','ki',1)">+</button>
-          </div>
-        </div>
-        <div class="pid-row">
-          <span class="pid-label">Kd</span>
-          <input type="range" class="pid-slider" id="sl-d1-kd" min="-50" max="50" step="0.1" oninput="onPIDSlider('d1','kd',this.value)">
-          <div class="pid-ctrl">
-            <button class="step-btn" onclick="stepPID('d1','kd',-1)">−</button>
-            <input class="val-box" id="vb-d1-kd" value="5" onchange="onPIDValBox('d1','kd',this.value)" onblur="onPIDValBox('d1','kd',this.value)">
-            <button class="step-btn" onclick="stepPID('d1','kd',1)">+</button>
-          </div>
-        </div>
-        <div class="row" style="margin-top:6px;gap:6px">
-          <span style="font-size:9px;color:var(--txt3)">Step ×</span>
-          <div class="mult-sel" id="mult-d1">
-            <button class="mult-btn active" data-m="1" onclick="setMult('d1',1)">1</button>
-            <button class="mult-btn" data-m="10" onclick="setMult('d1',10)">10</button>
-            <button class="mult-btn" data-m="100" onclick="setMult('d1',100)">100</button>
-          </div>
+          <div style="font-size:11px;font-weight:600">Cat Detected</div>
+          <div id="cat-info" style="font-size:9px;color:var(--txt3)"></div>
         </div>
       </div>
-      <div class="divider"></div>
-      <div id="pid-d1-live">
-        <span class="sub-label">Live Status</span>
-        <div class="row" style="gap:16px;margin-bottom:4px">
-          <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="d1-err" style="font-size:13px;color:var(--orange)">0.000</span></div>
-          <div><span style="color:var(--txt3);font-size:9px">OUTPUT</span><br><span id="d1-out" style="font-size:13px;color:var(--accent)">0.000</span></div>
+
+      <div class="card">
+        <button id="arm-btn" class="disarmed" onclick="toggleArm()">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          ARM
+        </button>
+        <div class="row mt8" style="gap:8px">
+          <button class="icon-btn" style="flex:1" onclick="sendCmd({type:'zero_imu'})">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <circle cx="12" cy="12" r="3" />
+              <circle cx="12" cy="12" r="9" stroke-dasharray="4 2" />
+            </svg>
+            ZERO IMU
+          </button>
+          <button class="icon-btn" style="flex:1" onclick="sendCmd({type:'zero_encoders'})">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 1 0 .49-4.95" />
+            </svg>
+            ENC 0
+          </button>
+          <button class="icon-btn" style="flex:1;color:var(--red);border-color:var(--red)"
+            onclick="sendCmd({type:'e_stop'})">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+            E-STOP
+          </button>
+          <button class="icon-btn" style="flex:1;color:var(--yellow);border-color:var(--yellow)" onclick="resetEstop()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path
+                d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+            </svg>
+            CLR ESTOP
+          </button>
         </div>
-        <div class="err-bar-wrap"><div id="d1-bar" class="err-bar" style="width:0%;background:var(--accent)"></div></div>
+      </div>
+
+      <div class="card">
+        <span class="sub-label">Robot Mode</span>
+        <div class="seg-group" id="mode-seg">
+          <button class="seg-btn active" data-mode="1" onclick="setMode(1)">Balance</button>
+          <button class="seg-btn" data-mode="2" onclick="setMode(2)">Ext Ctrl</button>
+          <button class="seg-btn" data-mode="3" onclick="setMode(3)">Manual</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <span class="sub-label">RoboClaw Mode</span>
+        <div class="seg-group" id="motor-seg">
+          <button class="seg-btn active" data-mmode="0" onclick="setMotorMode(0)">Duty</button>
+          <button class="seg-btn" data-mmode="1" onclick="setMotorMode(1)">Velocity</button>
+          <button class="seg-btn" data-mmode="2" onclick="setMotorMode(2)">Vel+Acc</button>
+        </div>
+      </div>
+
+      <div class="card" id="enc-card">
+        <span class="sub-label">Encoders</span>
+        <div class="row" style="gap:16px">
+          <div><span style="color:var(--txt3);font-size:9px">L TICKS</span><br><span id="enc-l"
+              style="font-size:13px">0</span></div>
+          <div><span style="color:var(--txt3);font-size:9px">R TICKS</span><br><span id="enc-r"
+              style="font-size:13px">0</span></div>
+          <div><span style="color:var(--txt3);font-size:9px">L VEL</span><br><span id="enc-lv"
+              style="font-size:13px">0</span></div>
+          <div><span style="color:var(--txt3);font-size:9px">R VEL</span><br><span id="enc-rv"
+              style="font-size:13px">0</span></div>
+        </div>
       </div>
     </div>
 
-    <!-- D3 (hidden when D2 selected) -->
-    <div id="pid-d3-card" class="card" style="display:none">
+    <!-- PID -->
+    <div class="panel" id="panel-pid">
       <div class="row spaced" style="margin-bottom:10px">
-        <div>
-          <div class="card-title">D3: Steering</div>
-          <div style="font-size:9px;color:var(--txt3)">Yaw → Motor differential · Turns left/right</div>
+        <div class="g-picker" id="pid-ctrl-picker">
+          <button class="g-seg active" data-pidctrl="d1" onclick="selectPIDCtrl('d1')">D1 Balance</button>
+          <button class="g-seg" data-pidctrl="d2" onclick="selectPIDCtrl('d2')">D2 Position</button>
+          <button class="g-seg" data-pidctrl="d3" onclick="selectPIDCtrl('d3')">D3 Steering</button>
         </div>
-        <button class="enable-btn off" id="pid-d3-en" onclick="toggleCtrl('D3_steering','d3')">OFF</button>
-      </div>
-      <div id="pid-d3-gains">
-        <div class="pid-row">
-          <span class="pid-label">Kp</span>
-          <input type="range" class="pid-slider" id="sl-d3-kp" min="-200" max="200" step="0.1" oninput="onPIDSlider('d3','kp',this.value)">
-          <div class="pid-ctrl">
-            <button class="step-btn" onclick="stepPID('d3','kp',-1)">−</button>
-            <input class="val-box" id="vb-d3-kp" value="15" onchange="onPIDValBox('d3','kp',this.value)" onblur="onPIDValBox('d3','kp',this.value)">
-            <button class="step-btn" onclick="stepPID('d3','kp',1)">+</button>
-          </div>
-        </div>
-        <div class="pid-row">
-          <span class="pid-label">Ki</span>
-          <input type="range" class="pid-slider" id="sl-d3-ki" min="-10" max="10" step="0.01" oninput="onPIDSlider('d3','ki',this.value)">
-          <div class="pid-ctrl">
-            <button class="step-btn" onclick="stepPID('d3','ki',-1)">−</button>
-            <input class="val-box" id="vb-d3-ki" value="0" onchange="onPIDValBox('d3','ki',this.value)" onblur="onPIDValBox('d3','ki',this.value)">
-            <button class="step-btn" onclick="stepPID('d3','ki',1)">+</button>
-          </div>
-        </div>
-        <div class="pid-row">
-          <span class="pid-label">Kd</span>
-          <input type="range" class="pid-slider" id="sl-d3-kd" min="-50" max="50" step="0.1" oninput="onPIDSlider('d3','kd',this.value)">
-          <div class="pid-ctrl">
-            <button class="step-btn" onclick="stepPID('d3','kd',-1)">−</button>
-            <input class="val-box" id="vb-d3-kd" value="1.5" onchange="onPIDValBox('d3','kd',this.value)" onblur="onPIDValBox('d3','kd',this.value)">
-            <button class="step-btn" onclick="stepPID('d3','kd',1)">+</button>
-          </div>
-        </div>
-        <div class="row" style="margin-top:6px;gap:6px">
-          <span style="font-size:9px;color:var(--txt3)">Step ×</span>
-          <div class="mult-sel" id="mult-d3">
-            <button class="mult-btn active" data-m="1" onclick="setMult('d3',1)">1</button>
-            <button class="mult-btn" data-m="10" onclick="setMult('d3',10)">10</button>
-            <button class="mult-btn" data-m="100" onclick="setMult('d3',100)">100</button>
-          </div>
+        <div class="row" style="gap:6px">
+          <button class="g-btn" onclick="sendCmd({type:'get_config'})">↻ Refresh</button>
+          <button class="g-btn save-pid" onclick="sendCmd({type:'save_pid'})"
+            style="background:var(--accent2);color:#fff">Save</button>
         </div>
       </div>
-      <div class="divider"></div>
-      <span class="sub-label">Live Status</span>
-      <div class="row" style="gap:16px;margin-bottom:4px">
-        <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="d3-err" style="font-size:13px;color:var(--orange)">0.000</span></div>
-        <div><span style="color:var(--txt3);font-size:9px">OUTPUT</span><br><span id="d3-out" style="font-size:13px;color:var(--accent)">0.000</span></div>
-      </div>
-      <div class="err-bar-wrap"><div id="d3-bar" class="err-bar" style="width:0%;background:var(--accent)"></div></div>
-    </div>
 
-    <!-- D2 PosConfig card -->
-    <div id="pid-d2-card" class="card" style="display:none">
-      <div class="row spaced" style="margin-bottom:10px">
-        <div>
-          <div class="card-title">D2: Position Hold</div>
-          <div style="font-size:9px;color:var(--txt3)">Encoder ticks → Lean angle bias · Keeps bot in place</div>
+      <!-- D1 / D3 card -->
+      <div id="pid-d1-card" class="card">
+        <div class="row spaced" style="margin-bottom:10px">
+          <div>
+            <div class="card-title" id="pid-d1-title">D1: Balance</div>
+            <div style="font-size:9px;color:var(--txt3)">Angle → Motor torque · Keeps robot upright</div>
+          </div>
+          <button class="enable-btn off" id="pid-d1-en" onclick="toggleCtrl('D1_balance','d1')">OFF</button>
         </div>
-        <button class="enable-btn off" id="pid-d2-en" onclick="toggleCtrl('D2_drive','d2')">OFF</button>
-      </div>
-      <div id="pid-d2-cfg">
-        <span class="sub-label">Hold Mode</span>
-        <div class="seg-group" id="hold-mode-seg" style="margin-bottom:10px">
-          <button class="seg-btn active" onclick="setPosField('back_to_spot',1)">Full hold (A/B/C/D)</button>
-          <button class="seg-btn" onclick="setPosField('back_to_spot',0)">Loose hold (D only)</button>
+        <div id="pid-d1-gains">
+          <div class="pid-row">
+            <span class="pid-label">Kp</span>
+            <input type="range" class="pid-slider" id="sl-d1-kp" min="-200" max="200" step="0.1"
+              oninput="onPIDSlider('d1','kp',this.value)">
+            <div class="pid-ctrl">
+              <button class="step-btn" onclick="stepPID('d1','kp',-1)">−</button>
+              <input class="val-box" id="vb-d1-kp" value="40" onchange="onPIDValBox('d1','kp',this.value)"
+                onblur="onPIDValBox('d1','kp',this.value)">
+              <button class="step-btn" onclick="stepPID('d1','kp',1)">+</button>
+            </div>
+          </div>
+          <div class="pid-row">
+            <span class="pid-label">Ki</span>
+            <input type="range" class="pid-slider" id="sl-d1-ki" min="-10" max="10" step="0.01"
+              oninput="onPIDSlider('d1','ki',this.value)">
+            <div class="pid-ctrl">
+              <button class="step-btn" onclick="stepPID('d1','ki',-1)">−</button>
+              <input class="val-box" id="vb-d1-ki" value="0" onchange="onPIDValBox('d1','ki',this.value)"
+                onblur="onPIDValBox('d1','ki',this.value)">
+              <button class="step-btn" onclick="stepPID('d1','ki',1)">+</button>
+            </div>
+          </div>
+          <div class="pid-row">
+            <span class="pid-label">Kd</span>
+            <input type="range" class="pid-slider" id="sl-d1-kd" min="-50" max="50" step="0.1"
+              oninput="onPIDSlider('d1','kd',this.value)">
+            <div class="pid-ctrl">
+              <button class="step-btn" onclick="stepPID('d1','kd',-1)">−</button>
+              <input class="val-box" id="vb-d1-kd" value="5" onchange="onPIDValBox('d1','kd',this.value)"
+                onblur="onPIDValBox('d1','kd',this.value)">
+              <button class="step-btn" onclick="stepPID('d1','kd',1)">+</button>
+            </div>
+          </div>
+          <div class="row" style="margin-top:6px;gap:6px">
+            <span style="font-size:9px;color:var(--txt3)">Step ×</span>
+            <div class="mult-sel" id="mult-d1">
+              <button class="mult-btn active" data-m="1" onclick="setMult('d1',1)">1</button>
+              <button class="mult-btn" data-m="10" onclick="setMult('d1',10)">10</button>
+              <button class="mult-btn" data-m="100" onclick="setMult('d1',100)">100</button>
+            </div>
+          </div>
         </div>
         <div class="divider"></div>
-        <span class="sub-label">Zone Thresholds (ticks)</span>
-        <div id="pos-sliders"></div>
-      </div>
-      <div class="divider"></div>
-      <span class="sub-label">Live Status</span>
-      <div class="row" style="gap:16px;margin-bottom:4px">
-        <div><span style="color:var(--txt3);font-size:9px">TARGET</span><br><span id="d2-sp" style="font-size:12px">0</span></div>
-        <div><span style="color:var(--txt3);font-size:9px">POSITION</span><br><span id="d2-meas" style="font-size:12px">0</span></div>
-        <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="d2-err" style="font-size:12px;color:var(--orange)">0</span></div>
-      </div>
-      <div class="err-bar-wrap"><div id="d2-bar" class="err-bar" style="width:0%;background:var(--green)"></div></div>
-    </div>
-  </div>
-
-  <!-- GRAPH (flex column, handled specially) -->
-  <div class="panel" id="panel-graph" style="padding:0;display:none;flex-direction:column">
-    <div id="graph-toolbar">
-      <div class="g-picker" id="g-ctrl-picker">
-        <button class="g-seg active" data-gc="0" onclick="selectGraph(0)">D1</button>
-        <button class="g-seg" data-gc="1" onclick="selectGraph(1)">D2</button>
-        <button class="g-seg" data-gc="2" onclick="selectGraph(2)">D3</button>
-        <button class="g-seg" data-gc="3" onclick="selectGraph(3)">D1+2</button>
-      </div>
-      <div class="series-menu">
-        <button class="g-btn" onclick="toggleSeriesMenu()">Series (<span id="series-count">3</span>)</button>
-        <div class="series-dropdown" id="series-dropdown">
-          <label class="s-check"><input type="checkbox" id="sc-setpoint"    onchange="toggleSeries('setpoint')">    <span>Setpoint</span></label>
-          <label class="s-check"><input type="checkbox" id="sc-measurement" onchange="toggleSeries('measurement')" checked> <span>Measurement</span></label>
-          <label class="s-check"><input type="checkbox" id="sc-error"       onchange="toggleSeries('error')"       checked> <span>Error</span></label>
-          <label class="s-check"><input type="checkbox" id="sc-pTerm"       onchange="toggleSeries('pTerm')">       <span>P term</span></label>
-          <label class="s-check"><input type="checkbox" id="sc-iTerm"       onchange="toggleSeries('iTerm')">       <span>I term</span></label>
-          <label class="s-check"><input type="checkbox" id="sc-dTerm"       onchange="toggleSeries('dTerm')">       <span>D term</span></label>
-          <label class="s-check"><input type="checkbox" id="sc-output"      onchange="toggleSeries('output')"      checked> <span>Output</span></label>
+        <div id="pid-d1-live">
+          <span class="sub-label">Live Status</span>
+          <div class="row" style="gap:16px;margin-bottom:4px">
+            <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="d1-err"
+                style="font-size:13px;color:var(--orange)">0.000</span></div>
+            <div><span style="color:var(--txt3);font-size:9px">OUTPUT</span><br><span id="d1-out"
+                style="font-size:13px;color:var(--accent)">0.000</span></div>
+          </div>
+          <div class="err-bar-wrap">
+            <div id="d1-bar" class="err-bar" style="width:0%;background:var(--accent)"></div>
+          </div>
         </div>
       </div>
-      <button class="g-btn rec" id="rec-btn" onclick="toggleRecord()">⏺ Rec</button>
-      <button class="g-btn" onclick="resetGraph()">Reset</button>
-    </div>
-    <div id="graph-canvas-wrap">
-      <canvas id="graph-canvas"></canvas>
-    </div>
-    <div id="graph-legend"></div>
-  </div>
 
-  <!-- DEBUG -->
-  <div class="panel" id="panel-debug">
-    <div class="row spaced" style="margin-bottom:8px">
-      <span style="font-size:10px;color:var(--txt3)">Last telemetry</span>
-      <span id="debug-pkt" style="font-size:10px;color:var(--txt3)">0 packets</span>
-    </div>
-    <div id="debug-out">Waiting for data…</div>
-  </div>
+      <!-- D3 (hidden when D2 selected) -->
+      <div id="pid-d3-card" class="card" style="display:none">
+        <div class="row spaced" style="margin-bottom:10px">
+          <div>
+            <div class="card-title">D3: Steering</div>
+            <div style="font-size:9px;color:var(--txt3)">Yaw → Motor differential · Turns left/right</div>
+          </div>
+          <button class="enable-btn off" id="pid-d3-en" onclick="toggleCtrl('D3_steering','d3')">OFF</button>
+        </div>
+        <div id="pid-d3-gains">
+          <div class="pid-row">
+            <span class="pid-label">Kp</span>
+            <input type="range" class="pid-slider" id="sl-d3-kp" min="-200" max="200" step="0.1"
+              oninput="onPIDSlider('d3','kp',this.value)">
+            <div class="pid-ctrl">
+              <button class="step-btn" onclick="stepPID('d3','kp',-1)">−</button>
+              <input class="val-box" id="vb-d3-kp" value="15" onchange="onPIDValBox('d3','kp',this.value)"
+                onblur="onPIDValBox('d3','kp',this.value)">
+              <button class="step-btn" onclick="stepPID('d3','kp',1)">+</button>
+            </div>
+          </div>
+          <div class="pid-row">
+            <span class="pid-label">Ki</span>
+            <input type="range" class="pid-slider" id="sl-d3-ki" min="-10" max="10" step="0.01"
+              oninput="onPIDSlider('d3','ki',this.value)">
+            <div class="pid-ctrl">
+              <button class="step-btn" onclick="stepPID('d3','ki',-1)">−</button>
+              <input class="val-box" id="vb-d3-ki" value="0" onchange="onPIDValBox('d3','ki',this.value)"
+                onblur="onPIDValBox('d3','ki',this.value)">
+              <button class="step-btn" onclick="stepPID('d3','ki',1)">+</button>
+            </div>
+          </div>
+          <div class="pid-row">
+            <span class="pid-label">Kd</span>
+            <input type="range" class="pid-slider" id="sl-d3-kd" min="-50" max="50" step="0.1"
+              oninput="onPIDSlider('d3','kd',this.value)">
+            <div class="pid-ctrl">
+              <button class="step-btn" onclick="stepPID('d3','kd',-1)">−</button>
+              <input class="val-box" id="vb-d3-kd" value="1.5" onchange="onPIDValBox('d3','kd',this.value)"
+                onblur="onPIDValBox('d3','kd',this.value)">
+              <button class="step-btn" onclick="stepPID('d3','kd',1)">+</button>
+            </div>
+          </div>
+          <div class="row" style="margin-top:6px;gap:6px">
+            <span style="font-size:9px;color:var(--txt3)">Step ×</span>
+            <div class="mult-sel" id="mult-d3">
+              <button class="mult-btn active" data-m="1" onclick="setMult('d3',1)">1</button>
+              <button class="mult-btn" data-m="10" onclick="setMult('d3',10)">10</button>
+              <button class="mult-btn" data-m="100" onclick="setMult('d3',100)">100</button>
+            </div>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <span class="sub-label">Live Status</span>
+        <div class="row" style="gap:16px;margin-bottom:4px">
+          <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="d3-err"
+              style="font-size:13px;color:var(--orange)">0.000</span></div>
+          <div><span style="color:var(--txt3);font-size:9px">OUTPUT</span><br><span id="d3-out"
+              style="font-size:13px;color:var(--accent)">0.000</span></div>
+        </div>
+        <div class="err-bar-wrap">
+          <div id="d3-bar" class="err-bar" style="width:0%;background:var(--accent)"></div>
+        </div>
+      </div>
 
-  <!-- SETTINGS -->
-  <div class="panel" id="panel-settings">
-    <div class="card">
-      <div class="card-title">Connection</div>
-      <div class="field"><label>BeagleBone IP</label><input id="cfg-bbb-ip" value="192.168.1.140"></div>
-      <div class="field"><label>WebSocket Port</label><input id="cfg-ws-port" value="8675" type="number"></div>
-      <button class="btn-primary connect" onclick="doConnect()">Connect</button>
-      <button class="btn-primary disconnect" onclick="doDisconnect()">Disconnect</button>
-    </div>
-    <div class="card">
-      <div class="card-title">Video Feed</div>
-      <div class="field"><label>Pi 5 IP</label><input id="cfg-pi-ip" value="192.168.1.126"></div>
-      <div class="field"><label>Video URL (auto-derived)</label><input id="cfg-video-url" placeholder="http://pi5IP:8080/video"></div>
-      <button class="btn-primary connect" style="margin-bottom:0" onclick="applyVideoURL()">Apply Video URL</button>
-    </div>
-    <div class="card">
-      <div class="card-title">Telemetry Options</div>
-      <div class="row" style="gap:10px;flex-wrap:wrap">
-        <label class="s-check" style="cursor:pointer">
-          <input type="checkbox" checked onchange="sendCmd({type:'set_telemetry',encoders:this.checked})">
-          <span>Encoders</span>
-        </label>
-        <label class="s-check" style="cursor:pointer">
-          <input type="checkbox" onchange="sendCmd({type:'set_telemetry',imu_full:this.checked})">
-          <span>Full IMU</span>
-        </label>
-        <label class="s-check" style="cursor:pointer">
-          <input type="checkbox" checked onchange="sendCmd({type:'set_telemetry',pid_states:this.checked})">
-          <span>PID States</span>
-        </label>
+      <!-- D2 PosConfig card -->
+      <div id="pid-d2-card" class="card" style="display:none">
+        <div class="row spaced" style="margin-bottom:10px">
+          <div>
+            <div class="card-title">D2: Position Hold</div>
+            <div style="font-size:9px;color:var(--txt3)">Encoder ticks → Lean angle bias · Keeps bot in place</div>
+          </div>
+          <button class="enable-btn off" id="pid-d2-en" onclick="toggleCtrl('D2_drive','d2')">OFF</button>
+        </div>
+        <div id="pid-d2-cfg">
+          <span class="sub-label">Hold Mode</span>
+          <div class="seg-group" id="hold-mode-seg" style="margin-bottom:10px">
+            <button class="seg-btn active" onclick="setPosField('back_to_spot',1)">Full hold (A/B/C/D)</button>
+            <button class="seg-btn" onclick="setPosField('back_to_spot',0)">Loose hold (D only)</button>
+          </div>
+          <div class="divider"></div>
+          <span class="sub-label">Zone Thresholds (ticks)</span>
+          <div id="pos-sliders"></div>
+        </div>
+        <div class="divider"></div>
+        <span class="sub-label">Live Status</span>
+        <div class="row" style="gap:16px;margin-bottom:4px">
+          <div><span style="color:var(--txt3);font-size:9px">TARGET</span><br><span id="d2-sp"
+              style="font-size:12px">0</span></div>
+          <div><span style="color:var(--txt3);font-size:9px">POSITION</span><br><span id="d2-meas"
+              style="font-size:12px">0</span></div>
+          <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="d2-err"
+              style="font-size:12px;color:var(--orange)">0</span></div>
+        </div>
+        <div class="err-bar-wrap">
+          <div id="d2-bar" class="err-bar" style="width:0%;background:var(--green)"></div>
+        </div>
       </div>
     </div>
-  </div>
 
-</div><!-- /panels -->
+    <!-- GRAPH -->
+    <div class="panel" id="panel-graph" style="padding:0;display:none;flex-direction:column">
+      <div id="graph-toolbar">
+        <button class="g-btn" onclick="addPlot()" id="add-plot-btn">+ Add Plot</button>
+        <div class="g-picker" id="timescale-picker">
+          <button class="g-seg" onclick="setTimescale(5)">5s</button>
+          <button class="g-seg" onclick="setTimescale(10)">10s</button>
+          <button class="g-seg active" onclick="setTimescale(15)">15s</button>
+          <button class="g-seg" onclick="setTimescale(30)">30s</button>
+          <button class="g-seg" onclick="setTimescale(60)">60s</button>
+        </div>
+        <button class="g-btn rec" id="rec-btn" onclick="toggleRecord()">&#9210; Rec</button>
+        <button class="g-btn" onclick="resetGraph()">Reset</button>
+      </div>
+      <div id="graph-plots-wrap"></div>
+    </div>
 
-<script>
-'use strict';
-// ════════════════════════════════════════════════════════════════════════════
-// State
-// ════════════════════════════════════════════════════════════════════════════
-const SERIES_COLORS = {
-  setpoint:    '#4fc3f7',
-  measurement: '#00e676',
-  error:       '#ff9500',
-  pTerm:       '#b388ff',
-  iTerm:       '#00e5ff',
-  dTerm:       '#64ffda',
-  output:      '#ff3d3d',
-};
-const SERIES_KEYS = ['setpoint','measurement','error','pTerm','iTerm','dTerm','output'];
+    <!-- DEBUG -->
+    <div class="panel" id="panel-debug">
+      <div class="row spaced" style="margin-bottom:8px">
+        <span style="font-size:10px;color:var(--txt3)">Last telemetry</span>
+        <span id="debug-pkt" style="font-size:10px;color:var(--txt3)">0 packets</span>
+      </div>
+      <div id="debug-out">Waiting for data…</div>
+    </div>
 
-const state = {
-  armed: false, mode: 1, motorMode: 0,
-  battery: 0, battVoltage: null, battStatus: null,
-  loopHz: 0, packetsReceived: 0,
-  imu: { theta:0, phi:0, psi:0 },
-  encoders: null,
-  cat: null,
-  d1: { enabled:false, setpoint:0, measurement:0, error:0, pTerm:0, iTerm:0, dTerm:0, output:0 },
-  d2: { enabled:false, setpoint:0, measurement:0, error:0, pTerm:0, iTerm:0, dTerm:0, output:0 },
-  d3: { enabled:false, setpoint:0, measurement:0, error:0, pTerm:0, iTerm:0, dTerm:0, output:0 },
-};
+    <!-- SETTINGS -->
+    <div class="panel" id="panel-settings">
+      <div class="card">
+        <div class="card-title">Connection</div>
+        <div class="field"><label>BeagleBone IP</label><input id="cfg-bbb-ip" value="192.168.1.140"></div>
+        <div class="field"><label>WebSocket Port</label><input id="cfg-ws-port" value="8675" type="number"></div>
+        <button class="btn-primary connect" onclick="doConnect()">Connect</button>
+        <button class="btn-primary disconnect" onclick="doDisconnect()">Disconnect</button>
+      </div>
+      <div class="card">
+        <div class="card-title">Video Feed</div>
+        <div class="field"><label>Pi 5 IP</label><input id="cfg-pi-ip" value="192.168.1.126"></div>
+        <div class="field"><label>Video URL (auto-derived)</label><input id="cfg-video-url"
+            placeholder="http://pi5IP:8080/video"></div>
+        <button class="btn-primary connect" style="margin-bottom:0" onclick="applyVideoURL()">Apply Video URL</button>
+      </div>
+      <div class="card">
+        <div class="card-title">Telemetry Options</div>
+        <div class="row" style="gap:10px;flex-wrap:wrap">
+          <label class="s-check" style="cursor:pointer">
+            <input type="checkbox" checked onchange="sendCmd({type:'set_telemetry',encoders:this.checked})">
+            <span>Encoders</span>
+          </label>
+          <label class="s-check" style="cursor:pointer">
+            <input type="checkbox" onchange="sendCmd({type:'set_telemetry',imu_full:this.checked})">
+            <span>Full IMU</span>
+          </label>
+          <label class="s-check" style="cursor:pointer">
+            <input type="checkbox" checked onchange="sendCmd({type:'set_telemetry',pid_states:this.checked})">
+            <span>PID States</span>
+          </label>
+        </div>
+      </div>
+    </div>
 
-const pidCfg = {
-  d1: { kp:40, ki:0, kd:5, received:false },
-  d2: { kp:20, ki:0.5, kd:2, received:false },
-  d3: { kp:15, ki:0, kd:1.5, received:false },
-};
+  </div><!-- /panels -->
 
-const pidMult = { d1:1, d2:1, d3:1 };
+  <script>
+    'use strict';
+    // ════════════════════════════════════════════════════════════════════════════
+    // State
+    // ════════════════════════════════════════════════════════════════════════════
+    const state = {
+      armed: false, mode: 1, motorMode: 0,
+      battery: 0, battVoltage: null, battStatus: null,
+      loopHz: 0, packetsReceived: 0,
+      imu: { theta: 0, phi: 0, psi: 0 },
+      encoders: null,
+      cat: null,
+      d1: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
+      d2: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
+      d3: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
+    };
 
-// D2 PosConfig defaults
-const posCfg = {
-  zone_a:8000, zone_b:4000, zone_c:1000,
-  scale_a:600, scale_b:800, scale_c:1000, scale_d:80,
-  vel_scale_stop:60, vel_scale_move:70, vel_scale_turning:70,
-  stopped_vel:0, max_correction:0.3, max_angle_rate:0.05,
-  back_to_spot:1,
-};
-let posCfgReceived = false;
+    const pidCfg = {
+      d1: { kp: 40, ki: 0, kd: 5, received: false },
+      d2: { kp: 20, ki: 0.5, kd: 2, received: false },
+      d3: { kp: 15, ki: 0, kd: 1.5, received: false },
+    };
 
-const POS_SLIDERS = [
-  { key:'zone_a', label:'Zone A (outer)', min:1000, max:30000, step:500, group:'zones' },
-  { key:'zone_b', label:'Zone B',         min:500,  max:15000, step:250, group:'zones' },
-  { key:'zone_c', label:'Zone C (inner)', min:100,  max:5000,  step:100, group:'zones' },
-  { key:'scale_a', label:'Scale A', min:10, max:3000, step:10, group:'scales' },
-  { key:'scale_b', label:'Scale B', min:10, max:3000, step:10, group:'scales' },
-  { key:'scale_c', label:'Scale C', min:10, max:3000, step:10, group:'scales' },
-  { key:'scale_d', label:'Scale D (deadband)', min:1, max:2000, step:1, group:'scales' },
-  { key:'vel_scale_stop',    label:'Stop damping',      min:10, max:300, step:5, group:'vel' },
-  { key:'vel_scale_move',    label:'Move compensation', min:10, max:300, step:5, group:'vel' },
-  { key:'vel_scale_turning', label:'Turn scale-down',   min:10, max:300, step:5, group:'vel' },
-  { key:'max_correction', label:'Max correction (°)',   min:0.05, max:20, step:0.05, group:'limits' },
-  { key:'max_angle_rate', label:'Max rate (°/tick)',    min:0.01, max:5,  step:0.01, group:'limits' },
-  { key:'stopped_vel',    label:'Stopped threshold',   min:0,    max:200, step:1,  group:'limits' },
-];
+    const pidMult = { d1: 1, d2: 1, d3: 1 };
 
-// ════════════════════════════════════════════════════════════════════════════
-// Graph data
-// ════════════════════════════════════════════════════════════════════════════
-const WINDOW_SEC = 15;
-const MAX_PTS = 600;
+    // D2 PosConfig defaults
+    const posCfg = {
+      zone_a: 8000, zone_b: 4000, zone_c: 1000,
+      scale_a: 600, scale_b: 800, scale_c: 1000, scale_d: 80,
+      vel_scale_stop: 60, vel_scale_move: 70, vel_scale_turning: 70,
+      stopped_vel: 0, max_correction: 0.3, max_angle_rate: 0.05,
+      back_to_spot: 1,
+    };
+    let posCfgReceived = false;
 
-function makeBuf() {
-  const o = {};
-  SERIES_KEYS.forEach(k => o[k] = []);
-  return o;
-}
+    const POS_SLIDERS = [
+      { key: 'zone_a', label: 'Zone A (outer)', min: 1000, max: 30000, step: 500, group: 'zones' },
+      { key: 'zone_b', label: 'Zone B', min: 500, max: 15000, step: 250, group: 'zones' },
+      { key: 'zone_c', label: 'Zone C (inner)', min: 100, max: 5000, step: 100, group: 'zones' },
+      { key: 'scale_a', label: 'Scale A', min: 10, max: 3000, step: 10, group: 'scales' },
+      { key: 'scale_b', label: 'Scale B', min: 10, max: 3000, step: 10, group: 'scales' },
+      { key: 'scale_c', label: 'Scale C', min: 10, max: 3000, step: 10, group: 'scales' },
+      { key: 'scale_d', label: 'Scale D (deadband)', min: 1, max: 2000, step: 1, group: 'scales' },
+      { key: 'vel_scale_stop', label: 'Stop damping', min: 10, max: 300, step: 5, group: 'vel' },
+      { key: 'vel_scale_move', label: 'Move compensation', min: 10, max: 300, step: 5, group: 'vel' },
+      { key: 'vel_scale_turning', label: 'Turn scale-down', min: 10, max: 300, step: 5, group: 'vel' },
+      { key: 'max_correction', label: 'Max correction (°)', min: 0.05, max: 20, step: 0.05, group: 'limits' },
+      { key: 'max_angle_rate', label: 'Max rate (°/tick)', min: 0.01, max: 5, step: 0.01, group: 'limits' },
+      { key: 'stopped_vel', label: 'Stopped threshold', min: 0, max: 200, step: 1, group: 'limits' },
+    ];
 
-const graphBufs = [ makeBuf(), makeBuf(), makeBuf() ]; // d1, d2, d3
-const graphT0   = [ null, null, null ];
-let   graphSel  = 0;
-const visibleSeries = new Set(['measurement','error','output']);
-let recording = false;
-let recordBuf = [];
-let recordTarget = 0; // which controller index we're recording
+    // ════════════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════════
+    // Graph data
+    // ════════════════════════════════════════════════════════════════════════════
 
-function currentT(idx) {
-  if (graphT0[idx] === null) return 0;
-  return (performance.now() / 1000) - graphT0[idx];
-}
+    let windowSec = 15;  // adjustable from toolbar
+    const MAX_PTS = 600;
+    const LEFT_PAD = 48;
+    const RIGHT_PAD = 8;
+    const BOTTOM_PAD = 20;
+    const TOP_PAD = 6;
 
-function appendGraphPoint(idx, s) {
-  const now = performance.now() / 1000;
-  if (graphT0[idx] === null) graphT0[idx] = now;
-  const t = now - graphT0[idx];
-  const cutoff = t - WINDOW_SEC;
-  const buf = graphBufs[idx];
-
-  function add(key, val) {
-    buf[key].push({ t, v: val });
-    while (buf[key].length > 0 && buf[key][0].t < cutoff) buf[key].shift();
-    if (buf[key].length > MAX_PTS) buf[key].splice(0, buf[key].length - MAX_PTS);
-  }
-  add('setpoint',    s.setpoint   || 0);
-  add('measurement', s.measurement !== undefined ? s.measurement : 0);
-  add('error',       s.error      || 0);
-  add('pTerm',       s.pTerm  !== undefined ? s.pTerm  : (s.p_term  || 0));
-  add('iTerm',       s.iTerm  !== undefined ? s.iTerm  : (s.i_term  || 0));
-  add('dTerm',       s.dTerm  !== undefined ? s.dTerm  : (s.d_term  || 0));
-  add('output',      s.output     || 0);
-
-  if (recording && idx === recordTarget) {
-    recordBuf.push({ t, ...Object.fromEntries(SERIES_KEYS.map(k => [k, buf[k].at(-1)?.v ?? 0])) });
-  }
-}
-
-function resetGraph() {
-  graphBufs.forEach((b, i) => {
-    SERIES_KEYS.forEach(k => b[k] = []);
-    graphT0[i] = null;
-  });
-  recording = false;
-  recordBuf = [];
-  updateRecBtn();
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// WebSocket
-// ════════════════════════════════════════════════════════════════════════════
-let ws = null;
-let wsReconnectTimer = null;
-let pingInterval = null;
-
-function doConnect() {
-  const ip   = document.getElementById('cfg-bbb-ip').value.trim();
-  const port = document.getElementById('cfg-ws-port').value.trim();
-  connect(`ws://${ip}:${port}`);
-  applyVideoURL();
-}
-
-function doDisconnect() {
-  clearInterval(wsReconnectTimer);
-  clearInterval(pingInterval);
-  wsReconnectTimer = null;
-  if (ws) { ws.close(); ws = null; }
-  setConnStatus(false);
-}
-
-function connect(url) {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-    ws.close();
-  }
-  clearInterval(pingInterval);
-
-  ws = new WebSocket(url);
-  ws.onopen = () => {
-    setConnStatus(true);
-    pingInterval = setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
-    }, 5000);
-  };
-  ws.onclose = ws.onerror = () => {
-    setConnStatus(false);
-    clearInterval(pingInterval);
-    // schedule reconnect
-    if (!wsReconnectTimer) {
-      wsReconnectTimer = setTimeout(() => {
-        wsReconnectTimer = null;
-        if (!ws || ws.readyState !== WebSocket.OPEN) connect(url);
-      }, 5000);
+    const SERIES_COLORS = {
+      setpoint: '#4fc3f7',
+      measurement: '#00e676',
+      error: '#ff9500',
+      pTerm: '#b388ff',
+      iTerm: '#00e5ff',
+      dTerm: '#64ffda',
+      output: '#ff3d3d',
+    };
+    const SERIES_KEYS = ['setpoint', 'measurement', 'error', 'pTerm', 'iTerm', 'dTerm', 'output'];
+    const SERIES_LABELS = {
+      setpoint: 'Setpoint',
+      measurement: 'Meas',
+      error: 'Error',
+      pTerm: 'P term',
+      iTerm: 'I term',
+      dTerm: 'D term',
+      output: 'Output',
+    };
+    // D2-specific label overrides shown in plot headers
+    const D2_LABELS = {
+      error: 'Err (ticks)',
+      pTerm: 'Pos corr (°)',
+      iTerm: 'Vel damp (°)',
+      dTerm: 'Tick vel',
+      output: 'θ_ref adj (°)',
+      measurement: 'Pos (ticks)',
+      setpoint: 'Target (ticks)',
+    };
+    function seriesLabel(ctrl, key) {
+      return (ctrl === 1 && D2_LABELS[key]) ? D2_LABELS[key] : SERIES_LABELS[key];
     }
-  };
-  ws.onmessage = (e) => {
-    try {
-      const d = JSON.parse(e.data);
-      if (d.type === 'telemetry') handleTelemetry(d);
-    } catch {}
-  };
-}
+    const CTRL_NAMES = ['D1', 'D2', 'D3'];
+    const CTRL_DASH = [[], [8, 4], [2, 4]];
 
-function sendCmd(obj) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(obj));
-  }
-}
-
-function setConnStatus(on) {
-  const dot = document.getElementById('conn-dot');
-  const lbl = document.getElementById('conn-label');
-  dot.className = on ? 'on' : 'off';
-  lbl.textContent = on ? 'Connected' : 'Offline';
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Telemetry
-// ════════════════════════════════════════════════════════════════════════════
-function normPID(raw) {
-  if (!raw) return null;
-  return {
-    enabled:     raw.enabled     ?? false,
-    setpoint:    raw.setpoint    ?? 0,
-    measurement: raw.measurement ?? 0,
-    error:       raw.error       ?? 0,
-    pTerm:       raw.p_term      ?? 0,
-    iTerm:       raw.i_term      ?? 0,
-    dTerm:       raw.d_term      ?? 0,
-    output:      raw.output      ?? 0,
-    kp:          raw.kp, ki: raw.ki, kd: raw.kd,
-  };
-}
-
-function handleTelemetry(d) {
-  state.packetsReceived++;
-
-  if (d.system) {
-    state.armed      = d.system.armed;
-    state.mode       = d.system.mode;
-    state.loopHz     = d.system.loop_hz ?? 0;
-    state.battVoltage = d.system.batt_voltage ?? null;
-    state.battStatus  = d.system.batt_status  ?? null;
-  }
-  if (d.imu) {
-    state.imu.theta = d.imu.theta ?? 0;
-    state.imu.phi   = d.imu.phi   ?? 0;
-    state.imu.psi   = d.imu.psi   ?? 0;
-  }
-  if (d.encoders) state.encoders = d.encoders;
-  if (d.cat)      state.cat = d.cat;
-
-  const d1r = normPID(d.D1_balance);
-  const d2r = normPID(d.D2_drive);
-  const d3r = normPID(d.D3_steering);
-
-  if (d1r) {
-    Object.assign(state.d1, d1r);
-    appendGraphPoint(0, d1r);
-    if (!pidCfg.d1.received && d1r.kp != null) {
-      pidCfg.d1.kp = d1r.kp; pidCfg.d1.ki = d1r.ki ?? 0; pidCfg.d1.kd = d1r.kd ?? 0;
-      pidCfg.d1.received = true;
-      syncPIDUI('d1');
+    function makeBuf() {
+      const o = {};
+      SERIES_KEYS.forEach(k => o[k] = []);
+      return o;
     }
-  }
-  if (d2r) {
-    Object.assign(state.d2, d2r);
-    appendGraphPoint(1, d2r);
-    if (!pidCfg.d2.received && d2r.kp != null) {
-      pidCfg.d2.kp = d2r.kp; pidCfg.d2.ki = d2r.ki ?? 0; pidCfg.d2.kd = d2r.kd ?? 0;
-      pidCfg.d2.received = true;
+    const graphBufs = [makeBuf(), makeBuf(), makeBuf()];
+    const graphT0 = [null, null, null];
+
+    function currentT(ctrlIdx) {
+      if (graphT0[ctrlIdx] === null) return 0;
+      return (performance.now() / 1000) - graphT0[ctrlIdx];
     }
-  }
-  if (d3r) {
-    Object.assign(state.d3, d3r);
-    appendGraphPoint(2, d3r);
-    if (!pidCfg.d3.received && d3r.kp != null) {
-      pidCfg.d3.kp = d3r.kp; pidCfg.d3.ki = d3r.ki ?? 0; pidCfg.d3.kd = d3r.kd ?? 0;
-      pidCfg.d3.received = true;
-      syncPIDUI('d3');
+
+    function appendGraphPoint(ctrlIdx, s) {
+      const now = performance.now() / 1000;
+      if (graphT0[ctrlIdx] === null) graphT0[ctrlIdx] = now;
+      const t = now - graphT0[ctrlIdx];
+      const cutoff = t - windowSec;
+      const buf = graphBufs[ctrlIdx];
+      function add(key, val) {
+        buf[key].push({ t, v: val });
+        while (buf[key].length && buf[key][0].t < cutoff) buf[key].shift();
+        if (buf[key].length > MAX_PTS) buf[key].splice(0, buf[key].length - MAX_PTS);
+      }
+      add('setpoint', s.setpoint || 0);
+      add('measurement', s.measurement !== undefined ? s.measurement : 0);
+      add('error', s.error || 0);
+      add('pTerm', s.pTerm !== undefined ? s.pTerm : (s.p_term || 0));
+      add('iTerm', s.iTerm !== undefined ? s.iTerm : (s.i_term || 0));
+      add('dTerm', s.dTerm !== undefined ? s.dTerm : (s.d_term || 0));
+      add('output', s.output || 0);
+      if (recording && ctrlIdx === recordCtrl) {
+        recordBuf.push({ t, ...Object.fromEntries(SERIES_KEYS.map(k => [k, buf[k].at(-1)?.v ?? 0])) });
+      }
     }
-  }
-  if (d.pos_config && !posCfgReceived) {
-    const pc = d.pos_config;
-    Object.assign(posCfg, {
-      zone_a: pc.zone_a ?? posCfg.zone_a,
-      zone_b: pc.zone_b ?? posCfg.zone_b,
-      zone_c: pc.zone_c ?? posCfg.zone_c,
-      scale_a: pc.scale_a ?? posCfg.scale_a,
-      scale_b: pc.scale_b ?? posCfg.scale_b,
-      scale_c: pc.scale_c ?? posCfg.scale_c,
-      scale_d: pc.scale_d ?? posCfg.scale_d,
-      vel_scale_stop: pc.vel_scale_stop ?? posCfg.vel_scale_stop,
-      vel_scale_move: pc.vel_scale_move ?? posCfg.vel_scale_move,
-      vel_scale_turning: pc.vel_scale_turning ?? posCfg.vel_scale_turning,
-      stopped_vel: pc.stopped_vel ?? posCfg.stopped_vel,
-      max_correction: pc.max_correction ?? posCfg.max_correction,
-      max_angle_rate: pc.max_angle_rate ?? posCfg.max_angle_rate,
-      back_to_spot: pc.back_to_spot ?? posCfg.back_to_spot,
+
+    function resetGraph() {
+      graphBufs.forEach((b, i) => { SERIES_KEYS.forEach(k => b[k] = []); graphT0[i] = null; });
+      recording = false; recordBuf = []; updateRecBtn();
+    }
+
+    // ── Plot state ────────────────────────────────────────────────────────────────
+    let plots = [
+      { id: 0, series: [{ ctrl: 1, key: 'error' }, { ctrl: 1, key: 'dTerm' }] },                          // D2 Err (ticks) + Tick vel
+      { id: 1, series: [{ ctrl: 1, key: 'pTerm' }, { ctrl: 1, key: 'iTerm' }, { ctrl: 1, key: 'output' }] },   // D2 Pos corr + Vel damp + θ_ref adj
+      { id: 2, series: [{ ctrl: 0, key: 'measurement' }, { ctrl: 0, key: 'output' }] },                    // D1 Angle + Output
+    ];
+    let nextPlotId = 3;
+
+    function setTimescale(sec) {
+      windowSec = sec;
+      document.querySelectorAll('#timescale-picker .g-seg').forEach(b => {
+        b.classList.toggle('active', parseInt(b.textContent) === sec);
+      });
+    }
+
+    function addPlot() {
+      if (plots.length >= 4) return;
+      plots.push({ id: nextPlotId++, series: [] });
+      rebuildPlots();
+    }
+    function removePlot(id) {
+      if (plots.length <= 1) return;
+      plots = plots.filter(p => p.id !== id);
+      rebuildPlots();
+    }
+    function addSeries(plotId, ctrl, key) {
+      const p = plots.find(p => p.id === plotId);
+      if (!p || p.series.find(s => s.ctrl === ctrl && s.key === key)) return;
+      p.series.push({ ctrl, key });
+      rebuildPlots();
+    }
+    function removeSeries(plotId, ctrl, key) {
+      const p = plots.find(p => p.id === plotId);
+      if (!p) return;
+      p.series = p.series.filter(s => !(s.ctrl === ctrl && s.key === key));
+      rebuildPlots();
+    }
+
+    function rebuildPlots() {
+      const wrap = document.getElementById('graph-plots-wrap');
+      if (!wrap) return;
+      wrap.innerHTML = '';
+
+      plots.forEach((plot, pi) => {
+        // ── outer block ──────────────────────────────────────────────────────
+        const block = document.createElement('div');
+        block.className = 'plot-block';
+        block.id = 'plot-block-' + plot.id;
+
+        // ── header ───────────────────────────────────────────────────────────
+        const hdr = document.createElement('div');
+        hdr.className = 'plot-header';
+
+        const numLbl = document.createElement('span');
+        numLbl.className = 'plot-num';
+        numLbl.textContent = 'PLOT ' + (pi + 1);
+        hdr.appendChild(numLbl);
+
+        // series chips
+        plot.series.forEach(function (s) {
+          const col = SERIES_COLORS[s.key];
+          const chip = document.createElement('span');
+          chip.className = 'series-chip';
+          chip.style.background = col + '22';
+          chip.style.borderColor = col + '55';
+          chip.style.color = col;
+
+          const lbl = document.createTextNode(CTRL_NAMES[s.ctrl] + '·' + SERIES_LABELS[s.key]);
+          chip.appendChild(lbl);
+
+          const x = document.createElement('span');
+          x.className = 'chip-x';
+          x.textContent = '×';
+          (function (pid, c, k) { x.addEventListener('click', function () { removeSeries(pid, c, k); }); })(plot.id, s.ctrl, s.key);
+          chip.appendChild(x);
+          hdr.appendChild(chip);
+        });
+
+        // + series button and dropdown
+        const addWrap = document.createElement('div');
+        addWrap.style.position = 'relative';
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'plot-add-btn';
+        addBtn.textContent = '+ series';
+        (function (pid) { addBtn.addEventListener('click', function (e) { e.stopPropagation(); toggleAddDropdown(pid); }); })(plot.id);
+        addWrap.appendChild(addBtn);
+
+        const dropdown = document.createElement('div');
+        dropdown.className = 'series-add-dropdown';
+        dropdown.id = 'sad-' + plot.id;
+
+        [0, 1, 2].forEach(function (ci) {
+          const grp = document.createElement('div');
+          grp.className = 'sad-group';
+          grp.textContent = CTRL_NAMES[ci];
+          dropdown.appendChild(grp);
+
+          SERIES_KEYS.forEach(function (k) {
+            const active = plot.series.find(function (s) { return s.ctrl === ci && s.key === k; });
+            const col = SERIES_COLORS[k];
+            const item = document.createElement('div');
+            item.className = 'sad-item' + (active ? ' active' : '');
+
+            const dot = document.createElement('span');
+            dot.className = 'sad-dot';
+            dot.style.background = col;
+            item.appendChild(dot);
+            item.appendChild(document.createTextNode(CTRL_NAMES[ci] + ' ' + seriesLabel(ci, k)));
+
+            (function (pid, c, key) {
+              item.addEventListener('click', function () {
+                addSeries(pid, c, key);
+                closeAddDropdowns();
+              });
+            })(plot.id, ci, k);
+
+            dropdown.appendChild(item);
+          });
+        });
+
+        addWrap.appendChild(dropdown);
+        hdr.appendChild(addWrap);
+
+        // remove-plot button
+        if (plots.length > 1) {
+          const rm = document.createElement('button');
+          rm.className = 'plot-remove-btn';
+          rm.textContent = '×';
+          (function (pid) { rm.addEventListener('click', function () { removePlot(pid); }); })(plot.id);
+          hdr.appendChild(rm);
+        }
+
+        block.appendChild(hdr);
+
+        // ── canvas ───────────────────────────────────────────────────────────
+        const cWrap = document.createElement('div');
+        cWrap.className = 'plot-canvas-wrap';
+        const cv = document.createElement('canvas');
+        cv.className = 'plot-canvas';
+        cv.id = 'plot-canvas-' + plot.id;
+        cWrap.appendChild(cv);
+        block.appendChild(cWrap);
+
+        wrap.appendChild(block);
+      });
+
+      const addBtn = document.getElementById('add-plot-btn');
+      if (addBtn) addBtn.disabled = plots.length >= 4;
+    }
+
+
+    function toggleAddDropdown(plotId) {
+      const dd = document.getElementById('sad-' + plotId);
+      const was = dd.classList.contains('open');
+      closeAddDropdowns();
+      if (!was) dd.classList.add('open');
+    }
+    function closeAddDropdowns() {
+      document.querySelectorAll('.series-add-dropdown').forEach(d => d.classList.remove('open'));
+    }
+    document.addEventListener('click', e => {
+      if (!e.target.closest('.plot-add-btn') && !e.target.closest('.series-add-dropdown'))
+        closeAddDropdowns();
     });
-    posCfgReceived = true;
-    syncPosUI();
-  }
-  if (d.motor_config) state.motorMode = d.motor_config.mode ?? 0;
 
-  updateUI();
-  updateDebug(d);
-}
+    // ── Recording ─────────────────────────────────────────────────────────────────
+    let recording = false;
+    let recordBuf = [];
+    let recordCtrl = 0;
 
-// ════════════════════════════════════════════════════════════════════════════
-// UI update
-// ════════════════════════════════════════════════════════════════════════════
-function updateUI() {
-  const bv = state.battVoltage;
-  const battStr = bv != null ? `${bv.toFixed(2)}V` : '––';
-  const battCol = state.battStatus === 1 ? 'var(--green)' : state.battStatus === 2 ? 'var(--yellow)' : state.battStatus === 3 ? 'var(--red)' : 'var(--txt3)';
-  setTxt('h-batt',  battStr, battCol);
-  setTxt('c-batt',  battStr, battCol);
-
-  const ang = state.imu.theta;
-  const angCol = Math.abs(ang) < 5 ? 'var(--green)' : Math.abs(ang) < 14 ? 'var(--yellow)' : 'var(--red)';
-  setTxt('h-angle', `${ang.toFixed(1)}°`, angCol);
-  setTxt('c-angle', `${ang.toFixed(1)}°`, angCol);
-  setTxt('c-loop',  `${state.loopHz.toFixed(0)}`, 'var(--green)');
-  setTxt('h-loop',  `${state.loopHz.toFixed(0)}`, 'var(--txt)');
-
-  document.getElementById('pkt-count').textContent = `pkts: ${state.packetsReceived}`;
-
-  // Arm button — green=disarmed, yellow=armed+OOB, red=armed+in-bounds
-  const ab = document.getElementById('arm-btn');
-  const inBounds = Math.abs(state.imu.theta) < 14.0;
-  if (!state.armed) {
-    ab.className = 'disarmed';
-    ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M8 5v14l11-7z"/></svg> ARM`;
-  } else if (inBounds) {
-    ab.className = 'armed';
-    ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> DISARM`;
-  } else {
-    ab.className = 'armed-oob';
-    ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> DISARM`;
-  }
-
-  // Mode seg
-  document.querySelectorAll('#mode-seg .seg-btn').forEach(b => {
-    b.classList.toggle('active', parseInt(b.dataset.mode) === state.mode);
-  });
-  // Motor mode seg
-  document.querySelectorAll('#motor-seg .seg-btn').forEach(b => {
-    b.classList.toggle('active', parseInt(b.dataset.mmode) === state.motorMode);
-  });
-
-  // Encoders
-  if (state.encoders) {
-    setTxt('enc-l',  state.encoders.left_ticks  ?? 0);
-    setTxt('enc-r',  state.encoders.right_ticks ?? 0);
-    setTxt('enc-lv', (state.encoders.left_vel   ?? 0).toFixed(1));
-    setTxt('enc-rv', (state.encoders.right_vel  ?? 0).toFixed(1));
-  }
-
-  // Cat
-  const catBadge = document.getElementById('cat-badge');
-  if (state.cat?.detected) {
-    catBadge.classList.add('visible');
-    document.getElementById('cat-info').textContent =
-      `Pos (${state.cat.x.toFixed(2)}, ${state.cat.y.toFixed(2)}) · ${(state.cat.confidence*100).toFixed(0)}%`;
-    drawCatOverlay();
-  } else {
-    catBadge.classList.remove('visible');
-  }
-
-  // PID live status
-  updatePIDLive('d1', state.d1);
-  updatePIDLive('d2', state.d2);
-  updatePIDLive('d3', state.d3);
-
-  // Controller enable buttons
-  setEnableBtn('pid-d1-en', state.d1.enabled);
-  setEnableBtn('pid-d2-en', state.d2.enabled);
-  setEnableBtn('pid-d3-en', state.d3.enabled);
-}
-
-function setTxt(id, val, color) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.textContent = val;
-  if (color) el.style.color = color;
-}
-
-function setEnableBtn(id, on) {
-  const b = document.getElementById(id);
-  if (!b) return;
-  b.className = `enable-btn ${on ? 'on' : 'off'}`;
-  b.textContent = on ? 'ON' : 'OFF';
-}
-
-function updatePIDLive(ctrl, s) {
-  const errEl = document.getElementById(`${ctrl}-err`);
-  const outEl = document.getElementById(`${ctrl}-out`);
-  const barEl = document.getElementById(`${ctrl}-bar`);
-  if (errEl) errEl.textContent = s.error.toFixed(ctrl === 'd2' ? 0 : 3);
-  if (outEl && ctrl !== 'd2') outEl.textContent = s.output.toFixed(3);
-  if (ctrl === 'd2') {
-    const maxErr = posCfg.zone_a || 8000;
-    const frac = Math.min(Math.abs(s.error) / maxErr, 1.0) * 100;
-    const col = Math.abs(s.error) < posCfg.zone_c ? 'var(--green)' :
-                Math.abs(s.error) < posCfg.zone_b ? 'var(--yellow)' : 'var(--orange)';
-    if (barEl) { barEl.style.width = frac + '%'; barEl.style.background = col; }
-    setTxt(`d2-sp`,   s.setpoint.toFixed(0));
-    setTxt(`d2-meas`, s.measurement.toFixed(0));
-    setTxt(`d2-err`,  s.error.toFixed(0), 'var(--orange)');
-  } else {
-    if (barEl) {
-      const frac = Math.min(Math.abs(s.output), 1.0) * 100;
-      barEl.style.width = frac + '%';
-      barEl.style.background = s.output >= 0 ? 'var(--accent)' : 'var(--orange)';
+    function toggleRecord() {
+      if (recording) { recording = false; if (recordBuf.length) saveCSV(); recordBuf = []; }
+      else { recording = true; recordBuf = []; recordCtrl = 0; }
+      updateRecBtn();
     }
-  }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Video & Cat overlay
-// ════════════════════════════════════════════════════════════════════════════
-function applyVideoURL() {
-  const piIp = document.getElementById('cfg-pi-ip').value.trim();
-  const manual = document.getElementById('cfg-video-url').value.trim();
-  const url = manual || `http://${piIp}:8080/video`;
-  const img = document.getElementById('video-feed');
-  const wrap = document.getElementById('video-wrap');
-  img.src = url;
-  img.onerror = () => { wrap.classList.remove('active'); };
-  img.onload  = () => { wrap.classList.add('active'); };
-}
-
-function drawCatOverlay() {
-  const wrap   = document.getElementById('video-wrap');
-  const canvas = document.getElementById('cat-canvas');
-  const cat    = state.cat;
-  canvas.width  = wrap.clientWidth;
-  canvas.height = wrap.clientHeight;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (!cat?.detected) return;
-  const cx = canvas.width / 2  + cat.x * canvas.width  / 2;
-  const cy = canvas.height / 2 + cat.y * canvas.height / 2;
-  ctx.strokeStyle = '#00e676'; ctx.lineWidth = 2;
-  ctx.strokeRect(cx - 50, cy - 50, 100, 100);
-  ctx.beginPath(); ctx.moveTo(cx - 10, cy); ctx.lineTo(cx + 10, cy); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx, cy - 10); ctx.lineTo(cx, cy + 10); ctx.stroke();
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Control actions
-// ════════════════════════════════════════════════════════════════════════════
-function toggleArm() {
-  // Always send — firmware rejects if OOB, UI color updates on next telemetry packet
-  sendCmd({ type: 'arm', value: !state.armed });
-}
-
-function resetEstop() {
-  sendCmd({ type: 'reset_estop' });
-}
-function setMode(m) {
-  state.mode = m;
-  sendCmd({ type: 'set_mode', value: m });
-}
-function setMotorMode(m) {
-  state.motorMode = m;
-  sendCmd({ type: 'set_motor_config', mode: m });
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// PID tab
-// ════════════════════════════════════════════════════════════════════════════
-let currentPIDCtrl = 'd1';
-
-function selectPIDCtrl(ctrl) {
-  currentPIDCtrl = ctrl;
-  document.querySelectorAll('#pid-ctrl-picker .g-seg').forEach(b =>
-    b.classList.toggle('active', b.dataset.pidctrl === ctrl));
-  document.getElementById('pid-d1-card').style.display = ctrl === 'd1' ? '' : 'none';
-  document.getElementById('pid-d3-card').style.display = ctrl === 'd3' ? '' : 'none';
-  document.getElementById('pid-d2-card').style.display = ctrl === 'd2' ? '' : 'none';
-}
-
-function toggleCtrl(name, short) {
-  const next = !state[short].enabled;
-  state[short].enabled = next;
-  sendCmd({ type: 'set_controller', controller: name, enabled: next });
-}
-
-function syncPIDUI(ctrl) {
-  const c = pidCfg[ctrl];
-  ['kp','ki','kd'].forEach(k => {
-    const sl = document.getElementById(`sl-${ctrl}-${k}`);
-    const vb = document.getElementById(`vb-${ctrl}-${k}`);
-    if (sl) sl.value = c[k];
-    if (vb) vb.value = fmtPIDVal(c[k]);
-  });
-}
-
-function onPIDSlider(ctrl, key, raw) {
-  const v = parseFloat(raw);
-  pidCfg[ctrl][key] = v;
-  const vb = document.getElementById(`vb-${ctrl}-${key}`);
-  if (vb) vb.value = fmtPIDVal(v);
-  sendPIDUpdate(ctrl);
-}
-
-function onPIDValBox(ctrl, key, raw) {
-  const v = parseFloat(raw);
-  if (isNaN(v)) return;
-  pidCfg[ctrl][key] = v;
-  const sl = document.getElementById(`sl-${ctrl}-${key}`);
-  if (sl) sl.value = v;
-  sendPIDUpdate(ctrl);
-}
-
-function stepPID(ctrl, key, dir) {
-  const steps = { kp:1, ki:0.01, kd:0.1 };
-  const ranges = { kp:[-200,200], ki:[-10,10], kd:[-50,50] };
-  const delta = dir * steps[key] * (pidMult[ctrl] || 1);
-  let v = Math.round((pidCfg[ctrl][key] + delta) * 1000) / 1000;
-  v = Math.max(ranges[key][0], Math.min(ranges[key][1], v));
-  pidCfg[ctrl][key] = v;
-  const sl = document.getElementById(`sl-${ctrl}-${key}`);
-  const vb = document.getElementById(`vb-${ctrl}-${key}`);
-  if (sl) sl.value = v;
-  if (vb) vb.value = fmtPIDVal(v);
-  sendPIDUpdate(ctrl);
-}
-
-function setMult(ctrl, m) {
-  pidMult[ctrl] = m;
-  document.querySelectorAll(`#mult-${ctrl} .mult-btn`).forEach(b =>
-    b.classList.toggle('active', parseInt(b.dataset.m) === m));
-}
-
-function sendPIDUpdate(ctrl) {
-  const c = pidCfg[ctrl];
-  const names = { d1:'D1_balance', d2:'D2_drive', d3:'D3_steering' };
-  sendCmd({ type:'set_pid', controller: names[ctrl], kp: c.kp, ki: c.ki, kd: c.kd });
-}
-
-function fmtPIDVal(v) {
-  return v % 1 === 0 ? v.toFixed(0) : v.toFixed(3);
-}
-
-// PosConfig sliders
-function buildPosSliders() {
-  const wrap = document.getElementById('pos-sliders');
-  const groups = { zones:'Zone Thresholds (ticks)', scales:'Scale Factors', vel:'Velocity Scales', limits:'Limits' };
-  let curGroup = null;
-  let html = '';
-  POS_SLIDERS.forEach(sl => {
-    if (sl.group !== curGroup) {
-      curGroup = sl.group;
-      html += `<span class="sub-label" style="margin-top:10px">${groups[curGroup]}</span>`;
+    function updateRecBtn() {
+      const btn = document.getElementById('rec-btn');
+      if (!btn) return;
+      btn.className = 'g-btn ' + (recording ? 'rec-active' : 'rec');
+      btn.textContent = recording ? '⏹ Stop' : '⏺ Rec';
     }
-    const v = posCfg[sl.key] ?? 0;
-    html += `
+    function saveCSV() {
+      let csv = 't,' + SERIES_KEYS.join(',') + '\n';
+      recordBuf.forEach(r => {
+        csv += r.t.toFixed(3) + ',' + SERIES_KEYS.map(k => (r[k] || 0).toFixed(4)).join(',') + '\n';
+      });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+      a.download = 'bbot_' + Date.now() + '.csv';
+      a.click();
+    }
+
+    // WebSocket
+    // ════════════════════════════════════════════════════════════════════════════
+    let ws = null;
+    let wsReconnectTimer = null;
+    let pingInterval = null;
+
+    function doConnect() {
+      const ip = document.getElementById('cfg-bbb-ip').value.trim();
+      const port = document.getElementById('cfg-ws-port').value.trim();
+      connect(`ws://${ip}:${port}`);
+      applyVideoURL();
+    }
+
+    function doDisconnect() {
+      clearInterval(wsReconnectTimer);
+      clearInterval(pingInterval);
+      wsReconnectTimer = null;
+      if (ws) { ws.close(); ws = null; }
+      setConnStatus(false);
+    }
+
+    function connect(url) {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        ws.close();
+      }
+      clearInterval(pingInterval);
+
+      ws = new WebSocket(url);
+      ws.onopen = () => {
+        setConnStatus(true);
+        pingInterval = setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+        }, 5000);
+      };
+      ws.onclose = ws.onerror = () => {
+        setConnStatus(false);
+        clearInterval(pingInterval);
+        // schedule reconnect
+        if (!wsReconnectTimer) {
+          wsReconnectTimer = setTimeout(() => {
+            wsReconnectTimer = null;
+            if (!ws || ws.readyState !== WebSocket.OPEN) connect(url);
+          }, 5000);
+        }
+      };
+      ws.onmessage = (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          if (d.type === 'telemetry') handleTelemetry(d);
+        } catch { }
+      };
+    }
+
+    function sendCmd(obj) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(obj));
+      }
+    }
+
+    function setConnStatus(on) {
+      const dot = document.getElementById('conn-dot');
+      const lbl = document.getElementById('conn-label');
+      dot.className = on ? 'on' : 'off';
+      lbl.textContent = on ? 'Connected' : 'Offline';
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // Telemetry
+    // ════════════════════════════════════════════════════════════════════════════
+    function normPID(raw) {
+      if (!raw) return null;
+      return {
+        enabled: raw.enabled ?? false,
+        setpoint: raw.setpoint ?? 0,
+        measurement: raw.measurement ?? 0,
+        error: raw.error ?? 0,
+        pTerm: raw.p_term ?? 0,
+        iTerm: raw.i_term ?? 0,
+        dTerm: raw.d_term ?? 0,
+        output: raw.output ?? 0,
+        kp: raw.kp, ki: raw.ki, kd: raw.kd,
+      };
+    }
+
+    function handleTelemetry(d) {
+      state.packetsReceived++;
+
+      if (d.system) {
+        state.armed = !!d.system.armed;
+        state.mode = d.system.mode;
+        state.loopHz = d.system.loop_hz ?? 0;
+        state.battVoltage = d.system.batt_voltage ?? null;
+        state.battStatus = d.system.batt_status ?? null;
+      }
+      if (d.imu) {
+        state.imu.theta = d.imu.theta ?? 0;
+        state.imu.phi = d.imu.phi ?? 0;
+        state.imu.psi = d.imu.psi ?? 0;
+      }
+      if (d.encoders) state.encoders = d.encoders;
+      if (d.cat) state.cat = d.cat;
+
+      const d1r = normPID(d.D1_balance);
+      const d2r = normPID(d.D2_drive);
+      const d3r = normPID(d.D3_steering);
+
+      if (d1r) {
+        Object.assign(state.d1, d1r);
+        appendGraphPoint(0, d1r);
+        if (!pidCfg.d1.received && d1r.kp != null) {
+          pidCfg.d1.kp = d1r.kp; pidCfg.d1.ki = d1r.ki ?? 0; pidCfg.d1.kd = d1r.kd ?? 0;
+          pidCfg.d1.received = true;
+          syncPIDUI('d1');
+        }
+      }
+      if (d2r) {
+        Object.assign(state.d2, d2r);
+        appendGraphPoint(1, d2r);
+        if (!pidCfg.d2.received && d2r.kp != null) {
+          pidCfg.d2.kp = d2r.kp; pidCfg.d2.ki = d2r.ki ?? 0; pidCfg.d2.kd = d2r.kd ?? 0;
+          pidCfg.d2.received = true;
+        }
+      }
+      if (d3r) {
+        Object.assign(state.d3, d3r);
+        appendGraphPoint(2, d3r);
+        if (!pidCfg.d3.received && d3r.kp != null) {
+          pidCfg.d3.kp = d3r.kp; pidCfg.d3.ki = d3r.ki ?? 0; pidCfg.d3.kd = d3r.kd ?? 0;
+          pidCfg.d3.received = true;
+          syncPIDUI('d3');
+        }
+      }
+      if (d.pos_config && !posCfgReceived) {
+        const pc = d.pos_config;
+        Object.assign(posCfg, {
+          zone_a: pc.zone_a ?? posCfg.zone_a,
+          zone_b: pc.zone_b ?? posCfg.zone_b,
+          zone_c: pc.zone_c ?? posCfg.zone_c,
+          scale_a: pc.scale_a ?? posCfg.scale_a,
+          scale_b: pc.scale_b ?? posCfg.scale_b,
+          scale_c: pc.scale_c ?? posCfg.scale_c,
+          scale_d: pc.scale_d ?? posCfg.scale_d,
+          vel_scale_stop: pc.vel_scale_stop ?? posCfg.vel_scale_stop,
+          vel_scale_move: pc.vel_scale_move ?? posCfg.vel_scale_move,
+          vel_scale_turning: pc.vel_scale_turning ?? posCfg.vel_scale_turning,
+          stopped_vel: pc.stopped_vel ?? posCfg.stopped_vel,
+          max_correction: pc.max_correction ?? posCfg.max_correction,
+          max_angle_rate: pc.max_angle_rate ?? posCfg.max_angle_rate,
+          back_to_spot: pc.back_to_spot ?? posCfg.back_to_spot,
+        });
+        posCfgReceived = true;
+        syncPosUI();
+      }
+      if (d.motor_config) state.motorMode = d.motor_config.mode ?? 0;
+
+      updateUI();
+      updateDebug(d);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // UI update
+    // ════════════════════════════════════════════════════════════════════════════
+    function updateUI() {
+      const bv = state.battVoltage;
+      const battStr = bv != null ? `${bv.toFixed(2)}V` : '––';
+      const battCol = state.battStatus === 1 ? 'var(--green)' : state.battStatus === 2 ? 'var(--yellow)' : state.battStatus === 3 ? 'var(--red)' : 'var(--txt3)';
+      setTxt('h-batt', battStr, battCol);
+      setTxt('c-batt', battStr, battCol);
+
+      const ang = state.imu.theta;
+      const angCol = Math.abs(ang) < 5 ? 'var(--green)' : Math.abs(ang) < 14 ? 'var(--yellow)' : 'var(--red)';
+      setTxt('h-angle', `${ang.toFixed(1)}°`, angCol);
+      setTxt('c-angle', `${ang.toFixed(1)}°`, angCol);
+      setTxt('c-loop', `${state.loopHz.toFixed(0)}`, 'var(--green)');
+      setTxt('h-loop', `${state.loopHz.toFixed(0)}`, 'var(--txt)');
+
+      document.getElementById('pkt-count').textContent = `pkts: ${state.packetsReceived}`;
+
+      // Arm button — green=disarmed, yellow=armed+OOB, red=armed+in-bounds
+      const ab = document.getElementById('arm-btn');
+      const inBounds = Math.abs(state.imu.theta) < 14.0;
+      if (!state.armed) {
+        ab.className = 'disarmed';
+        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M8 5v14l11-7z"/></svg> ARM`;
+      } else if (inBounds) {
+        ab.className = 'armed';
+        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> DISARM`;
+      } else {
+        ab.className = 'armed-oob';
+        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> DISARM`;
+      }
+
+      // Mode seg
+      document.querySelectorAll('#mode-seg .seg-btn').forEach(b => {
+        b.classList.toggle('active', parseInt(b.dataset.mode) === state.mode);
+      });
+      // Motor mode seg
+      document.querySelectorAll('#motor-seg .seg-btn').forEach(b => {
+        b.classList.toggle('active', parseInt(b.dataset.mmode) === state.motorMode);
+      });
+
+      // Encoders
+      if (state.encoders) {
+        setTxt('enc-l', state.encoders.left_ticks ?? 0);
+        setTxt('enc-r', state.encoders.right_ticks ?? 0);
+        setTxt('enc-lv', (state.encoders.left_vel ?? 0).toFixed(1));
+        setTxt('enc-rv', (state.encoders.right_vel ?? 0).toFixed(1));
+      }
+
+      // Cat
+      const catBadge = document.getElementById('cat-badge');
+      if (state.cat?.detected) {
+        catBadge.classList.add('visible');
+        document.getElementById('cat-info').textContent =
+          `Pos (${state.cat.x.toFixed(2)}, ${state.cat.y.toFixed(2)}) · ${(state.cat.confidence * 100).toFixed(0)}%`;
+        drawCatOverlay();
+      } else {
+        catBadge.classList.remove('visible');
+      }
+
+      // PID live status
+      updatePIDLive('d1', state.d1);
+      updatePIDLive('d2', state.d2);
+      updatePIDLive('d3', state.d3);
+
+      // Controller enable buttons
+      setEnableBtn('pid-d1-en', state.d1.enabled);
+      setEnableBtn('pid-d2-en', state.d2.enabled);
+      setEnableBtn('pid-d3-en', state.d3.enabled);
+    }
+
+    function setTxt(id, val, color) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = val;
+      if (color) el.style.color = color;
+    }
+
+    function setEnableBtn(id, on) {
+      const b = document.getElementById(id);
+      if (!b) return;
+      b.className = `enable-btn ${on ? 'on' : 'off'}`;
+      b.textContent = on ? 'ON' : 'OFF';
+    }
+
+    function updatePIDLive(ctrl, s) {
+      const errEl = document.getElementById(`${ctrl}-err`);
+      const outEl = document.getElementById(`${ctrl}-out`);
+      const barEl = document.getElementById(`${ctrl}-bar`);
+      if (errEl) errEl.textContent = s.error.toFixed(ctrl === 'd2' ? 0 : 3);
+      if (outEl && ctrl !== 'd2') outEl.textContent = s.output.toFixed(3);
+      if (ctrl === 'd2') {
+        const maxErr = posCfg.zone_a || 8000;
+        const frac = Math.min(Math.abs(s.error) / maxErr, 1.0) * 100;
+        const col = Math.abs(s.error) < posCfg.zone_c ? 'var(--green)' :
+          Math.abs(s.error) < posCfg.zone_b ? 'var(--yellow)' : 'var(--orange)';
+        if (barEl) { barEl.style.width = frac + '%'; barEl.style.background = col; }
+        setTxt(`d2-sp`, s.setpoint.toFixed(0));
+        setTxt(`d2-meas`, s.measurement.toFixed(0));
+        setTxt(`d2-err`, s.error.toFixed(0), 'var(--orange)');
+      } else {
+        if (barEl) {
+          const frac = Math.min(Math.abs(s.output), 1.0) * 100;
+          barEl.style.width = frac + '%';
+          barEl.style.background = s.output >= 0 ? 'var(--accent)' : 'var(--orange)';
+        }
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // Video & Cat overlay
+    // ════════════════════════════════════════════════════════════════════════════
+    function applyVideoURL() {
+      const piIp = document.getElementById('cfg-pi-ip').value.trim();
+      const manual = document.getElementById('cfg-video-url').value.trim();
+      const url = manual || `http://${piIp}:8080/video`;
+      const img = document.getElementById('video-feed');
+      const wrap = document.getElementById('video-wrap');
+      img.src = url;
+      img.onerror = () => { wrap.classList.remove('active'); };
+      img.onload = () => { wrap.classList.add('active'); };
+    }
+
+    function drawCatOverlay() {
+      const wrap = document.getElementById('video-wrap');
+      const canvas = document.getElementById('cat-canvas');
+      const cat = state.cat;
+      canvas.width = wrap.clientWidth;
+      canvas.height = wrap.clientHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!cat?.detected) return;
+      const cx = canvas.width / 2 + cat.x * canvas.width / 2;
+      const cy = canvas.height / 2 + cat.y * canvas.height / 2;
+      ctx.strokeStyle = '#00e676'; ctx.lineWidth = 2;
+      ctx.strokeRect(cx - 50, cy - 50, 100, 100);
+      ctx.beginPath(); ctx.moveTo(cx - 10, cy); ctx.lineTo(cx + 10, cy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, cy - 10); ctx.lineTo(cx, cy + 10); ctx.stroke();
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // Control actions
+    // ════════════════════════════════════════════════════════════════════════════
+    function toggleArm() {
+      const next = !state.armed;
+      state.armed = next;   // optimistic — telemetry will confirm
+      updateUI();
+      sendCmd({ type: 'arm', value: next });
+    }
+
+    function resetEstop() {
+      sendCmd({ type: 'reset_estop' });
+      // Show feedback — reset takes ~2s on firmware side
+      const btn = document.querySelector('.icon-btn[onclick="resetEstop()"]');
+      if (btn) {
+        const orig = btn.innerHTML;
+        btn.textContent = 'Resetting…';
+        btn.disabled = true;
+        setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 3000);
+      }
+    }
+    function setMode(m) {
+      state.mode = m;
+      sendCmd({ type: 'set_mode', value: m });
+    }
+    function setMotorMode(m) {
+      state.motorMode = m;
+      sendCmd({ type: 'set_motor_config', mode: m });
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // PID tab
+    // ════════════════════════════════════════════════════════════════════════════
+    let currentPIDCtrl = 'd1';
+
+    function selectPIDCtrl(ctrl) {
+      currentPIDCtrl = ctrl;
+      document.querySelectorAll('#pid-ctrl-picker .g-seg').forEach(b =>
+        b.classList.toggle('active', b.dataset.pidctrl === ctrl));
+      document.getElementById('pid-d1-card').style.display = ctrl === 'd1' ? '' : 'none';
+      document.getElementById('pid-d3-card').style.display = ctrl === 'd3' ? '' : 'none';
+      document.getElementById('pid-d2-card').style.display = ctrl === 'd2' ? '' : 'none';
+    }
+
+    function toggleCtrl(name, short) {
+      const next = !state[short].enabled;
+      state[short].enabled = next;
+      sendCmd({ type: 'set_controller', controller: name, enabled: next });
+    }
+
+    function syncPIDUI(ctrl) {
+      const c = pidCfg[ctrl];
+      ['kp', 'ki', 'kd'].forEach(k => {
+        const sl = document.getElementById(`sl-${ctrl}-${k}`);
+        const vb = document.getElementById(`vb-${ctrl}-${k}`);
+        if (sl) sl.value = c[k];
+        if (vb) vb.value = fmtPIDVal(c[k]);
+      });
+    }
+
+    function onPIDSlider(ctrl, key, raw) {
+      const v = parseFloat(raw);
+      pidCfg[ctrl][key] = v;
+      const vb = document.getElementById(`vb-${ctrl}-${key}`);
+      if (vb) vb.value = fmtPIDVal(v);
+      sendPIDUpdate(ctrl);
+    }
+
+    function onPIDValBox(ctrl, key, raw) {
+      const v = parseFloat(raw);
+      if (isNaN(v)) return;
+      pidCfg[ctrl][key] = v;
+      const sl = document.getElementById(`sl-${ctrl}-${key}`);
+      if (sl) sl.value = v;
+      sendPIDUpdate(ctrl);
+    }
+
+    function stepPID(ctrl, key, dir) {
+      const steps = { kp: 1, ki: 0.01, kd: 0.1 };
+      const ranges = { kp: [-200, 200], ki: [-10, 10], kd: [-50, 50] };
+      const delta = dir * steps[key] * (pidMult[ctrl] || 1);
+      let v = Math.round((pidCfg[ctrl][key] + delta) * 1000) / 1000;
+      v = Math.max(ranges[key][0], Math.min(ranges[key][1], v));
+      pidCfg[ctrl][key] = v;
+      const sl = document.getElementById(`sl-${ctrl}-${key}`);
+      const vb = document.getElementById(`vb-${ctrl}-${key}`);
+      if (sl) sl.value = v;
+      if (vb) vb.value = fmtPIDVal(v);
+      sendPIDUpdate(ctrl);
+    }
+
+    function setMult(ctrl, m) {
+      pidMult[ctrl] = m;
+      document.querySelectorAll(`#mult-${ctrl} .mult-btn`).forEach(b =>
+        b.classList.toggle('active', parseInt(b.dataset.m) === m));
+    }
+
+    function sendPIDUpdate(ctrl) {
+      const c = pidCfg[ctrl];
+      const names = { d1: 'D1_balance', d2: 'D2_drive', d3: 'D3_steering' };
+      sendCmd({ type: 'set_pid', controller: names[ctrl], kp: c.kp, ki: c.ki, kd: c.kd });
+    }
+
+    function fmtPIDVal(v) {
+      return v % 1 === 0 ? v.toFixed(0) : v.toFixed(3);
+    }
+
+    // PosConfig sliders
+    function buildPosSliders() {
+      const wrap = document.getElementById('pos-sliders');
+      const groups = { zones: 'Zone Thresholds (ticks)', scales: 'Scale Factors', vel: 'Velocity Scales', limits: 'Limits' };
+      let curGroup = null;
+      let html = '';
+      POS_SLIDERS.forEach(sl => {
+        if (sl.group !== curGroup) {
+          curGroup = sl.group;
+          html += `<span class="sub-label" style="margin-top:10px">${groups[curGroup]}</span>`;
+        }
+        const v = posCfg[sl.key] ?? 0;
+        html += `
       <div class="pid-row">
         <span class="pid-label" style="font-size:10px">${sl.label}</span>
         <input type="range" class="pid-slider" id="psl-${sl.key}"
@@ -1165,403 +2080,220 @@ function buildPosSliders() {
             onblur="onPosValBox('${sl.key}',this.value)">
         </div>
       </div>`;
-  });
-  wrap.innerHTML = html;
-}
-
-function syncPosUI() {
-  POS_SLIDERS.forEach(sl => {
-    const v = posCfg[sl.key] ?? 0;
-    const s = document.getElementById(`psl-${sl.key}`);
-    const b = document.getElementById(`pvb-${sl.key}`);
-    if (s) s.value = v;
-    if (b) b.value = parseFloat(v).toFixed(sl.step < 1 ? 2 : 0);
-  });
-  // back_to_spot seg
-  document.querySelectorAll('#hold-mode-seg .seg-btn').forEach((b, i) =>
-    b.classList.toggle('active', i === 0 ? posCfg.back_to_spot === 1 : posCfg.back_to_spot === 0));
-  document.getElementById('pid-d2-cfg').classList.toggle('dimmed', !posCfgReceived);
-}
-
-function onPosSlider(key, raw) {
-  const v = parseFloat(raw);
-  posCfg[key] = v;
-  const vb = document.getElementById(`pvb-${key}`);
-  const slDef = POS_SLIDERS.find(s => s.key === key);
-  if (vb) vb.value = parseFloat(v).toFixed(slDef && slDef.step < 1 ? 2 : 0);
-  sendPosConfig();
-}
-
-function onPosValBox(key, raw) {
-  const v = parseFloat(raw);
-  if (isNaN(v)) return;
-  posCfg[key] = v;
-  const sl = document.getElementById(`psl-${key}`);
-  if (sl) sl.value = v;
-  sendPosConfig();
-}
-
-function setPosField(key, val) {
-  posCfg[key] = val;
-  document.querySelectorAll('#hold-mode-seg .seg-btn').forEach((b, i) =>
-    b.classList.toggle('active', i === 0 ? val === 1 : val === 0));
-  sendPosConfig();
-}
-
-function sendPosConfig() {
-  sendCmd({ type: 'set_pos_config', ...posCfg });
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Graph
-// ════════════════════════════════════════════════════════════════════════════
-const CTRL_META = [
-  { name:'D1 Balance',  unit:'deg',   secondUnit:null },
-  { name:'D2 Position', unit:'ticks', secondUnit:null },
-  { name:'D3 Steering', unit:'deg',   secondUnit:null },
-  { name:'D1+D2',       unit:'deg',   secondUnit:'ticks' },
-];
-
-function selectGraph(idx) {
-  graphSel = idx;
-  document.querySelectorAll('#g-ctrl-picker .g-seg').forEach(b =>
-    b.classList.toggle('active', parseInt(b.dataset.gc) === idx));
-  updateLegend();
-}
-
-function toggleSeriesMenu() {
-  document.getElementById('series-dropdown').classList.toggle('open');
-}
-
-// Close dropdown on outside click
-document.addEventListener('click', e => {
-  if (!e.target.closest('.series-menu'))
-    document.getElementById('series-dropdown').classList.remove('open');
-});
-
-function toggleSeries(key) {
-  if (visibleSeries.has(key)) visibleSeries.delete(key);
-  else visibleSeries.add(key);
-  document.getElementById('series-count').textContent = visibleSeries.size;
-  updateLegend();
-}
-
-function toggleRecord() {
-  if (recording) {
-    recording = false;
-    if (recordBuf.length > 0) saveCSV();
-    recordBuf = [];
-    updateRecBtn();
-  } else {
-    recording = true;
-    recordBuf = [];
-    recordTarget = graphSel === 3 ? 0 : graphSel;
-    updateRecBtn();
-  }
-}
-
-function updateRecBtn() {
-  const btn = document.getElementById('rec-btn');
-  btn.className = `g-btn ${recording ? 'rec-active' : 'rec'}`;
-  btn.textContent = recording ? '⏹ Stop' : '⏺ Rec';
-}
-
-function saveCSV() {
-  const keys = SERIES_KEYS;
-  let csv = 't,' + keys.join(',') + '\n';
-  recordBuf.forEach(r => {
-    csv += r.t.toFixed(3) + ',' + keys.map(k => (r[k] ?? 0).toFixed(4)).join(',') + '\n';
-  });
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `bbot_${['d1','d2','d3','d1d2'][graphSel]}_${Date.now()}.csv`;
-  a.click();
-}
-
-function updateLegend() {
-  const lg = document.getElementById('graph-legend');
-  const dual = graphSel === 3;
-  const keys = SERIES_KEYS.filter(k => visibleSeries.has(k));
-  let html = '';
-  keys.forEach(k => {
-    const col = SERIES_COLORS[k];
-    if (dual) {
-      html += `<div class="legend-item">
-        <div class="legend-swatch" style="background:${col}"></div>
-        <span class="legend-name" style="color:${col}88">D1 ${k}</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-swatch" style="background:${col};opacity:.6;border-top:2px dashed ${col}"></div>
-        <span class="legend-name" style="color:${col}88">D2 ${k}</span>
-      </div>`;
-    } else {
-      html += `<div class="legend-item">
-        <div class="legend-swatch" style="background:${col}"></div>
-        <span class="legend-name" style="color:${col}88">${k}</span>
-      </div>`;
-    }
-  });
-  const meta = CTRL_META[graphSel];
-  html += `<span style="margin-left:auto;font-size:9px;color:var(--txt3);white-space:nowrap">← ${meta.unit}${meta.secondUnit ? ' / → '+meta.secondUnit : ''}</span>`;
-  lg.innerHTML = html;
-}
-
-// ──────────────────────────────────────────────────────────────────────
-// Canvas drawing
-// ──────────────────────────────────────────────────────────────────────
-const LEFT_PAD = 52, BOTTOM_PAD = 22, TOP_PAD = 8;
-
-function niceGrid(lo, hi, target) {
-  const span = hi - lo;
-  if (span <= 0) return [lo, hi];
-  const raw = span / target;
-  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
-  const steps = [1, 2, 2.5, 5, 10];
-  const step = (steps.find(s => s * mag >= raw) || 10) * mag;
-  const vals = [];
-  let v = Math.ceil(lo / step) * step;
-  while (v <= hi + step * 0.01) { vals.push(v); v += step; }
-  return vals;
-}
-
-function fmtAxis(v) {
-  const a = Math.abs(v);
-  if (a >= 10000) return (v / 1000).toFixed(0) + 'k';
-  if (a >= 100)   return v.toFixed(0);
-  if (a >= 1)     return v.toFixed(1);
-  return v.toFixed(2);
-}
-
-function axisParams(buf, tMin) {
-  let allVals = [];
-  SERIES_KEYS.filter(k => visibleSeries.has(k)).forEach(k => {
-    (buf[k] || []).filter(p => p.t >= tMin).forEach(p => allVals.push(p.v));
-  });
-  const rawMin = allVals.length ? Math.min(...allVals) : -1;
-  const rawMax = allVals.length ? Math.max(...allVals) :  1;
-  const span   = Math.max(rawMax - rawMin, 1.0);
-  const margin = span * 0.12;
-  const yMin = rawMin - margin, yMax = rawMax + margin;
-  return { yMin, yMax, ySpan: yMax - yMin, grid: niceGrid(yMin, yMax, 6) };
-}
-
-function drawGraphFrame() {
-  const canvas = document.getElementById('graph-canvas');
-  const wrap   = document.getElementById('graph-canvas-wrap');
-  const dpr    = window.devicePixelRatio || 1;
-  const W      = wrap.clientWidth;
-  const H      = wrap.clientHeight;
-  if (W < 10 || H < 10) return;
-
-  if (canvas.width !== W * dpr || canvas.height !== H * dpr) {
-    canvas.width  = W * dpr; canvas.height = H * dpr;
-    canvas.style.width  = W + 'px'; canvas.style.height  = H + 'px';
-  }
-
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = '#080b10';
-  ctx.fillRect(0, 0, W, H);
-
-  const dual     = graphSel === 3;
-  const rightPad = dual ? 52 : 8;
-  const plotW    = W - LEFT_PAD - rightPad;
-  const plotH    = H - TOP_PAD  - BOTTOM_PAD;
-
-  const buf1  = graphBufs[dual ? 0 : graphSel];
-  const buf2  = dual ? graphBufs[1] : null;
-  const tNow1 = currentT(dual ? 0 : graphSel);
-  const tNow2 = dual ? currentT(1) : 0;
-  const tNow  = Math.max(tNow1, tNow2, WINDOW_SEC);
-  const tMin  = tNow - WINDOW_SEC;
-  const tSpan = WINDOW_SEC;
-
-  const ax1 = axisParams(buf1, tMin);
-  const ax2 = dual ? axisParams(buf2, tMin) : null;
-
-  const px = t  => LEFT_PAD + (t - tMin) / tSpan * plotW;
-  const py1 = v => TOP_PAD + (1 - (v - ax1.yMin) / ax1.ySpan) * plotH;
-  const py2 = v => ax2 ? TOP_PAD + (1 - (v - ax2.yMin) / ax2.ySpan) * plotH : py1(v);
-  const clamp = y => Math.max(TOP_PAD, Math.min(TOP_PAD + plotH, y));
-
-  // Background
-  ctx.fillStyle = '#080b10';
-  ctx.fillRect(LEFT_PAD, TOP_PAD, plotW, plotH);
-
-  // Y grid (left axis)
-  ax1.grid.forEach(gv => {
-    const gy = py1(gv);
-    if (gy < TOP_PAD - 0.5 || gy > TOP_PAD + plotH + 0.5) return;
-    ctx.beginPath(); ctx.moveTo(LEFT_PAD, gy); ctx.lineTo(LEFT_PAD + plotW, gy);
-    const isZero = Math.abs(gv) < ax1.ySpan * 0.015;
-    ctx.strokeStyle = isZero ? 'rgba(93,122,150,.55)' : 'rgba(93,122,150,.18)';
-    ctx.lineWidth = isZero ? 1 : 0.5;
-    if (!isZero) { ctx.setLineDash([4, 4]); } else { ctx.setLineDash([]); }
-    ctx.stroke();
-    ctx.setLineDash([]);
-  });
-
-  // Right-axis ticks
-  if (dual && ax2) {
-    ax2.grid.forEach(gv => {
-      const gy = py2(gv);
-      if (gy < TOP_PAD - 0.5 || gy > TOP_PAD + plotH + 0.5) return;
-      ctx.beginPath();
-      ctx.moveTo(LEFT_PAD + plotW, gy);
-      ctx.lineTo(LEFT_PAD + plotW + 6, gy);
-      ctx.strokeStyle = 'rgba(255,149,0,.5)'; ctx.lineWidth = 0.8;
-      ctx.setLineDash([]);
-      ctx.stroke();
-    });
-  }
-
-  // X grid
-  const xStep = 5;
-  let xg = Math.ceil(tMin / xStep) * xStep;
-  const xLabels = [];
-  while (xg <= tNow + 0.01) {
-    const offset = xg - tMin;
-    const gx = LEFT_PAD + offset / tSpan * plotW;
-    if (gx >= LEFT_PAD - 0.5 && gx <= LEFT_PAD + plotW + 0.5) {
-      ctx.beginPath(); ctx.moveTo(gx, TOP_PAD); ctx.lineTo(gx, TOP_PAD + plotH);
-      ctx.strokeStyle = 'rgba(93,122,150,.15)'; ctx.lineWidth = 0.5;
-      ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]);
-      const relT = Math.round(tNow - xg);
-      xLabels.push({ x: gx, label: relT === 0 ? 'now' : `-${relT}s` });
-    }
-    xg += xStep;
-  }
-
-  // Border
-  ctx.strokeStyle = 'rgba(93,122,150,.35)'; ctx.lineWidth = 0.5;
-  ctx.setLineDash([]);
-  ctx.strokeRect(LEFT_PAD, TOP_PAD, plotW, plotH);
-
-  // Draw series
-  function drawSeries(buf, pyFn, secondary) {
-    SERIES_KEYS.filter(k => visibleSeries.has(k)).forEach(k => {
-      const pts = (buf[k] || []).filter(p => p.t >= tMin - 0.1);
-      if (pts.length < 2) return;
-      const col = SERIES_COLORS[k];
-      ctx.beginPath();
-      let started = false;
-      pts.forEach(p => {
-        const cx = px(p.t), cy = clamp(pyFn(p.v));
-        if (!started) { ctx.moveTo(cx, cy); started = true; }
-        else ctx.lineTo(cx, cy);
       });
-      ctx.strokeStyle = secondary ? col + 'aa' : col;
-      ctx.lineWidth   = secondary ? 1.3 : (k === 'error' || k === 'output') ? 2 : 1.5;
-      if (secondary) { ctx.setLineDash([10, 4]); }
-      else if (k === 'setpoint') { ctx.setLineDash([5, 3]); }
-      else { ctx.setLineDash([]); }
-      ctx.stroke();
-      ctx.setLineDash([]);
-    });
-  }
-
-  drawSeries(buf1, py1, false);
-  if (dual && buf2) drawSeries(buf2, py2, true);
-
-  // Text / axis labels
-  ctx.font = '9px "JetBrains Mono", monospace';
-  ctx.textBaseline = 'middle';
-
-  // Left Y labels
-  ctx.fillStyle = '#5d7a96'; ctx.textAlign = 'right';
-  ax1.grid.forEach(gv => {
-    const gy = py1(gv);
-    if (gy >= TOP_PAD - 1 && gy <= TOP_PAD + plotH + 1)
-      ctx.fillText(fmtAxis(gv), LEFT_PAD - 4, gy);
-  });
-  ctx.fillStyle = '#4fc3f7'; ctx.textAlign = 'center';
-  ctx.fillText(CTRL_META[graphSel].unit, LEFT_PAD / 2, TOP_PAD + 6);
-
-  // Right Y labels (dual)
-  if (dual && ax2) {
-    ctx.fillStyle = '#ff9500aa'; ctx.textAlign = 'left';
-    ax2.grid.forEach(gv => {
-      const gy = py2(gv);
-      if (gy >= TOP_PAD - 1 && gy <= TOP_PAD + plotH + 1)
-        ctx.fillText(fmtAxis(gv), LEFT_PAD + plotW + 10, gy);
-    });
-    ctx.fillStyle = '#ff9500cc'; ctx.textAlign = 'center';
-    ctx.fillText(CTRL_META[3].secondUnit, W - rightPad / 2, TOP_PAD + 6);
-  }
-
-  // X labels
-  ctx.fillStyle = '#3a5068'; ctx.textAlign = 'center';
-  xLabels.forEach(xl => {
-    ctx.fillText(xl.label, xl.x, H - BOTTOM_PAD / 2);
-  });
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Tabs
-// ════════════════════════════════════════════════════════════════════════════
-function switchTab(name) {
-  document.querySelectorAll('.tab').forEach(t =>
-    t.classList.toggle('active', t.dataset.tab === name));
-  document.querySelectorAll('.panel').forEach(p => {
-    const match = p.id === `panel-${name}`;
-    p.classList.toggle('active', match);
-    if (p.id === 'panel-graph') {
-      p.style.display = match ? 'flex' : 'none';
-      if (match) {
-        resizeGraphCanvas();
-        updateLegend();
-      }
+      wrap.innerHTML = html;
     }
-  });
-}
 
-document.querySelectorAll('.tab').forEach(t =>
-  t.addEventListener('click', () => switchTab(t.dataset.tab)));
+    function syncPosUI() {
+      POS_SLIDERS.forEach(sl => {
+        const v = posCfg[sl.key] ?? 0;
+        const s = document.getElementById(`psl-${sl.key}`);
+        const b = document.getElementById(`pvb-${sl.key}`);
+        if (s) s.value = v;
+        if (b) b.value = parseFloat(v).toFixed(sl.step < 1 ? 2 : 0);
+      });
+      // back_to_spot seg
+      document.querySelectorAll('#hold-mode-seg .seg-btn').forEach((b, i) =>
+        b.classList.toggle('active', i === 0 ? posCfg.back_to_spot === 1 : posCfg.back_to_spot === 0));
+      document.getElementById('pid-d2-cfg').classList.toggle('dimmed', !posCfgReceived);
+    }
 
-function resizeGraphCanvas() {
-  const wrap = document.getElementById('graph-canvas-wrap');
-  const canvas = document.getElementById('graph-canvas');
-  canvas.width  = 0; canvas.height = 0; // force resize
-}
+    function onPosSlider(key, raw) {
+      const v = parseFloat(raw);
+      posCfg[key] = v;
+      const vb = document.getElementById(`pvb-${key}`);
+      const slDef = POS_SLIDERS.find(s => s.key === key);
+      if (vb) vb.value = parseFloat(v).toFixed(slDef && slDef.step < 1 ? 2 : 0);
+      sendPosConfig();
+    }
 
-window.addEventListener('resize', resizeGraphCanvas);
+    function onPosValBox(key, raw) {
+      const v = parseFloat(raw);
+      if (isNaN(v)) return;
+      posCfg[key] = v;
+      const sl = document.getElementById(`psl-${key}`);
+      if (sl) sl.value = v;
+      sendPosConfig();
+    }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Debug
-// ════════════════════════════════════════════════════════════════════════════
-function updateDebug(d) {
-  document.getElementById('debug-pkt').textContent = `${state.packetsReceived} packets`;
-  document.getElementById('debug-out').innerHTML = syntaxHL(JSON.stringify(d, null, 2));
-}
+    function setPosField(key, val) {
+      posCfg[key] = val;
+      document.querySelectorAll('#hold-mode-seg .seg-btn').forEach((b, i) =>
+        b.classList.toggle('active', i === 0 ? val === 1 : val === 0));
+      sendPosConfig();
+    }
 
-function syntaxHL(json) {
-  return json.replace(/("[\w_]+"):/g, '<span class="key">$1</span>:')
-             .replace(/: (true|false)/g, ': <span class="vbool">$1</span>')
-             .replace(/: (-?\d+\.?\d*)/g, ': <span class="vnum">$1</span>')
-             .replace(/: "([^"]*)"/g, ': <span class="vstr">"$1"</span>');
-}
+    function sendPosConfig() {
+      sendCmd({ type: 'set_pos_config', ...posCfg });
+    }
 
-// ════════════════════════════════════════════════════════════════════════════
-// RAF loop
-// ════════════════════════════════════════════════════════════════════════════
-function loop() {
-  if (document.getElementById('panel-graph').style.display !== 'none') {
-    drawGraphFrame();
-  }
-  requestAnimationFrame(loop);
-}
+    // ════════════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════════
+    // Graph drawing
+    // ════════════════════════════════════════════════════════════════════════════
 
-// ════════════════════════════════════════════════════════════════════════════
-// Init
-// ════════════════════════════════════════════════════════════════════════════
-buildPosSliders();
-updateLegend();
-requestAnimationFrame(loop);
+    function niceGrid(lo, hi, target) {
+      const span = hi - lo;
+      if (span <= 0) return [lo, hi];
+      const raw = span / target;
+      const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+      const step = ([1, 2, 2.5, 5, 10].find(s => s * mag >= raw) || 10) * mag;
+      const vals = [];
+      let v = Math.ceil(lo / step) * step;
+      while (v <= hi + step * 0.01) { vals.push(v); v += step; }
+      return vals;
+    }
+    function fmtAxis(v) {
+      const a = Math.abs(v);
+      if (a >= 10000) return (v / 1000).toFixed(0) + 'k';
+      if (a >= 100) return v.toFixed(0);
+      if (a >= 1) return v.toFixed(1);
+      return v.toFixed(2);
+    }
 
-// Auto-connect on load
-doConnect();
-</script>
+    function drawAllPlots() {
+      const panel = document.getElementById('panel-graph');
+      if (!panel || panel.style.display === 'none') return;
+      const activeCtrls = new Set(plots.flatMap(p => p.series.map(s => s.ctrl)));
+      const tNow = Math.max(windowSec, ...[...activeCtrls].map(c => currentT(c)));
+      const tMin = tNow - windowSec;
+      const tSpan = windowSec;
+      const xLabels = [];
+      let xg = Math.ceil(tMin / 5) * 5;
+      while (xg <= tNow + 0.01) {
+        xLabels.push({ offset: xg - tMin, label: Math.round(tNow - xg) === 0 ? 'now' : '-' + Math.round(tNow - xg) + 's' });
+        xg += 5;
+      }
+      plots.forEach((plot, pi) => {
+        const canvas = document.getElementById('plot-canvas-' + plot.id);
+        if (!canvas) return;
+        const wrap = canvas.parentElement;
+        const dpr = window.devicePixelRatio || 1;
+        const W = wrap.clientWidth;
+        const H = wrap.clientHeight;
+        if (W < 10 || H < 10) return;
+        if (canvas.width !== W * dpr || canvas.height !== H * dpr) {
+          canvas.width = W * dpr; canvas.height = H * dpr;
+          canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+        }
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, W, H);
+        ctx.fillStyle = '#080b10'; ctx.fillRect(0, 0, W, H);
+        const plotW = W - LEFT_PAD - RIGHT_PAD;
+        const plotH = H - TOP_PAD - BOTTOM_PAD;
+        const last = pi === plots.length - 1;
+        // Autoscale Y to visible series in this window
+        let allVals = [];
+        plot.series.forEach(({ ctrl, key }) =>
+          (graphBufs[ctrl][key] || []).filter(p => p.t >= tMin).forEach(p => allVals.push(p.v)));
+        const rawMin = allVals.length ? Math.min(...allVals) : -1;
+        const rawMax = allVals.length ? Math.max(...allVals) : 1;
+        const span = Math.max(rawMax - rawMin, 1.0);
+        const yMin = rawMin - span * 0.12;
+        const yMax = rawMax + span * 0.12;
+        const ySpan = yMax - yMin;
+        const yGrid = niceGrid(yMin, yMax, 5);
+        const px = t => LEFT_PAD + (t - tMin) / tSpan * plotW;
+        const py = v => TOP_PAD + (1 - (v - yMin) / ySpan) * plotH;
+        const cy = y => Math.max(TOP_PAD, Math.min(TOP_PAD + plotH, y));
+        ctx.font = '9px "JetBrains Mono",monospace';
+        // Y grid
+        yGrid.forEach(gv => {
+          const gy = py(gv);
+          if (gy < TOP_PAD - 0.5 || gy > TOP_PAD + plotH + 0.5) return;
+          ctx.beginPath(); ctx.moveTo(LEFT_PAD, gy); ctx.lineTo(LEFT_PAD + plotW, gy);
+          const isZ = Math.abs(gv) < ySpan * 0.015;
+          ctx.strokeStyle = isZ ? 'rgba(93,122,150,.5)' : 'rgba(93,122,150,.15)';
+          ctx.lineWidth = isZ ? 1 : 0.5;
+          ctx.setLineDash(isZ ? [] : [4, 4]); ctx.stroke(); ctx.setLineDash([]);
+          ctx.fillStyle = '#5d7a96'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+          ctx.fillText(fmtAxis(gv), LEFT_PAD - 4, gy);
+        });
+        // X grid
+        xLabels.forEach(xl => {
+          const gx = LEFT_PAD + xl.offset / tSpan * plotW;
+          if (gx < LEFT_PAD - 0.5 || gx > LEFT_PAD + plotW + 0.5) return;
+          ctx.beginPath(); ctx.moveTo(gx, TOP_PAD); ctx.lineTo(gx, TOP_PAD + plotH);
+          ctx.strokeStyle = 'rgba(93,122,150,.12)'; ctx.lineWidth = 0.5;
+          ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]);
+          if (last) {
+            ctx.fillStyle = '#3a5068'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(xl.label, gx, H - BOTTOM_PAD / 2);
+          }
+        });
+        // Border
+        ctx.strokeStyle = 'rgba(93,122,150,.3)'; ctx.lineWidth = 0.5;
+        ctx.strokeRect(LEFT_PAD, TOP_PAD, plotW, plotH);
+        // Series lines
+        plot.series.forEach(({ ctrl, key }) => {
+          const pts = (graphBufs[ctrl][key] || []).filter(p => p.t >= tMin - 0.1);
+          if (pts.length < 2) return;
+          ctx.beginPath();
+          let started = false;
+          pts.forEach(p => {
+            const x = px(p.t), y = cy(py(p.v));
+            if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+          });
+          ctx.strokeStyle = SERIES_COLORS[key];
+          ctx.lineWidth = (key === 'error' || key === 'output') ? 2 : 1.5;
+          ctx.setLineDash(CTRL_DASH[ctrl]); ctx.stroke(); ctx.setLineDash([]);
+        });
+      });
+    }
+
+    // Tabs
+    // ════════════════════════════════════════════════════════════════════════════
+    function switchTab(name) {
+      document.querySelectorAll('.tab').forEach(t =>
+        t.classList.toggle('active', t.dataset.tab === name));
+      document.querySelectorAll('.panel').forEach(p => {
+        const match = p.id === `panel-${name}`;
+        p.classList.toggle('active', match);
+        if (p.id === 'panel-graph') {
+          p.style.display = '';  // let CSS class control it
+          if (match) rebuildPlots();
+        }
+      });
+    }
+
+    document.querySelectorAll('.tab').forEach(t =>
+      t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // Debug
+    // ════════════════════════════════════════════════════════════════════════════
+    function updateDebug(d) {
+      document.getElementById('debug-pkt').textContent = `${state.packetsReceived} packets`;
+      document.getElementById('debug-out').innerHTML = syntaxHL(JSON.stringify(d, null, 2));
+    }
+
+    function syntaxHL(json) {
+      return json.replace(/("[\w_]+"):/g, '<span class="key">$1</span>:')
+        .replace(/: (true|false)/g, ': <span class="vbool">$1</span>')
+        .replace(/: (-?\d+\.?\d*)/g, ': <span class="vnum">$1</span>')
+        .replace(/: "([^"]*)"/g, ': <span class="vstr">"$1"</span>');
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // RAF loop
+    // ════════════════════════════════════════════════════════════════════════════
+    function loop() {
+      drawAllPlots();
+      requestAnimationFrame(loop);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // Init
+    // ════════════════════════════════════════════════════════════════════════════
+    buildPosSliders();
+    rebuildPlots();
+    requestAnimationFrame(loop);
+
+    // Auto-connect on load
+    doConnect();
+  </script>
 </body>
+
 </html>

@@ -39,12 +39,9 @@
 #define BALANCE_KP   0.050f
 #define BALANCE_KI   0.015f
 #define BALANCE_KD   0.005f
-#define STEERING_KP  0.050f
-#define STEERING_KI  0.015f
-#define STEERING_KD  0.005f
-#define DRIVE_KP     0.050f
-#define DRIVE_KI     0.015f
-#define DRIVE_KD     0.005f
+#define STEERING_KP  0.010f
+#define STEERING_KI  0.000f
+#define STEERING_KD  0.002f
 
 #define DRIVE_PHI_DEADZONE 2.0f
 
@@ -250,6 +247,7 @@ typedef struct {
     robot_mode_t mode;
     int trying;
     int armed;          // 0 = disarmed, 1 = armed
+    int estop_latched;  // 1 = RoboClaw estop latched, needs WriteNVM reset
 } robot_state_t;
 
 // ============================================================================
@@ -260,7 +258,6 @@ extern robot_state_t    state;
 extern rc_mpu_data_t    mpu_data;
 extern pid_controller_t balance_pid;
 extern pid_controller_t steering_pid;
-extern pid_controller_t drive_pid;
 extern debug_config_t   g_debug_config;
 extern telemetry_data_t g_telemetry_data;
 extern pos_config_t     g_pos_config;
@@ -323,7 +320,6 @@ void telemetry_print_summary         (void);
 typedef struct {
     float balance_angle;
     struct { float kp, ki, kd; } D1_balance;
-    struct { float kp, ki, kd; } D2_drive;
     struct { float kp, ki, kd; } D3_steering;
 } pid_config_file_t;
 
@@ -434,6 +430,13 @@ typedef struct {
 } imu_transform_t;
 
 extern imu_offsets_t g_imu_offsets;
+
+typedef struct {
+    bool D1_balance;
+    bool D2_drive;
+    bool D3_steering;
+} controller_enables_t;
+extern controller_enables_t g_controllers;
 
 int  imu_offsets_load  (imu_offsets_t *offsets);
 int  imu_offsets_save  (const imu_offsets_t *offsets);
