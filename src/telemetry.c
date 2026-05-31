@@ -208,6 +208,8 @@ static void update_system_telemetry(void)
     g_telemetry_data.system.theta_offset = state.theta_offset;
 
     // Read external battery monitor status (written by batt_monitor service)
+    // Only if use_batt_adc is enabled — hardware may not be connected.
+    if (g_system_config.use_batt_adc)
     {
         FILE *f = fopen("/run/batt_status.json", "r");
         if (f)
@@ -217,10 +219,13 @@ static void update_system_telemetry(void)
             fclose(f);
             float v = 0.0f;
             char status[16] = "unknown";
-            /* parse with strstr — immune to whitespace variations */
             const char *vp = strstr(buf, "\"voltage\":");
             if (vp)
+            {
                 sscanf(vp, "\"voltage\": %f", &v);
+                // Apply trim factor from system_config
+                v *= g_system_config.batt_trim;
+            }
             const char *sp = strstr(buf, "\"status\":");
             if (sp)
                 sscanf(sp, "\"status\": \"%15[^\"]\"", status);

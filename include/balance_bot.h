@@ -183,8 +183,31 @@ typedef struct
 } motor_config_t;
 
 // ============================================================================
-// DATA STRUCTURES
+// SYSTEM CONFIG
 // ============================================================================
+
+/**
+ * @brief System-level hardware configuration.
+ *
+ * use_batt_adc — 1 = read battery voltage from BBB AIN1 via batt_monitor,
+ *                0 = skip ADC read (hardware not connected)
+ * batt_r1      — top resistor of voltage divider (ohms), e.g. 68000
+ * batt_r2      — bottom resistor of voltage divider (ohms), e.g. 10000
+ */
+typedef struct
+{
+    int   use_batt_adc; // 0 = disabled, 1 = enabled
+    float batt_r1;      // top resistor (ohms)
+    float batt_r2;      // bottom resistor (ohms)
+    float batt_trim;    // multiplicative trim factor (1.0 = no correction)
+} system_config_t;
+
+#define SYSTEM_USE_BATT_ADC_DEFAULT 0
+#define SYSTEM_BATT_R1_DEFAULT      68000.0f
+#define SYSTEM_BATT_R2_DEFAULT      10000.0f
+#define SYSTEM_BATT_TRIM_DEFAULT    1.0f
+
+extern system_config_t g_system_config;
 
 /**
  * @brief Generic input packet from an external UART source.
@@ -409,8 +432,12 @@ int motor_config_save(const char *filename, const motor_config_t *cfg);
 int motor_config_load_or_default(const char *filename, motor_config_t *cfg);
 
 // ============================================================================
-// XBOX CONTROLLER (input_xbox.c)
+// SYSTEM CONFIG (pid_config.c)
 // ============================================================================
+
+void system_config_apply(const system_config_t *cfg);
+int  system_config_save(const char *filename, const system_config_t *cfg);
+int  system_config_load_or_default(const char *filename, system_config_t *cfg);
 
 int xbox_init(const char *device);
 int xbox_update(void);

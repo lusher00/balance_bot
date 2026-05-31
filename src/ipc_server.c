@@ -380,6 +380,7 @@ static int parse_json_command(const char *json_cmd)
         motor_config_t mcfg;
         motor_config_get_current(&mcfg);
         motor_config_save(NULL, &mcfg);
+        system_config_save(NULL, &g_system_config);
         LOG_INFO("iPhone: IMU zeroed + encoders reset, saved");
         return 0;
     }
@@ -423,6 +424,7 @@ static int parse_json_command(const char *json_cmd)
         motor_config_t mcfg;
         motor_config_get_current(&mcfg);
         motor_config_save(NULL, &mcfg);
+        system_config_save(NULL, &g_system_config);
         LOG_INFO("iPhone: theta_offset = %.2f deg, saved", val);
         return 0;
     }
@@ -496,7 +498,8 @@ static int parse_json_command(const char *json_cmd)
             motor_config_t mcfg;
             motor_config_get_current(&mcfg);
             motor_config_save(NULL, &mcfg);
-            LOG_INFO("iPhone: PID + pos + motor config saved to pidconfig.txt");
+            system_config_save(NULL, &g_system_config);
+            LOG_INFO("iPhone: PID + pos + motor + system config saved to pidconfig.txt");
         }
         else
         {
@@ -870,27 +873,54 @@ static void build_telemetry_json(char *buffer, size_t size)
  * Call this periodically from the main control loop to send
  * telemetry data to connected iPhone apps.
  */
+// ── Pending telemetry buffer ─────────────────────────────────────────────────
+// The control loop calls ipc_broadcast_telemetry() which copies JSON here and
+// signals the broadcast thread. The broadcast thread does the actual write()
+// calls, keeping all blocking I/O off the 100 Hz control loop thread.
+static char         pending_telem[BUFFER_SIZE];
+static int          pending_telem_ready = 0;
+static pthread_mutex_t pending_telem_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  pending_telem_cond  = PTHREAD_COND_INITIALIZER;
+static pthread_t    broadcast_thread;
+
+static void *broadcast_thread_func(void *arg __attribute__((unused)))
+{
+    char local[BUFFER_SIZE];
+    while (1)
+    {
+        pthread_mutex_lock(&pending_telem_mutex);
+        while (!pending_telem_ready)
+            pthread_cond_wait(&pending_telem_cond, &pending_telem_mutex);
+        memcpy(local, pending_telem, BUFFER_SIZE);
+        pending_telem_ready = 0;
+        pthread_mutex_unlock(&pending_telem_mutex);
+
+        pthread_mutex_lock(&clients_mutex);
+        for (int i = 0; i < MAX_CLIENTS; i++)
+        {
+            if (clients[i].active)
+            {
+                ssize_t written = write(clients[i].socket_fd, local, strlen(local));
+                if (written < 0)
+                    LOG_ERROR("Failed to send telemetry to client %d", i);
+            }
+        }
+        pthread_mutex_unlock(&clients_mutex);
+    }
+    return NULL;
+}
+
 void ipc_broadcast_telemetry(void)
 {
     char buffer[BUFFER_SIZE];
-
-    // Build JSON telemetry
     build_telemetry_json(buffer, sizeof(buffer));
 
-    // Send to all active clients
-    pthread_mutex_lock(&clients_mutex);
-    for (int i = 0; i < MAX_CLIENTS; i++)
-    {
-        if (clients[i].active)
-        {
-            ssize_t written = write(clients[i].socket_fd, buffer, strlen(buffer));
-            if (written < 0)
-            {
-                LOG_ERROR("Failed to send telemetry to client %d", i);
-            }
-        }
-    }
-    pthread_mutex_unlock(&clients_mutex);
+    // Hand off to broadcast thread — never block the control loop
+    pthread_mutex_lock(&pending_telem_mutex);
+    memcpy(pending_telem, buffer, BUFFER_SIZE);
+    pending_telem_ready = 1;
+    pthread_cond_signal(&pending_telem_cond);
+    pthread_mutex_unlock(&pending_telem_mutex);
 }
 
 /**
@@ -948,8 +978,15 @@ int ipc_server_init(void)
         close(server_socket);
         return -1;
     }
-
     pthread_detach(server_thread);
+
+    // Start dedicated broadcast thread — keeps write() off the control loop
+    if (pthread_create(&broadcast_thread, NULL, broadcast_thread_func, NULL) != 0)
+    {
+        LOG_ERROR("Failed to create broadcast thread");
+        return -1;
+    }
+    pthread_detach(broadcast_thread);
 
     LOG_INFO("IPC server started successfully");
     return 0;

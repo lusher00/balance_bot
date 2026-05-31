@@ -302,6 +302,8 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    system_config_load_or_default(pid_config_file, &g_system_config);
+
     motor_config_apply(&motor_config);
     motor_hal_set_claw_pid(motor_config.claw_kp,
                            motor_config.claw_ki,

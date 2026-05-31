@@ -126,7 +126,6 @@ void imu_apply_transform(const rc_mpu_data_t *raw, imu_transform_t *out,
         gb = qw * qw - qx * qx - qy * qy + qz * qz;
         gyro_idx = 0;
     }
-
     float pitch_deg = atan2f(ga, gb) * RAD_TO_DEG;
 
     // pitch_offset is the raw angle at upright. Subtract to get deviation.
