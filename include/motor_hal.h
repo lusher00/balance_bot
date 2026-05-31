@@ -115,4 +115,67 @@ int motor_hal_encoder_reset_all(void);
  */
 int motor_hal_roboclaw_reset(void);
 
+/**
+ * @brief Upload velocity PID gains to the RoboClaw hardware (M1 + M2).
+ *
+ * Only meaningful in velocity modes (mode 1 / 2).  Also updates
+ * g_motor_config.claw_kp/ki/kd so the values survive a save_pid.
+ * The rc_motor backend is a no-op (returns 0).
+ *
+ * @param kp  Proportional gain (float; encoded as kp × 65536 on the wire)
+ * @param ki  Integral gain
+ * @param kd  Derivative gain
+ * @return 0 on success, -1 on error
+ */
+int motor_hal_set_claw_pid(float kp, float ki, float kd);
+
+/**
+ * @brief Read the RoboClaw main battery voltage.
+ *
+ * Queries the RoboClaw via GETMBATT (cmd 24).  The result is in volts
+ * (e.g. 11.8 for a 3S LiPo at nominal charge).
+ *
+ * The rc_motor backend always sets *volts = 0.0f and returns -1.
+ *
+ * @param volts  Out: battery voltage in volts, or 0.0 on error
+ * @return 0 on success, -1 on error
+ */
+int motor_hal_read_voltage(float *volts);
+
+/**
+ * @brief Read encoder speeds directly from RoboClaw hardware (QPPS).
+ *
+ * Uses GETM1SPEED/GETM2SPEED (cmds 18/19).  The RoboClaw measures
+ * inter-pulse timing internally so this returns non-zero even at slow
+ * speeds where tick-delta methods return 0.
+ *
+ * Combined signed QPPS sum (m1 + m2) / 10 approximates ticks/100ms.
+ *
+ * @param m1_qpps  Out: M1 signed speed in pulses/second
+ * @param m2_qpps  Out: M2 signed speed in pulses/second
+ * @return 0 on success, -1 on error
+ */
+int motor_hal_read_encoder_speeds(int32_t *m1_qpps, int32_t *m2_qpps);
+
+/**
+ * @brief Read RoboClaw board temperature.
+ *
+ * @param temp_c  Out: temperature in °C, or 0.0 on error
+ * @return 0 on success, -1 on error
+ */
+int motor_hal_read_temp(float *temp_c);
+
+/**
+ * @brief Change the serial baud rate for the RoboClaw connection on the fly.
+ *
+ * Closes the current serial connection and reopens at the new baud rate.
+ * Also updates g_motor_config.baud so the value persists through save_pid.
+ * Use this when the RoboClaw baud has been changed and the BBB needs to
+ * match.  Blocks briefly while the port is recycled (~50 ms).
+ *
+ * @param baud  New baud rate (e.g. 115200, 460800)
+ * @return 0 on success, -1 on error
+ */
+int motor_hal_set_baud(int baud);
+
 #endif /* MOTOR_HAL_H */

@@ -71,6 +71,7 @@ SERVER_SERVICE = balance_bot_server.service
 # Install to system
 install: $(BINDIR)/$(TARGET)
 	@echo "Stopping $(SERVICE) and $(SERVER_SERVICE)..."
+	sudo systemctl daemon-reload
 	sudo systemctl stop $(SERVICE) || true
 	sudo systemctl stop $(SERVER_SERVICE) || true
 	@echo "Installing $(TARGET) to /usr/local/bin/..."

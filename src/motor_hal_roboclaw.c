@@ -267,3 +267,105 @@ int motor_hal_encoder_reset_all(void)
         LOG_WARN("motor_hal_roboclaw: hardware encoder reset failed (%d)", ret);
     return (ret == ROBOCLAW_OK) ? 0 : -1;
 }
+
+/* ── RoboClaw velocity PID ──────────────────────────────────────── */
+
+int motor_hal_set_claw_pid(float kp, float ki, float kd)
+{
+    if (!g_rc)
+        return -1;
+    roboclaw_vel_pid_t pid = { .kp = kp, .ki = ki, .kd = kd };
+    uint32_t qpps = (uint32_t)g_motor_config.qpps_max;
+    pthread_mutex_lock(&g_rc_mutex);
+    int ret = roboclaw_set_velocity_pid(g_rc, RC_ADDRESS, &pid, qpps);
+    pthread_mutex_unlock(&g_rc_mutex);
+    if (ret != ROBOCLAW_OK)
+    {
+        LOG_WARN("motor_hal_set_claw_pid: failed (%d) kp=%.4f ki=%.4f kd=%.4f", ret, kp, ki, kd);
+        return -1;
+    }
+    /* Keep g_motor_config in sync so save_pid persists the values */
+    g_motor_config.claw_kp = kp;
+    g_motor_config.claw_ki = ki;
+    g_motor_config.claw_kd = kd;
+    LOG_INFO("Claw velocity PID: kp=%.4f ki=%.4f kd=%.4f qpps=%u", kp, ki, kd, qpps);
+    return 0;
+}
+
+/* ── Battery voltage ────────────────────────────────────────────── */
+
+int motor_hal_read_voltage(float *volts)
+{
+    *volts = 0.0f;
+    if (!g_rc)
+        return -1;
+    int16_t raw = 0;
+    pthread_mutex_lock(&g_rc_mutex);
+    int ret = roboclaw_main_battery_voltage(g_rc, RC_ADDRESS, &raw);
+    pthread_mutex_unlock(&g_rc_mutex);
+    if (ret != ROBOCLAW_OK)
+        return -1;
+    /* RoboClaw returns tenths of a volt (e.g. 118 = 11.8 V) */
+    *volts = raw / 10.0f;
+    return 0;
+}
+
+/* ── Encoder speed ──────────────────────────────────────────────── */
+
+int motor_hal_read_encoder_speeds(int32_t *m1_qpps, int32_t *m2_qpps)
+{
+    *m1_qpps = 0;
+    *m2_qpps = 0;
+    if (!g_rc)
+        return -1;
+    int32_t m1 = 0, m2 = 0;
+    pthread_mutex_lock(&g_rc_mutex);
+    int ret = roboclaw_encoder_speeds(g_rc, RC_ADDRESS, &m1, &m2);
+    pthread_mutex_unlock(&g_rc_mutex);
+    if (ret != ROBOCLAW_OK)
+        return -1;
+    /* Apply encoder polarity to match position encoder convention */
+    *m1_qpps = (int32_t)(g_motor_config.enc_pol_r * (float)m1);
+    *m2_qpps = (int32_t)(g_motor_config.enc_pol_l * (float)m2);
+    return 0;
+}
+
+/* ── Temperature ────────────────────────────────────────────────── */
+
+int motor_hal_read_temp(float *temp_c)
+{
+    *temp_c = 0.0f;
+    if (!g_rc)
+        return -1;
+    pthread_mutex_lock(&g_rc_mutex);
+    int ret = roboclaw_temperature(g_rc, RC_ADDRESS, temp_c);
+    pthread_mutex_unlock(&g_rc_mutex);
+    return (ret == ROBOCLAW_OK) ? 0 : -1;
+}
+
+/* ── Baud rate change ───────────────────────────────────────────── */
+
+int motor_hal_set_baud(int baud)
+{
+    if (baud <= 0)
+        return -1;
+    pthread_mutex_lock(&g_rc_mutex);
+    /* Stop motors before disconnecting */
+    if (g_rc)
+    {
+        roboclaw_duty_m1m2(g_rc, RC_ADDRESS, 0, 0);
+        roboclaw_close(g_rc);
+        g_rc = NULL;
+    }
+    g_baud = baud;
+    g_motor_config.baud = baud;
+    g_rc = roboclaw_init(g_device, g_baud);
+    pthread_mutex_unlock(&g_rc_mutex);
+    if (!g_rc)
+    {
+        LOG_ERROR("motor_hal_set_baud: reconnect at %d baud failed", baud);
+        return -1;
+    }
+    LOG_INFO("motor_hal_set_baud: reconnected at %d baud", baud);
+    return 0;
+}

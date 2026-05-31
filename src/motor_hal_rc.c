@@ -18,9 +18,9 @@
 /* ── wiring — edit to match your cape ──────────────────────────── */
 #define CH_L        3           /* rc_motor / rc_encoder_eqep channel for left  */
 #define CH_R        2           /* rc_motor / rc_encoder_eqep channel for right */
-#define POL_L      (-1.0f)      /* flip if left  motor runs backwards            */
+#define POL_L      ( 1.0f)      /* flip if left  motor runs backwards            */
 #define POL_R      ( 1.0f)      /* flip if right motor runs backwards            */
-#define ENC_POL_L  (-1)         /* flip if left  encoder counts backwards        */
+#define ENC_POL_L  ( 1)         /* flip if left  encoder counts backwards        */
 #define ENC_POL_R  ( 1)         /* flip if right encoder counts backwards        */
 
 /* ── channel lookup ─────────────────────────────────────────────── */
@@ -101,4 +101,37 @@ int motor_hal_encoder_reset_all(void)
     int r  = rc_encoder_eqep_write(CH_L, 0);
     r     |= rc_encoder_eqep_write(CH_R, 0);
     return r ? -1 : 0;
+}
+
+/* ── RoboClaw velocity PID (stub — rc_motor backend has no velocity PID) ── */
+
+int motor_hal_set_claw_pid(float kp, float ki, float kd)
+{
+    (void)kp; (void)ki; (void)kd;
+    return 0;
+}
+
+int motor_hal_read_voltage(float *volts)
+{
+    *volts = 0.0f;
+    return -1;
+}
+
+int motor_hal_read_encoder_speeds(int32_t *m1_qpps, int32_t *m2_qpps)
+{
+    *m1_qpps = 0;
+    *m2_qpps = 0;
+    return -1;
+}
+
+int motor_hal_read_temp(float *temp_c)
+{
+    *temp_c = 0.0f;
+    return -1;
+}
+
+int motor_hal_set_baud(int baud)
+{
+    (void)baud;
+    return 0;
 }

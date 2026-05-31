@@ -590,6 +590,21 @@ static int parse_json_command(const char *json_cmd)
         MCFG_FLOAT("enc_pol_l", enc_pol_l);
         MCFG_FLOAT("enc_pol_r", enc_pol_r);
 
+        /* Baud rate change: close and reopen serial at new rate */
+        {
+            int old_baud = cfg.baud;
+            MCFG_INT("baud", baud);
+            if (cfg.baud != old_baud && cfg.baud > 0)
+            {
+                LOG_INFO("set_motor_config: baud change %d → %d", old_baud, cfg.baud);
+                if (motor_hal_set_baud(cfg.baud) != 0)
+                {
+                    LOG_WARN("set_motor_config: baud change failed, reverting");
+                    cfg.baud = old_baud;
+                }
+            }
+        }
+
 #undef MCFG_INT
 #undef MCFG_FLOAT
 
@@ -604,8 +619,54 @@ static int parse_json_command(const char *json_cmd)
             cfg.accel_qpps = 1;
 
         motor_config_apply(&cfg);
-        LOG_INFO("iPhone: motor_config updated — mode=%d qpps_max=%d accel=%d pol=%.1f/%.1f",
-                 cfg.mode, cfg.qpps_max, cfg.accel_qpps, cfg.pol_l, cfg.pol_r);
+        LOG_INFO("iPhone: motor_config updated — mode=%d qpps_max=%d accel=%d baud=%d pol=%.1f/%.1f",
+                 cfg.mode, cfg.qpps_max, cfg.accel_qpps, cfg.baud, cfg.pol_l, cfg.pol_r);
+        return 0;
+    }
+
+    // {"type":"reboot_app"}
+    // Schedules a systemd service restart 1 second from now.
+    // The IPC reply is sent before the process dies.
+    if (strstr(json_cmd, "\"type\":\"reboot_app\""))
+    {
+        LOG_INFO("reboot_app: scheduling service restart in 1 s");
+        system("(sleep 1 && systemctl restart balance_bot) &");
+        return 0;
+    }
+
+    // {"type":"set_claw_pid","kp":1.0,"ki":0.5,"kd":0.25}
+    // Push velocity PID gains to the RoboClaw (M1 + M2).
+    // Only has effect in velocity modes (mode 1 or 2).
+    // Values are NOT written to NVM automatically — use save_pid to persist.
+    if (strstr(json_cmd, "\"type\":\"set_claw_pid\""))
+    {
+        float kp = g_motor_config.claw_kp;
+        float ki = g_motor_config.claw_ki;
+        float kd = g_motor_config.claw_kd;
+
+#define CPID_FLOAT(key, var)                                           \
+    do {                                                               \
+        const char *_p = strstr(json_cmd, "\"" key "\":");             \
+        if (_p) sscanf(_p + strlen("\"" key "\":"), "%f", &(var));     \
+    } while (0)
+
+        CPID_FLOAT("kp", kp);
+        CPID_FLOAT("ki", ki);
+        CPID_FLOAT("kd", kd);
+
+#undef CPID_FLOAT
+
+        if (kp < 0.0f || ki < 0.0f || kd < 0.0f)
+        {
+            LOG_WARN("set_claw_pid: gains must be >= 0");
+            return -1;
+        }
+        if (motor_hal_set_claw_pid(kp, ki, kd) != 0)
+        {
+            LOG_WARN("set_claw_pid: hardware write failed");
+            return -1;
+        }
+        LOG_INFO("iPhone: claw PID set — kp=%.4f ki=%.4f kd=%.4f", kp, ki, kd);
         return 0;
     }
 
@@ -636,27 +697,34 @@ static void build_telemetry_json(char *buffer, size_t size)
     {
         pos += snprintf(buffer + pos, size - pos,
                         "\"system\":{\"battery\":%.2f,\"armed\":%s,\"mode\":%d,\"loop_hz\":%.1f,\"theta_offset\":%.4f,"
-                        "\"batt_voltage\":%.3f,\"batt_status\":%d},",
+                        "\"batt_voltage\":%.3f,\"batt_status\":%d,\"claw_voltage\":%.2f,\"claw_temp\":%.1f},",
                         g_telemetry_data.system.battery_voltage,
                         g_telemetry_data.system.armed ? "true" : "false",
                         g_telemetry_data.system.mode,
                         g_telemetry_data.system.loop_hz,
                         state.theta_offset,
                         g_telemetry_data.system.batt_voltage,
-                        (int)g_telemetry_data.system.batt_status);
+                        (int)g_telemetry_data.system.batt_status,
+                        g_telemetry_data.system.claw_voltage,
+                        g_telemetry_data.system.claw_temp);
     }
 
     // Motor config (always included — small, static, useful for app to confirm active mode)
     pos += snprintf(buffer + pos, size - pos,
                     "\"motor_config\":{\"mode\":%d,\"qpps_max\":%d,\"accel_qpps\":%d,"
-                    "\"pol_l\":%.1f,\"pol_r\":%.1f,\"enc_pol_l\":%.1f,\"enc_pol_r\":%.1f},",
+                    "\"pol_l\":%.1f,\"pol_r\":%.1f,\"enc_pol_l\":%.1f,\"enc_pol_r\":%.1f,"
+                    "\"claw_kp\":%.6f,\"claw_ki\":%.6f,\"claw_kd\":%.6f,\"baud\":%d},",
                     g_motor_config.mode,
                     g_motor_config.qpps_max,
                     g_motor_config.accel_qpps,
                     g_motor_config.pol_l,
                     g_motor_config.pol_r,
                     g_motor_config.enc_pol_l,
-                    g_motor_config.enc_pol_r);
+                    g_motor_config.enc_pol_r,
+                    g_motor_config.claw_kp,
+                    g_motor_config.claw_ki,
+                    g_motor_config.claw_kd,
+                    g_motor_config.baud);
 
     // Encoders
     if (g_debug_config.telemetry.encoders)

@@ -428,8 +428,10 @@ int pos_config_load_or_default(const char *filename, pos_config_t *cfg)
 void motor_config_apply(const motor_config_t *cfg)
 {
     g_motor_config = *cfg;
-    LOG_INFO("motor_config applied: mode=%d qpps_max=%d accel_qpps=%d pol_l=%.1f pol_r=%.1f enc_pol_l=%.1f enc_pol_r=%.1f",
-             cfg->mode, cfg->qpps_max, cfg->accel_qpps, cfg->pol_l, cfg->pol_r, cfg->enc_pol_l, cfg->enc_pol_r);
+    LOG_INFO("motor_config applied: mode=%d qpps_max=%d accel_qpps=%d pol_l=%.1f pol_r=%.1f "
+             "enc_pol_l=%.1f enc_pol_r=%.1f claw_kp=%.4f claw_ki=%.4f claw_kd=%.4f",
+             cfg->mode, cfg->qpps_max, cfg->accel_qpps, cfg->pol_l, cfg->pol_r,
+             cfg->enc_pol_l, cfg->enc_pol_r, cfg->claw_kp, cfg->claw_ki, cfg->claw_kd);
 }
 
 void motor_config_get_current(motor_config_t *cfg)
@@ -456,6 +458,10 @@ int motor_config_save(const char *filename, const motor_config_t *cfg)
     fprintf(f, "pol_r=%.1f\n", cfg->pol_r);
     fprintf(f, "enc_pol_l=%.1f\n", cfg->enc_pol_l);
     fprintf(f, "enc_pol_r=%.1f\n", cfg->enc_pol_r);
+    fprintf(f, "claw_kp=%.6f\n", cfg->claw_kp);
+    fprintf(f, "claw_ki=%.6f\n", cfg->claw_ki);
+    fprintf(f, "claw_kd=%.6f\n", cfg->claw_kd);
+    fprintf(f, "baud=%d\n",      cfg->baud);
     fclose(f);
     LOG_INFO("motor_config saved to %s", filename);
     return 0;
@@ -467,10 +473,14 @@ int motor_config_load_or_default(const char *filename, motor_config_t *cfg)
     cfg->mode = MOTOR_HAL_MODE_DEFAULT;
     cfg->qpps_max = MOTOR_QPPS_MAX_DEFAULT;
     cfg->accel_qpps = MOTOR_ACCEL_QPPS_DEFAULT;
-    cfg->pol_l = 1.0f;
-    cfg->pol_r = 1.0f;
-    cfg->enc_pol_l = 1.0f;
-    cfg->enc_pol_r = 1.0f;
+    cfg->pol_l = MOTOR_ENC_POL_L;
+    cfg->pol_r = MOTOR_ENC_POL_R;
+    cfg->enc_pol_l = MOTOR_MOT_POL_L;
+    cfg->enc_pol_r = MOTOR_MOT_POL_R;
+    cfg->claw_kp = MOTOR_CLAW_KP_DEFAULT;
+    cfg->claw_ki = MOTOR_CLAW_KI_DEFAULT;
+    cfg->claw_kd = MOTOR_CLAW_KD_DEFAULT;
+    cfg->baud    = MOTOR_BAUD_DEFAULT;
 
     if (!filename)
         filename = DEFAULT_CONFIG_FILE;
@@ -513,6 +523,14 @@ int motor_config_load_or_default(const char *filename, motor_config_t *cfg)
                 cfg->enc_pol_l = fval;
             else if (!strcmp(key, "enc_pol_r"))
                 cfg->enc_pol_r = fval;
+            else if (!strcmp(key, "claw_kp"))
+                cfg->claw_kp = fval;
+            else if (!strcmp(key, "claw_ki"))
+                cfg->claw_ki = fval;
+            else if (!strcmp(key, "claw_kd"))
+                cfg->claw_kd = fval;
+            else if (!strcmp(key, "baud"))
+                cfg->baud = (int)fval;
         }
     }
     fclose(f);

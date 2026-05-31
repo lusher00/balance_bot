@@ -948,7 +948,7 @@ int _mpu_dmp_open(int i2c_bus, int i2c_addr, int sample_rate_hz)
     fprintf(stderr, "mpu_dmp: firmware loaded OK\n");
 
     /* Set orientation — X_DOWN for BBB Blue mounted with +X down, +Z forward */
-    if (dmp_set_orientation(266) < 0)
+    if (dmp_set_orientation(136) < 0)  /* 136 = Y_UP: +Y up, -Z forward */
     {
         fprintf(stderr, "mpu_dmp: set_orientation failed\n");
         return -1;

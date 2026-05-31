@@ -28,41 +28,41 @@
 // CONFIGURATION
 // ============================================================================
 
-#define SAMPLE_RATE_HZ      100
-#define DT                  0.01f
+#define SAMPLE_RATE_HZ 100
+#define DT 0.01f
 
 // Control limits
-#define MAX_THETA_REF       17.0f   // Max lean angle command (deg)
-#define MAX_STEERING        1.0f    // Max steering command (normalized)
+#define MAX_THETA_REF 17.0f // Max lean angle command (deg)
+#define MAX_STEERING 1.0f   // Max steering command (normalized)
 
 // PID default gains (tunable via iPhone app)
-#define BALANCE_KP   0.050f
-#define BALANCE_KI   0.015f
-#define BALANCE_KD   0.005f
-#define STEERING_KP  0.010f
-#define STEERING_KI  0.000f
-#define STEERING_KD  0.002f
+#define BALANCE_KP 0.050f
+#define BALANCE_KI 0.015f
+#define BALANCE_KD 0.005f
+#define STEERING_KP 0.010f
+#define STEERING_KI 0.000f
+#define STEERING_KD 0.002f
 
 #define DRIVE_PHI_DEADZONE 2.0f
 
 // D2 position controller — encoder-tick-based hold/drive
 // These defaults initialise g_pos_config in robot.c.
 // Use set_pos_config IPC command or the iPhone app to tune at runtime.
-#define POS_ZONE_A_DEFAULT          8000
-#define POS_ZONE_B_DEFAULT          4000
-#define POS_ZONE_C_DEFAULT          1000
-#define POS_SCALE_A_DEFAULT         600.0f
-#define POS_SCALE_B_DEFAULT         800.0f
-#define POS_SCALE_C_DEFAULT         1000.0f
-#define POS_SCALE_D_DEFAULT         500.0f
-#define POS_VEL_SCALE_STOP_DEFAULT  60.0f
-#define POS_VEL_SCALE_MOVE_DEFAULT  70.0f
-#define POS_VEL_SCALE_TURNING_DEFAULT 70.0f  // Turning authority reduction at speed
-#define POS_STOPPED_VEL_DEFAULT     40
-#define POS_MAX_CORRECTION_DEFAULT  10.0f
-#define POS_MAX_ANGLE_RATE_DEFAULT  5.0f     // deg/tick — reference implementation 1°@500Hz ≈ 5°@100Hz
-#define POS_BACK_TO_SPOT_DEFAULT    1        // Full zone hold by default
-#define POS_VEL_PERIOD_MS           100
+#define POS_ZONE_A_DEFAULT 8000
+#define POS_ZONE_B_DEFAULT 4000
+#define POS_ZONE_C_DEFAULT 1000
+#define POS_SCALE_A_DEFAULT 600.0f
+#define POS_SCALE_B_DEFAULT 800.0f
+#define POS_SCALE_C_DEFAULT 1000.0f
+#define POS_SCALE_D_DEFAULT 500.0f
+#define POS_VEL_SCALE_STOP_DEFAULT 60.0f
+#define POS_VEL_SCALE_MOVE_DEFAULT 70.0f
+#define POS_VEL_SCALE_TURNING_DEFAULT 70.0f // Turning authority reduction at speed
+#define POS_STOPPED_VEL_DEFAULT 40
+#define POS_MAX_CORRECTION_DEFAULT 10.0f
+#define POS_MAX_ANGLE_RATE_DEFAULT 0.05f // deg/tick — ramps 0.5°/s at 10 Hz vel window
+#define POS_BACK_TO_SPOT_DEFAULT 1       // Full zone hold by default
+#define POS_VEL_PERIOD_MS 100
 
 /**
  * @brief Runtime-tunable parameters for the D2 position (hold/drive) controller.
@@ -75,24 +75,25 @@
  * lean-angle bias in degrees.  vel_scale_* divides the 100 ms tick velocity
  * for damping / back-EMF compensation.
  */
-typedef struct {
-    int32_t zone_a;         // Outer zone threshold (ticks)
+typedef struct
+{
+    int32_t zone_a; // Outer zone threshold (ticks)
     int32_t zone_b;
     int32_t zone_c;
-    float   scale_a;        // Tick-error → lean-angle divisor, zone A
-    float   scale_b;
-    float   scale_c;
-    float   scale_d;        // Inside zone C (tightest hold)
-    float   vel_scale_stop; // Velocity damp divisor when holding
-    float   vel_scale_move; // Back-EMF comp divisor when driving
-    float   vel_scale_turning; // Reduces turning authority at speed (position-hold-style)
-    int32_t stopped_vel;    // Ticks/100ms threshold for "stopped" detection
-    float   max_correction; // Maximum lean-angle correction D2 may inject (deg)
-    float   max_angle_rate; // Max correction change per main loop tick (deg/tick)
-                            // Rate-limits D2 output to prevent slamming theta_ref.
-                            // reference implementation uses 1°/loop at 500Hz ≈ 5°/loop at 100Hz.
-    int     back_to_spot;   // 1 = full zone-based hold (A/B/C/D);
-                            // 0 = only correct inside zone_c (loose hold, position hold mode)
+    float scale_a; // Tick-error → lean-angle divisor, zone A
+    float scale_b;
+    float scale_c;
+    float scale_d;           // Inside zone C (tightest hold)
+    float vel_scale_stop;    // Velocity damp divisor when holding
+    float vel_scale_move;    // Back-EMF comp divisor when driving
+    float vel_scale_turning; // Reduces turning authority at speed (position-hold-style)
+    int32_t stopped_vel;     // Ticks/100ms threshold for "stopped" detection
+    float max_correction;    // Maximum lean-angle correction D2 may inject (deg)
+    float max_angle_rate;    // Max correction change per main loop tick (deg/tick)
+                             // Rate-limits D2 output to prevent slamming theta_ref.
+                             // reference implementation uses 1°/loop at 500Hz ≈ 5°/loop at 100Hz.
+    int back_to_spot;        // 1 = full zone-based hold (A/B/C/D);
+                             // 0 = only correct inside zone_c (loose hold, position hold mode)
 } pos_config_t;
 
 // ============================================================================
@@ -104,28 +105,42 @@ typedef struct {
 //
 // Change WHEEL_DIAMETER_MM if you swap wheels — everything else recalculates.
 // ============================================================================
-#define MOTOR_NO_LOAD_RPM       1150.0f          // RPM @ 12V no load
-#define GEAR_RATIO              5.2f             // (1 + 46/11)
-#define ENCODER_PPR_MOTOR       28.0f            // pulses/rev at motor shaft
-#define ENCODER_TICKS_PER_REV   145.1f           // PPR at output shaft (GEAR_RATIO * 28)
-#define WHEEL_DIAMETER_MM       155.0f           // ← change here if you swap wheels
-#define WHEEL_CIRCUMFERENCE_MM  (WHEEL_DIAMETER_MM * 3.14159265f)  // ~487mm
-#define MM_PER_TICK             (WHEEL_CIRCUMFERENCE_MM / ENCODER_TICKS_PER_REV) // ~3.36 mm
+#define MOTOR_NO_LOAD_RPM 1150.0f                                    // RPM @ 12V no load
+#define GEAR_RATIO 5.2f                                              // (1 + 46/11)
+#define ENCODER_PPR_MOTOR 28.0f                                      // pulses/rev at motor shaft
+#define ENCODER_TICKS_PER_REV 145.1f                                 // PPR at output shaft (GEAR_RATIO * 28)
+#define WHEEL_DIAMETER_MM 155.0f                                     // ← change here if you swap wheels
+#define WHEEL_CIRCUMFERENCE_MM (WHEEL_DIAMETER_MM * 3.14159265f)     // ~487mm
+#define MM_PER_TICK (WHEEL_CIRCUMFERENCE_MM / ENCODER_TICKS_PER_REV) // ~3.36 mm
 
 // Derived QPPS ceiling — theoretical max encoder speed at no-load full throttle
 // 1150 RPM / 60 * 145.1 PPR = ~2781 QPPS.  Use ~90% for headroom.
-#define QPPS_NO_LOAD            ((MOTOR_NO_LOAD_RPM / 60.0f) * ENCODER_TICKS_PER_REV) // ~2781
-#define QPPS_RATED              2500             // Conservative working value (~90% of no-load)
+#define QPPS_NO_LOAD ((MOTOR_NO_LOAD_RPM / 60.0f) * ENCODER_TICKS_PER_REV) // ~2781
+#define QPPS_RATED 2500                                                    // Conservative working value (~90% of no-load)
 
 // Motor HAL drive modes (mirror of motor_hal_roboclaw.c defines)
-#define MOTOR_HAL_MODE_DUTY           0  // Raw PWM duty — no encoder feedback required
-#define MOTOR_HAL_MODE_VELOCITY       1  // Closed-loop speed  (MIXEDSPEED,      cmd 37)
-#define MOTOR_HAL_MODE_VELOCITY_ACCEL 2  // Closed-loop speed + accel ramp (cmd 40)
+#define MOTOR_HAL_MODE_DUTY 0           // Raw PWM duty — no encoder feedback required
+#define MOTOR_HAL_MODE_VELOCITY 1       // Closed-loop speed  (MIXEDSPEED,      cmd 37)
+#define MOTOR_HAL_MODE_VELOCITY_ACCEL 2 // Closed-loop speed + accel ramp (cmd 40)
 
 // motor_config defaults — override at runtime via set_motor_config IPC
-#define MOTOR_HAL_MODE_DEFAULT   MOTOR_HAL_MODE_DUTY
-#define MOTOR_QPPS_MAX_DEFAULT   QPPS_RATED       // 2500 QPPS
+#define MOTOR_HAL_MODE_DEFAULT MOTOR_HAL_MODE_DUTY
+#define MOTOR_QPPS_MAX_DEFAULT QPPS_RATED         // 2500 QPPS
 #define MOTOR_ACCEL_QPPS_DEFAULT (QPPS_RATED * 2) // 5000 QPPS/s ≈ 0.5 s ramp
+#define MOTOR_BAUD_DEFAULT 460800
+
+// RoboClaw internal velocity-PID defaults (fixed-point × 65536 on the wire)
+// Factory defaults per BasicMicro: Kp=1.0  Ki=0.5  Kd=0.25
+// Only active in modes 1 (velocity) and 2 (velocity+accel).
+#define MOTOR_CLAW_KP_DEFAULT 1.0f
+#define MOTOR_CLAW_KI_DEFAULT 0.5f
+#define MOTOR_CLAW_KD_DEFAULT 0.25f
+
+// TODO: these shouldn't be floats
+#define MOTOR_ENC_POL_L -1.0f
+#define MOTOR_ENC_POL_R -1.0f
+#define MOTOR_MOT_POL_L 1.0f
+#define MOTOR_MOT_POL_R 1.0f
 
 /**
  * @brief Runtime-tunable RoboClaw drive mode and velocity parameters.
@@ -147,14 +162,24 @@ typedef struct {
  * All fields are readable/writable at runtime via the IPC set_motor_config
  * command and persisted by save_pid.
  */
-typedef struct {
-    int   mode;         // MOTOR_HAL_MODE_DUTY / _VELOCITY / _VELOCITY_ACCEL
-    int   qpps_max;     // Max encoder speed (pulses/s) at full throttle
-    int   accel_qpps;   // Acceleration ramp rate (pulses/s²), mode 2 only
-    float pol_l;        // Left  motor polarity: +1.0 or -1.0
-    float pol_r;        // Right motor polarity: +1.0 or -1.0
-    float enc_pol_l;    // Left  encoder polarity: +1.0 or -1.0
-    float enc_pol_r;    // Right encoder polarity: +1.0 or -1.0
+typedef struct
+{
+    int mode;        // MOTOR_HAL_MODE_DUTY / _VELOCITY / _VELOCITY_ACCEL
+    int qpps_max;    // Max encoder speed (pulses/s) at full throttle
+    int accel_qpps;  // Acceleration ramp rate (pulses/s²), mode 2 only
+    float pol_l;     // Left  motor polarity: +1.0 or -1.0
+    float pol_r;     // Right motor polarity: +1.0 or -1.0
+    float enc_pol_l; // Left  encoder polarity: +1.0 or -1.0
+    float enc_pol_r; // Right encoder polarity: +1.0 or -1.0
+
+    // RoboClaw internal velocity PID — only active in modes 1 and 2.
+    float claw_kp;
+    float claw_ki;
+    float claw_kd;
+
+    // Serial baud rate for the RoboClaw connection on the BBB.
+    // Changing this via set_motor_config causes live reconnection.
+    int baud;
 } motor_config_t;
 
 // ============================================================================
@@ -170,18 +195,20 @@ typedef struct {
  *
  * uart_input_get() fills this and returns 1 when fresh data is available.
  */
-typedef struct {
-    float    x;             // Lateral / steering command  (-1 to +1)
-    float    y;             // Forward / drive command     (-1 to +1)
-    float    confidence;    // Source confidence           ( 0 to  1)
-    uint64_t timestamp_ns;  // rc_nanos_since_boot() at receipt
-    int      valid;         // 1 = fresh, 0 = stale / no signal
+typedef struct
+{
+    float x;               // Lateral / steering command  (-1 to +1)
+    float y;               // Forward / drive command     (-1 to +1)
+    float confidence;      // Source confidence           ( 0 to  1)
+    uint64_t timestamp_ns; // rc_nanos_since_boot() at receipt
+    int valid;             // 1 = fresh, 0 = stale / no signal
 } input_packet_t;
 
 /**
  * @brief PID controller state
  */
-typedef struct {
+typedef struct
+{
     float kp, ki, kd;
     float integrator;
     float prev_error;
@@ -192,39 +219,41 @@ typedef struct {
 /**
  * @brief Robot operating mode
  */
-typedef enum {
-    MODE_IDLE,          // Motors off
-    MODE_BALANCE,       // Balance only, no movement
-    MODE_EXT_INPUT,     // External UART packet drives the bot
-    MODE_MANUAL         // Xbox / SBUS controller
+typedef enum
+{
+    MODE_IDLE,      // Motors off
+    MODE_BALANCE,   // Balance only, no movement
+    MODE_EXT_INPUT, // External UART packet drives the bot
+    MODE_MANUAL     // Xbox / SBUS controller
 } robot_mode_t;
 
 /**
  * @brief Complete robot state
  */
-typedef struct {
+typedef struct
+{
     // IMU
-    float theta;        // Body pitch angle  (deg)
-    float theta_dot;    // Body pitch rate   (deg/s)
-    float phi;          // Body roll angle   (deg)
-    float psi;          // Body yaw angle    (deg)
+    float theta;     // Body pitch angle  (deg)
+    float theta_dot; // Body pitch rate   (deg/s)
+    float phi;       // Body roll angle   (deg)
+    float psi;       // Body yaw angle    (deg)
 
     // Encoders
-    int32_t enc_left;       // Raw encoder ticks (always updated)
+    int32_t enc_left; // Raw encoder ticks (always updated)
     int32_t enc_right;
-    float phi_left;         // Left wheel angle  (deg)
-    float phi_right;        // Right wheel angle (deg)
+    float phi_left;  // Left wheel angle  (deg)
+    float phi_right; // Right wheel angle (deg)
 
     // D2 position controller (encoder-tick based)
-    int32_t enc_pos;            // Sum of left+right encoder ticks (position)
-    int32_t enc_pos_target;     // Target tick position (held when stick is centered)
-    int32_t enc_velocity;       // Tick velocity (ticks per 100 ms window)
-    int32_t enc_velocity_raw;   // Raw delta before the stopped-check
-    int     enc_vel_reset;      // Set to 1 by ipc_server after zero_encoders; cleared by robot.c
+    int32_t enc_pos;          // Sum of left+right encoder ticks (position)
+    int32_t enc_pos_target;   // Target tick position (held when stick is centered)
+    int32_t enc_velocity;     // Tick velocity (ticks per 100 ms window)
+    int32_t enc_velocity_raw; // Raw delta before the stopped-check
+    int enc_vel_reset;        // Set to 1 by ipc_server after zero_encoders; cleared by robot.c
 
     // Legacy degree-based position (kept for telemetry)
-    float pos;              // avg wheel angle (deg)
-    float pos_setpoint;     // D2 setpoint (deg) — unused when D2_drive enabled
+    float pos;          // avg wheel angle (deg)
+    float pos_setpoint; // D2 setpoint (deg) — unused when D2_drive enabled
 
     // Control references
     float theta_ref;    // Desired body angle  (deg)
@@ -233,44 +262,44 @@ typedef struct {
 
     // D3 steering latch — when the drive stick returns to centre, D3 holds
     // the phi_diff at that moment rather than fighting back to zero.
-    float steering_latch;   // phi_diff value latched at stick-centre transition
-    int   steering_latched; // 1 = latch is active (stick centred), 0 = driving
+    float steering_latch; // phi_diff value latched at stick-centre transition
+    int steering_latched; // 1 = latch is active (stick centred), 0 = driving
 
     // External UART input (used only in MODE_EXT_INPUT)
     input_packet_t ext_input;
 
     // D2 position controller internal signals (for telemetry)
-    float d2_pos_correction;   // lean angle from position error (deg)
-    float d2_vel_damp;         // lean angle from velocity damping (deg)
-    float d2_correction_out;   // final rate-limited, clamped correction injected (deg)
+    float d2_pos_correction; // lean angle from position error (deg)
+    float d2_vel_damp;       // lean angle from velocity damping (deg)
+    float d2_correction_out; // final rate-limited, clamped correction injected (deg)
 
     robot_mode_t mode;
     int trying;
-    int armed;          // 0 = disarmed, 1 = armed
-    int estop_latched;  // 1 = RoboClaw estop latched, needs WriteNVM reset
+    int armed;         // 0 = disarmed, 1 = armed
+    int estop_latched; // 1 = RoboClaw estop latched, needs WriteNVM reset
 } robot_state_t;
 
 // ============================================================================
 // GLOBAL STATE (defined in robot.c)
 // ============================================================================
 
-extern robot_state_t    state;
-extern rc_mpu_data_t    mpu_data;
+extern robot_state_t state;
+extern rc_mpu_data_t mpu_data;
 extern pid_controller_t balance_pid;
 extern pid_controller_t steering_pid;
-extern debug_config_t   g_debug_config;
+extern debug_config_t g_debug_config;
 extern telemetry_data_t g_telemetry_data;
-extern pos_config_t     g_pos_config;
-extern motor_config_t   g_motor_config;
+extern pos_config_t g_pos_config;
+extern motor_config_t g_motor_config;
 
 // ============================================================================
 // PID (pid.c)
 // ============================================================================
 
-void  pid_init    (pid_controller_t *pid, float kp, float ki, float kd, float dt);
-float pid_update  (pid_controller_t *pid, float setpoint, float measurement);
-void  pid_reset   (pid_controller_t *pid);
-void  pid_set_gains(pid_controller_t *pid, float kp, float ki, float kd);
+void pid_init(pid_controller_t *pid, float kp, float ki, float kd, float dt);
+float pid_update(pid_controller_t *pid, float setpoint, float measurement);
+void pid_reset(pid_controller_t *pid);
+void pid_set_gains(pid_controller_t *pid, float kp, float ki, float kd);
 
 // ============================================================================
 // GENERIC UART INPUT (uart_input.c)
@@ -284,51 +313,58 @@ void  pid_set_gains(pid_controller_t *pid, float kp, float ki, float kd);
  * @param timeout_ms  Age after which a packet is marked stale
  * @return 0 on success, -1 on error
  */
-int uart_input_init   (const char *device, int baud, int timeout_ms);
-int uart_input_get    (input_packet_t *pkt);   // 1=valid, 0=stale
+int uart_input_init(const char *device, int baud, int timeout_ms);
+int uart_input_get(input_packet_t *pkt); // 1=valid, 0=stale
 void uart_input_cleanup(void);
 
 // ============================================================================
 // ROBOT CONTROL (robot.c)
 // ============================================================================
 
-int  robot_init   (void);
-void robot_run    (void);
+int robot_init(void);
+void robot_run(void);
 void robot_cleanup(void);
 
 // ============================================================================
 // IPC SERVER (ipc_server.c)
 // ============================================================================
 
-int  ipc_server_init       (void);
+int ipc_server_init(void);
 void ipc_broadcast_telemetry(void);
-void ipc_server_cleanup    (void);
+void ipc_server_cleanup(void);
 
 // ============================================================================
 // TELEMETRY (telemetry.c)
 // ============================================================================
 
-int  telemetry_init                  (void);
-void telemetry_update                (void);
+int telemetry_init(void);
+void telemetry_update(void);
 void telemetry_get_config_description(char *buf, size_t size);
-void telemetry_print_summary         (void);
+void telemetry_print_summary(void);
 
 // ============================================================================
 // PID CONFIG FILE (pid_config.c)
 // ============================================================================
 
-typedef struct {
+typedef struct
+{
     float balance_angle;
-    struct { float kp, ki, kd; } D1_balance;
-    struct { float kp, ki, kd; } D3_steering;
+    struct
+    {
+        float kp, ki, kd;
+    } D1_balance;
+    struct
+    {
+        float kp, ki, kd;
+    } D3_steering;
 } pid_config_file_t;
 
-int  pid_config_load          (const char *filename, pid_config_file_t *config);
-int  pid_config_load_or_default(const char *filename, pid_config_file_t *config);
-void pid_config_print         (const pid_config_file_t *config);
-int  pid_config_save          (const char *filename, const pid_config_file_t *config);
-void pid_config_apply         (const pid_config_file_t *config);
-void pid_config_get_current   (pid_config_file_t *config);
+int pid_config_load(const char *filename, pid_config_file_t *config);
+int pid_config_load_or_default(const char *filename, pid_config_file_t *config);
+void pid_config_print(const pid_config_file_t *config);
+int pid_config_save(const char *filename, const pid_config_file_t *config);
+void pid_config_apply(const pid_config_file_t *config);
+void pid_config_get_current(pid_config_file_t *config);
 
 // ============================================================================
 // POSITION CONTROLLER CONFIG (pid_config.c)
@@ -338,7 +374,7 @@ void pid_config_get_current   (pid_config_file_t *config);
  * @brief Apply a pos_config_t to the global g_pos_config.
  * Called from IPC set_pos_config handler and on startup.
  */
-void pos_config_apply  (const pos_config_t *cfg);
+void pos_config_apply(const pos_config_t *cfg);
 
 /**
  * @brief Populate *cfg from the current g_pos_config values.
@@ -349,61 +385,61 @@ void pos_config_get_current(pos_config_t *cfg);
 /**
  * @brief Save pos_config to file (appended section in pidconfig.txt).
  */
-int  pos_config_save   (const char *filename, const pos_config_t *cfg);
+int pos_config_save(const char *filename, const pos_config_t *cfg);
 
 /**
  * @brief Load pos_config from file, or fill defaults if section absent.
  */
-int  pos_config_load_or_default(const char *filename, pos_config_t *cfg);
+int pos_config_load_or_default(const char *filename, pos_config_t *cfg);
 
 // ============================================================================
 // MOTOR CONFIG (pid_config.c)
 // ============================================================================
 
 /** @brief Apply a motor_config_t to the global g_motor_config. */
-void motor_config_apply         (const motor_config_t *cfg);
+void motor_config_apply(const motor_config_t *cfg);
 
 /** @brief Populate *cfg from the current g_motor_config values. */
-void motor_config_get_current   (motor_config_t *cfg);
+void motor_config_get_current(motor_config_t *cfg);
 
 /** @brief Save motor_config to file (appended section in pidconfig.txt). */
-int  motor_config_save          (const char *filename, const motor_config_t *cfg);
+int motor_config_save(const char *filename, const motor_config_t *cfg);
 
 /** @brief Load motor_config from file, or fill defaults if section absent. */
-int  motor_config_load_or_default(const char *filename, motor_config_t *cfg);
+int motor_config_load_or_default(const char *filename, motor_config_t *cfg);
 
 // ============================================================================
 // XBOX CONTROLLER (input_xbox.c)
 // ============================================================================
 
-int   xbox_init         (const char *device);
-int   xbox_update       (void);
-float xbox_get_drive    (void);
-float xbox_get_turn     (void);
-int   xbox_get_arm_button(void);
-void  xbox_cleanup      (void);
+int xbox_init(const char *device);
+int xbox_update(void);
+float xbox_get_drive(void);
+float xbox_get_turn(void);
+int xbox_get_arm_button(void);
+void xbox_cleanup(void);
 
 // ============================================================================
 // SBUS INPUT (input_sbus.c)
 // ============================================================================
 
-int      sbus_init             (const char *device);
-int      sbus_update           (void);
-void     sbus_cleanup          (void);
-float    sbus_get_drive        (void);
-float    sbus_get_turn         (void);
-int      sbus_get_arm          (void);
-int      sbus_get_kill         (void);
-int      sbus_get_speed_mode   (void);
-bool     sbus_get_failsafe     (void);
-bool     sbus_is_connected     (void);
-float    sbus_get_aux1         (void);
-float    sbus_get_aux2         (void);
-int      sbus_get_sw_c         (void);
-int      sbus_get_sw_e         (void);
-bool     sbus_get_sw_f         (void);
-uint16_t sbus_get_channel_raw  (int ch);
-float    sbus_get_channel_float(int ch);
+int sbus_init(const char *device);
+int sbus_update(void);
+void sbus_cleanup(void);
+float sbus_get_drive(void);
+float sbus_get_turn(void);
+int sbus_get_arm(void);
+int sbus_get_kill(void);
+int sbus_get_speed_mode(void);
+bool sbus_get_failsafe(void);
+bool sbus_is_connected(void);
+float sbus_get_aux1(void);
+float sbus_get_aux2(void);
+int sbus_get_sw_c(void);
+int sbus_get_sw_e(void);
+bool sbus_get_sw_f(void);
+uint16_t sbus_get_channel_raw(int ch);
+float sbus_get_channel_float(int ch);
 
 // ============================================================================
 // IMU ORIENTATION (fixed for BeagleBone Blue mounted vertically)
@@ -417,13 +453,16 @@ float    sbus_get_channel_float(int ch);
 // theta (deg) = (TB_ROLL_Y - pitch_offset) * RAD_TO_DEG
 // ============================================================================
 
-typedef struct {
-    float pitch_offset;      // angle when upright (degrees)
-    float yaw_offset;        // yaw at heading zero (degrees)
-    float pitch_dot_offset;  // gyro Y bias (deg/s) — corrects constant drift
+typedef struct
+{
+    float pitch_offset;     // angle when upright (degrees)
+    float yaw_offset;       // yaw at heading zero (degrees)
+    float pitch_dot_offset; // gyro Y bias (deg/s) — corrects constant drift
+    int pitch_axis;         // gravity axis for pitch: 0=X  1=Y(default)  2=Z
 } imu_offsets_t;
 
-typedef struct {
+typedef struct
+{
     float pitch, yaw, roll;
     float pitch_dot, yaw_dot, roll_dot;
     float accel_x, accel_y, accel_z;
@@ -431,18 +470,19 @@ typedef struct {
 
 extern imu_offsets_t g_imu_offsets;
 
-typedef struct {
+typedef struct
+{
     bool D1_balance;
     bool D2_drive;
     bool D3_steering;
 } controller_enables_t;
 extern controller_enables_t g_controllers;
 
-int  imu_offsets_load  (imu_offsets_t *offsets);
-int  imu_offsets_save  (const imu_offsets_t *offsets);
+int imu_offsets_load(imu_offsets_t *offsets);
+int imu_offsets_save(const imu_offsets_t *offsets);
 void imu_offsets_calibrate(const rc_mpu_data_t *raw, imu_offsets_t *offsets);
-void imu_apply_transform  (const rc_mpu_data_t *raw, imu_transform_t *out,
-                            const imu_offsets_t *offsets);
+void imu_apply_transform(const rc_mpu_data_t *raw, imu_transform_t *out,
+                         const imu_offsets_t *offsets);
 
 // ============================================================================
 // UTILITY MACROS
@@ -450,8 +490,13 @@ void imu_apply_transform  (const rc_mpu_data_t *raw, imu_transform_t *out,
 
 #ifndef rc_saturate_float
 #define rc_saturate_float(val, mn, mx) \
-    do { if (*(val) < (mn)) *(val) = (mn); \
-         else if (*(val) > (mx)) *(val) = (mx); } while(0)
+    do                                 \
+    {                                  \
+        if (*(val) < (mn))             \
+            *(val) = (mn);             \
+        else if (*(val) > (mx))        \
+            *(val) = (mx);             \
+    } while (0)
 #endif
 
 #ifndef DEG_TO_RAD

@@ -96,6 +96,62 @@ int roboclaw_main_battery_voltage(struct roboclaw *rc,uint8_t address, int16_t *
 int roboclaw_encoders(struct roboclaw *rc, uint8_t address, int32_t *enc_m1, int32_t *enc_m2);
 int roboclaw_reset_encoders(struct roboclaw *rc, uint8_t address);
 
+/**
+ * @brief RoboClaw internal velocity PID parameters.
+ *
+ * The RoboClaw stores these as fixed-point uint32 (value × 65536).
+ * Pass plain floats here; the wire encoding is handled internally.
+ * Applies to both motors simultaneously (M1 cmd 28, M2 cmd 29).
+ *
+ * Default factory values: Kp=1.0  Ki=0.5  Kd=0.25
+ * Increase Kp for stiffer speed response; add Ki to eliminate steady-state
+ * speed error; Kd damps oscillation.  Always re-tune after changing qpps.
+ */
+typedef struct {
+    float kp;
+    float ki;
+    float kd;
+} roboclaw_vel_pid_t;
+
+/**
+ * @brief Upload velocity PID gains to both M1 and M2.
+ *
+ * @param rc      roboclaw handle
+ * @param address device address (e.g. 0x01)
+ * @param pid     pointer to kp/ki/kd values
+ * @param qpps    max encoder speed (pulses/sec) at full throttle —
+ *                should match the qpps_max already in motor_config
+ * @return ROBOCLAW_OK on success, ROBOCLAW_ERROR / ROBOCLAW_RETRIES_EXCEEDED on failure
+ */
+int roboclaw_set_velocity_pid(struct roboclaw *rc, uint8_t address,
+                              const roboclaw_vel_pid_t *pid, uint32_t qpps);
+
+/**
+ * @brief Read instantaneous encoder speed from RoboClaw hardware.
+ *
+ * Uses GETM1SPEED (cmd 18) and GETM2SPEED (cmd 19).  The RoboClaw measures
+ * the time between encoder pulses internally and returns pulses/second —
+ * non-zero even at very low speeds where tick-delta methods return 0.
+ *
+ * @param rc       roboclaw handle
+ * @param address  device address
+ * @param m1_qpps  Out: M1 speed in signed QPPS (positive = forward)
+ * @param m2_qpps  Out: M2 speed in signed QPPS
+ * @return ROBOCLAW_OK on success
+ */
+int roboclaw_encoder_speeds(struct roboclaw *rc, uint8_t address,
+                            int32_t *m1_qpps, int32_t *m2_qpps);
+
+/**
+ * @brief Read RoboClaw board temperature (cmd 82).
+ *
+ * @param rc       roboclaw handle
+ * @param address  device address
+ * @param temp_c   Out: temperature in °C (value × 10 on wire; e.g. 324 = 32.4°C)
+ * @return ROBOCLAW_OK on success
+ */
+int roboclaw_temperature(struct roboclaw *rc, uint8_t address, float *temp_c);
+
 #ifdef __cplusplus
 }
 #endif

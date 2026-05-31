@@ -195,6 +195,31 @@ int robot_init(void)
     return 0;
 }
 
+// Reads 3S LiPo via BBB AIN1 (68k/10k divider, 7.8x)
+// or falls back to RoboClaw main battery voltage.
+static int read_battery_voltage(float *volts)
+{
+    // Try BBB ADC first (AIN channel 1, sysfs IIO)
+    int fd = open("/sys/bus/iio/devices/iio:device0/in_voltage1_raw", O_RDONLY);
+    if (fd >= 0)
+    {
+        char buf[16] = {0};
+        int n = read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n > 0)
+        {
+            int raw = atoi(buf);
+            // BBB AIN: 12-bit, 0–1.8V ref. Divider ratio 7.8x (68k/10k).
+            *volts = (raw / 4095.0f) * 1.8f * 7.8f;
+            if (*volts > 5.0f) // sanity: must look like a real battery
+                return 0;
+        }
+    }
+
+    // Fall back to RoboClaw
+    return motor_hal_read_voltage(volts);
+}
+
 /**
  * @brief Main control loop (~100 Hz)
  */
@@ -215,6 +240,16 @@ void robot_run(void)
                 g_telemetry_data.system.loop_hz = 1.0f / dt;
         }
         last_loop_us = now_us;
+
+        // ── Battery voltage ───────────────────────────────────────────────
+        static uint64_t last_batt_us = 0;
+        if (now_us - last_batt_us >= 1000000ULL)
+        {
+            float volts = 0.0f;
+            if (read_battery_voltage(&volts) == 0)
+                g_telemetry_data.system.battery_voltage = volts;
+            last_batt_us = now_us;
+        }
 
         // ── Disarm handling ───────────────────────────────────────────────
         static int prev_armed = 0;
@@ -261,38 +296,35 @@ void robot_run(void)
         state.phi_right = right_ticks * (360.0f / ENCODER_TICKS_PER_REV);
         state.pos = (state.phi_left + state.phi_right) / 2.0f;
 
-        // ── Encoder position + velocity (100 ms window) ───────────────────
+        // ── Encoder position + velocity ───────────────────────────────────
         state.enc_pos = left_ticks + right_ticks;
         {
-            static int32_t last_enc_pos = 0;
+            /* Hardware speed from RoboClaw (GETM1SPEED/GETM2SPEED, cmds 18/19).
+             * Throttled to POS_VEL_PERIOD_MS so downstream D2 math still
+             * operates on the same ~100 ms window it was tuned against.
+             * Divide sum by 10 to convert QPPS (pulses/s) → ticks/100ms so
+             * vel_scale_stop values remain in the same range as before.       */
             static uint64_t last_vel_us = 0;
-            static bool vel_init = false;
-
             uint64_t now_us = rc_nanos_since_boot() / 1000;
 
             if (state.enc_vel_reset)
             {
-                last_enc_pos = state.enc_pos; // == 0 after zero_encoders
+                state.enc_velocity = 0;
+                state.enc_velocity_raw = 0;
                 last_vel_us = now_us;
-                vel_init = true;
                 state.enc_vel_reset = 0;
-            }
-            else if (!vel_init)
-            {
-                last_enc_pos = state.enc_pos;
-                last_vel_us = now_us;
-                vel_init = true;
             }
             else if ((now_us - last_vel_us) >= (POS_VEL_PERIOD_MS * 1000ULL))
             {
-                int32_t delta = state.enc_pos - last_enc_pos;
-                state.enc_velocity_raw = delta;
-                state.enc_velocity = delta;
-                last_enc_pos = state.enc_pos;
+                int32_t m1 = 0, m2 = 0;
+                if (motor_hal_read_encoder_speeds(&m1, &m2) == 0)
+                {
+                    /* Sum both motors (same convention as enc_pos = L + R),
+                     * scale to ticks/100ms for backward-compat with vel_scale */
+                    state.enc_velocity_raw = m1 + m2;
+                    state.enc_velocity = (m1 + m2) / 10;
+                }
                 last_vel_us = now_us;
-
-                // enc_pos_target is set on arm and updated by the driving branch.
-                // No latch here — the velocity block must not chase the bot.
             }
         }
 
@@ -544,8 +576,10 @@ void robot_run(void)
                     last_correction = correction;
 
                     // Apply vel_damp after rate limiter so decel/accel acts at full speed
+                    // vel_damp sign: enc_velocity is negative for forward motion (enc_pol=-1)
+                    // so += here means forward motion reduces a positive correction (correct)
                     if (absErr > 5)
-                        correction -= vel_damp;
+                        correction += vel_damp;
 
                     // Hard clamp
                     if (correction > g_pos_config.max_correction)
@@ -554,7 +588,7 @@ void robot_run(void)
                         correction = -g_pos_config.max_correction;
 
                     state.d2_correction_out = correction;
-                    state.theta_ref = correction;
+                    state.theta_ref = -correction; // negate: enc_pol=-1 inverts err sign
                 }
                 else
                 {

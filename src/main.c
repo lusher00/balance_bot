@@ -270,8 +270,15 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    /* Load motor config before HAL init so the saved baud is used */
+    motor_config_t motor_config;
+    motor_config_load_or_default(pid_config_file, &motor_config);
+    /* Command-line -B flag overrides saved baud if explicitly supplied */
+    if (roboclaw_baud > 0)
+        motor_config.baud = roboclaw_baud;
+
     LOG_INFO("Initialising motor HAL (RoboClaw)...");
-    if (motor_hal_init(roboclaw_device, roboclaw_baud) < 0)
+    if (motor_hal_init(roboclaw_device, motor_config.baud) < 0)
     {
         fprintf(stderr, "Error: motor HAL init failed\n");
         ipc_server_cleanup();
@@ -295,9 +302,10 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    motor_config_t motor_config;
-    motor_config_load_or_default(pid_config_file, &motor_config);
     motor_config_apply(&motor_config);
+    motor_hal_set_claw_pid(motor_config.claw_kp,
+                           motor_config.claw_ki,
+                           motor_config.claw_kd);
 
     /* Input subsystem */
     switch (input_mode)

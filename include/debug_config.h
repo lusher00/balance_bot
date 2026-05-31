@@ -108,8 +108,10 @@ typedef struct {
     float loop_hz;           // Actual control loop frequency
     uint32_t uptime_sec;     // Seconds since start
     float theta_offset;      // Balance point trim (deg)
-    float batt_voltage;      // External 3S voltage from batt_monitor (V), -1 if unavailable
-    batt_status_t batt_status; // ok / warning / critical / unknown
+    float batt_voltage;
+    batt_status_t batt_status;
+    float claw_voltage;      // RoboClaw main battery voltage (V), 0 if unavailable
+    float claw_temp;         // RoboClaw board temperature (°C), 0 if unavailable
 } system_telemetry_t;
 
 /**

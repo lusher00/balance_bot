@@ -12,6 +12,7 @@
 #include "debug_config.h"
 #include "balance_bot.h"
 #include "rc_compat.h"
+#include "motor_hal.h"
 #include <math.h>
 
 // Global telemetry data (shared with IPC server)
@@ -241,6 +242,21 @@ static void update_system_telemetry(void)
 
     // Uptime
     g_telemetry_data.system.uptime_sec = (uint32_t)(rc_nanos_since_boot() / 1000000000ULL);
+
+    // RoboClaw main battery voltage + temperature — polled at 1 Hz
+    {
+        static uint64_t last_claw_poll_us = 0;
+        uint64_t now_us = rc_nanos_since_boot() / 1000;
+        if (now_us - last_claw_poll_us >= 1000000ULL)
+        {
+            float v = 0.0f, t = 0.0f;
+            if (motor_hal_read_voltage(&v) == 0)
+                g_telemetry_data.system.claw_voltage = v;
+            if (motor_hal_read_temp(&t) == 0)
+                g_telemetry_data.system.claw_temp = t;
+            last_claw_poll_us = now_us;
+        }
+    }
 }
 
 /**
