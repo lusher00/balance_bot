@@ -91,20 +91,6 @@ install: $(BINDIR)/$(TARGET)
 	@echo "✅ Installed and restarted: /usr/local/bin/$(TARGET)"
 	@echo ""
 
-install-only:
-	@echo "Stopping $(SERVICE) and $(SERVER_SERVICE)..."
-	sudo systemctl daemon-reload
-	sudo systemctl stop $(SERVICE) || true
-	sudo systemctl stop $(SERVER_SERVICE) || true
-	@echo "Installing $(TARGET) to /usr/local/bin/..."
-	sudo cp $(BINDIR)/$(TARGET) /usr/local/bin/$(TARGET)
-	@echo "Restarting $(SERVICE) and $(SERVER_SERVICE)..."
-	sudo systemctl start $(SERVICE) || true
-	sudo systemctl start $(SERVER_SERVICE) || true
-	@echo ""
-	@echo "✅ Installed and restarted: /usr/local/bin/$(TARGET)"
-	@echo ""
-	
 # Uninstall
 uninstall:
 	sudo systemctl stop $(SERVICE) || true

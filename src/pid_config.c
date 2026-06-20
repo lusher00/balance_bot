@@ -1,24 +1,62 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
 /**
  * @file pid_config.c
  * @brief PID configuration file I/O
  *
- * All sections use key=value format.  Three sections in pidconfig.txt:
+ * Loads and saves PID parameters to/from a text file.
+ * Compatible with the original rc_balance pidconfig.txt format.
  *
- *   # pid_config
- *   d1_kp=0.070
- *   d1_ki=0.020
- *   d1_kd=0.005
- *   d3_kp=0.010
- *   d3_ki=0.005
- *   d3_kd=0.000
+ * File format:
+ * Line 1: holdPosition (0 or 1) - currently unused
+ * Line 2: balance_angle (float) - balance angle offset
+ * Line 3: D1_balance Kp Ki Kd
+ * Line 5: D3_steering Kp Ki Kd
  *
- *   # pos_config
- *   zone_a=8000
- *   ...
- *
- *   # motor_config
- *   mode=0
- *   ...
+ * Example pidconfig.txt:
+ * 0
+ * 0.02
+ * 40.0 0.0 5.0
+ * 20.0 0.5 2.0
+ * 15.0 0.0 1.5
  */
 
 #include "balance_bot.h"
@@ -28,151 +66,240 @@
 #include <errno.h>
 
 #define DEFAULT_CONFIG_FILE "pidconfig.txt"
-#define PID_CONFIG_SECTION   "# pid_config"
-#define POS_CONFIG_SECTION   "# pos_config"
-#define MOTOR_CONFIG_SECTION "# motor_config"
 
-// ============================================================================
-// PID CONFIG
-// ============================================================================
-
+/**
+ * @brief Load PID configuration from file
+ *
+ * @param filename Path to configuration file
+ * @param config Pointer to structure to populate
+ * @return 0 on success, -1 on error
+ */
 int pid_config_load(const char *filename, pid_config_file_t *config)
 {
-    if (!filename) filename = DEFAULT_CONFIG_FILE;
+    FILE *file;
+    int hold_position;
+    int fields_read;
+
+    if (!filename)
+        filename = DEFAULT_CONFIG_FILE;
 
     LOG_INFO("Loading PID config from %s", filename);
 
-    FILE *f = fopen(filename, "r");
-    if (!f)
+    file = fopen(filename, "r");
+    if (!file)
     {
         LOG_ERROR("Failed to open %s: %s", filename, strerror(errno));
         return -1;
     }
 
-    char line[128];
-    int in_section = 0;
-    while (fgets(line, sizeof(line), f))
+    // Line 1: holdPosition (legacy, ignored)
+    fields_read = fscanf(file, "%d", &hold_position);
+    if (fields_read != 1)
     {
-        if (strncmp(line, PID_CONFIG_SECTION, strlen(PID_CONFIG_SECTION)) == 0)
-        {
-            in_section = 1;
-            continue;
-        }
-        if (!in_section) continue;
-        if (line[0] == '#' || line[0] == '\n') { in_section = 0; continue; }
-
-        char key[64];
-        float fval;
-        if (sscanf(line, "%63[^=]=%f", key, &fval) == 2)
-        {
-            if      (!strcmp(key, "d1_kp")) config->D1_balance.kp = fval;
-            else if (!strcmp(key, "d1_ki")) config->D1_balance.ki = fval;
-            else if (!strcmp(key, "d1_kd")) config->D1_balance.kd = fval;
-            else if (!strcmp(key, "d3_kp")) config->D3_steering.kp = fval;
-            else if (!strcmp(key, "d3_ki")) config->D3_steering.ki = fval;
-            else if (!strcmp(key, "d3_kd")) config->D3_steering.kd = fval;
-        }
+        LOG_ERROR("Failed to read holdPosition");
+        fclose(file);
+        return -1;
     }
-    fclose(f);
+
+    // Line 2: balance_angle
+    fields_read = fscanf(file, "%f", &config->balance_angle);
+    if (fields_read != 1)
+    {
+        LOG_ERROR("Failed to read balance_angle");
+        fclose(file);
+        return -1;
+    }
+
+    // Line 3: D1_balance (Kp Ki Kd)
+    fields_read = fscanf(file, "%f %f %f",
+                         &config->D1_balance.kp,
+                         &config->D1_balance.ki,
+                         &config->D1_balance.kd);
+    if (fields_read != 3)
+    {
+        LOG_ERROR("Failed to read D1_balance PID gains");
+        fclose(file);
+        return -1;
+    }
+
+    // Line 4: D3_steering (Kp Ki Kd)
+    fields_read = fscanf(file, "%f %f %f",
+                         &config->D3_steering.kp,
+                         &config->D3_steering.ki,
+                         &config->D3_steering.kd);
+    if (fields_read != 3)
+    {
+        LOG_ERROR("Failed to read D3_steering PID gains");
+        fclose(file);
+        return -1;
+    }
+
+    fclose(file);
 
     LOG_INFO("PID config loaded successfully");
-    LOG_INFO("  D1_balance: Kp=%.3f Ki=%.3f Kd=%.3f",
+    LOG_INFO("  Balance angle: %.3f", config->balance_angle);
+    LOG_INFO("  D1_balance: Kp=%.1f Ki=%.1f Kd=%.1f",
              config->D1_balance.kp, config->D1_balance.ki, config->D1_balance.kd);
-    LOG_INFO("  D3_steering: Kp=%.3f Ki=%.3f Kd=%.3f",
+    LOG_INFO("  D3_steering: Kp=%.1f Ki=%.1f Kd=%.1f",
              config->D3_steering.kp, config->D3_steering.ki, config->D3_steering.kd);
+
     return 0;
 }
 
+/**
+ * @brief Save PID configuration to file
+ *
+ * @param filename Path to configuration file
+ * @param config Pointer to configuration to save
+ * @return 0 on success, -1 on error
+ */
 int pid_config_save(const char *filename, const pid_config_file_t *config)
 {
-    if (!filename) filename = DEFAULT_CONFIG_FILE;
+    FILE *file;
+
+    if (!filename)
+        filename = DEFAULT_CONFIG_FILE;
 
     LOG_INFO("Saving PID config to %s", filename);
 
-    FILE *f = fopen(filename, "a");
-    if (!f)
+    file = fopen(filename, "w");
+    if (!file)
     {
         LOG_ERROR("Failed to open %s for writing: %s", filename, strerror(errno));
         return -1;
     }
-    fprintf(f, "\n%s\n", PID_CONFIG_SECTION);
-    fprintf(f, "d1_kp=%.6f\n", config->D1_balance.kp);
-    fprintf(f, "d1_ki=%.6f\n", config->D1_balance.ki);
-    fprintf(f, "d1_kd=%.6f\n", config->D1_balance.kd);
-    fprintf(f, "d3_kp=%.6f\n", config->D3_steering.kp);
-    fprintf(f, "d3_ki=%.6f\n", config->D3_steering.ki);
-    fprintf(f, "d3_kd=%.6f\n", config->D3_steering.kd);
-    fclose(f);
+
+    // Write file in same format as load expects
+    fprintf(file, "0\n"); // holdPosition (legacy)
+    fprintf(file, "%.3f\n", config->balance_angle);
+    fprintf(file, "%.3f %.3f %.3f\n",
+            config->D1_balance.kp, config->D1_balance.ki, config->D1_balance.kd);
+    fprintf(file, "%.3f %.3f %.3f\n",
+            config->D3_steering.kp, config->D3_steering.ki, config->D3_steering.kd);
+
+    fclose(file);
 
     LOG_INFO("PID config saved successfully");
     return 0;
 }
 
+/**
+ * @brief Apply configuration to PID controllers
+ *
+ * Updates the global PID controller structures with loaded configuration.
+ *
+ * @param config Pointer to configuration
+ */
 void pid_config_apply(const pid_config_file_t *config)
 {
     LOG_INFO("Applying PID configuration");
 
+    // Update balance PID
     pid_set_gains(&balance_pid,
                   config->D1_balance.kp,
                   config->D1_balance.ki,
                   config->D1_balance.kd);
 
+    // Update steering PID
     pid_set_gains(&steering_pid,
                   config->D3_steering.kp,
                   config->D3_steering.ki,
                   config->D3_steering.kd);
 
+    // Apply balance angle offset as runtime trim
+    state.theta_offset = config->balance_angle;
+    LOG_INFO("Balance trim (theta_offset): %.3f deg", state.theta_offset);
+
     LOG_INFO("PID configuration applied");
 }
 
+/**
+ * @brief Get current PID configuration from controllers
+ *
+ * Reads current gains from PID controllers and populates config structure.
+ * Useful for saving current tuned values to file.
+ *
+ * @param config Pointer to structure to populate
+ */
 void pid_config_get_current(pid_config_file_t *config)
 {
+    config->balance_angle = state.theta_offset;
+
     config->D1_balance.kp = balance_pid.kp;
     config->D1_balance.ki = balance_pid.ki;
     config->D1_balance.kd = balance_pid.kd;
+
     config->D3_steering.kp = steering_pid.kp;
     config->D3_steering.ki = steering_pid.ki;
     config->D3_steering.kd = steering_pid.kd;
 }
 
+/**
+ * @brief Create default configuration file
+ *
+ * Creates a default pidconfig.txt with reasonable starting values.
+ *
+ * @param filename Path to file to create
+ * @return 0 on success, -1 on error
+ */
 int pid_config_create_default(const char *filename)
 {
     pid_config_file_t default_config = {
-        .D1_balance  = { .kp = BALANCE_KP,  .ki = BALANCE_KI,  .kd = BALANCE_KD  },
-        .D3_steering = { .kp = STEERING_KP, .ki = STEERING_KI, .kd = STEERING_KD },
-    };
-    if (!filename) filename = DEFAULT_CONFIG_FILE;
+        .balance_angle = 0.0,
+        .D1_balance = {.kp = BALANCE_KP, .ki = BALANCE_KI, .kd = BALANCE_KD},
+        .D3_steering = {.kp = STEERING_KP, .ki = STEERING_KI, .kd = STEERING_KD}};
+
+    if (!filename)
+        filename = DEFAULT_CONFIG_FILE;
+
     LOG_INFO("Creating default config at %s", filename);
+
     return pid_config_save(filename, &default_config);
 }
 
+/**
+ * @brief Load configuration or create default
+ *
+ * Attempts to load configuration file. If it doesn't exist,
+ * creates a default one.
+ *
+ * @param filename Path to configuration file
+ * @param config Pointer to structure to populate
+ * @return 0 on success, -1 on error
+ */
 int pid_config_load_or_default(const char *filename, pid_config_file_t *config)
 {
-    // Set defaults first
-    config->D1_balance.kp  = BALANCE_KP;
-    config->D1_balance.ki  = BALANCE_KI;
-    config->D1_balance.kd  = BALANCE_KD;
-    config->D3_steering.kp = STEERING_KP;
-    config->D3_steering.ki = STEERING_KI;
-    config->D3_steering.kd = STEERING_KD;
+    if (!filename)
+        filename = DEFAULT_CONFIG_FILE;
 
-    if (!filename) filename = DEFAULT_CONFIG_FILE;
-
+    // Try to load existing file
     if (pid_config_load(filename, config) == 0)
+    {
         return 0;
+    }
 
+    // File doesn't exist or is invalid - create default
     LOG_WARN("Config file not found, creating default");
+
     if (pid_config_create_default(filename) < 0)
     {
         LOG_ERROR("Failed to create default config");
         return -1;
     }
+
+    // Load the newly created default
     return pid_config_load(filename, config);
 }
 
+/**
+ * @brief Print configuration to console
+ *
+ * @param config Configuration to print
+ */
 void pid_config_print(const pid_config_file_t *config)
 {
     printf("\n=== PID Configuration ===\n");
+    printf("Balance trim (theta_offset): %.3f deg\n", config->balance_angle);
     printf("\nD1 Balance Controller:\n");
     printf("  Kp = %.2f\n", config->D1_balance.kp);
     printf("  Ki = %.2f\n", config->D1_balance.ki);
@@ -184,6 +311,8 @@ void pid_config_print(const pid_config_file_t *config)
     printf("  Kd = %.2f\n", config->D3_steering.kd);
     printf("=========================\n\n");
 }
+
+// ============================================================================
 // POSITION CONTROLLER CONFIG
 // ============================================================================
 
@@ -446,82 +575,5 @@ int motor_config_load_or_default(const char *filename, motor_config_t *cfg)
     }
     fclose(f);
     LOG_INFO("motor_config loaded from %s", filename);
-    return 0;
-}
-// ============================================================================
-// SYSTEM CONFIG
-// ============================================================================
-
-#define SYSTEM_CONFIG_SECTION "# system_config"
-
-system_config_t g_system_config = {
-    .use_batt_adc = SYSTEM_USE_BATT_ADC_DEFAULT,
-    .batt_r1      = SYSTEM_BATT_R1_DEFAULT,
-    .batt_r2      = SYSTEM_BATT_R2_DEFAULT,
-    .batt_trim    = SYSTEM_BATT_TRIM_DEFAULT,
-};
-
-void system_config_apply(const system_config_t *cfg)
-{
-    g_system_config = *cfg;
-    LOG_INFO("system_config applied: use_batt_adc=%d batt_r1=%.0f batt_r2=%.0f batt_trim=%.4f",
-             cfg->use_batt_adc, cfg->batt_r1, cfg->batt_r2, cfg->batt_trim);
-}
-
-int system_config_save(const char *filename, const system_config_t *cfg)
-{
-    if (!filename) filename = DEFAULT_CONFIG_FILE;
-
-    FILE *f = fopen(filename, "a");
-    if (!f)
-    {
-        LOG_ERROR("system_config_save: cannot open %s: %s", filename, strerror(errno));
-        return -1;
-    }
-    fprintf(f, "\n%s\n", SYSTEM_CONFIG_SECTION);
-    fprintf(f, "use_batt_adc=%d\n",  cfg->use_batt_adc);
-    fprintf(f, "batt_r1=%.1f\n",     cfg->batt_r1);
-    fprintf(f, "batt_r2=%.1f\n",     cfg->batt_r2);
-    fprintf(f, "batt_trim=%.6f\n",   cfg->batt_trim);
-    fclose(f);
-    LOG_INFO("system_config saved to %s", filename);
-    return 0;
-}
-
-int system_config_load_or_default(const char *filename, system_config_t *cfg)
-{
-    cfg->use_batt_adc = SYSTEM_USE_BATT_ADC_DEFAULT;
-    cfg->batt_r1      = SYSTEM_BATT_R1_DEFAULT;
-    cfg->batt_r2      = SYSTEM_BATT_R2_DEFAULT;
-    cfg->batt_trim    = SYSTEM_BATT_TRIM_DEFAULT;
-
-    if (!filename) filename = DEFAULT_CONFIG_FILE;
-    FILE *f = fopen(filename, "r");
-    if (!f) return 0;
-
-    char line[128];
-    int in_section = 0;
-    while (fgets(line, sizeof(line), f))
-    {
-        if (strncmp(line, SYSTEM_CONFIG_SECTION, strlen(SYSTEM_CONFIG_SECTION)) == 0)
-        {
-            in_section = 1;
-            continue;
-        }
-        if (!in_section) continue;
-        if (line[0] == '#' || line[0] == '\n') { in_section = 0; continue; }
-
-        char key[64];
-        float fval;
-        if (sscanf(line, "%63[^=]=%f", key, &fval) == 2)
-        {
-            if      (!strcmp(key, "use_batt_adc")) cfg->use_batt_adc = (int)fval;
-            else if (!strcmp(key, "batt_r1"))      cfg->batt_r1 = fval;
-            else if (!strcmp(key, "batt_r2"))      cfg->batt_r2 = fval;
-            else if (!strcmp(key, "batt_trim"))    cfg->batt_trim = fval;
-        }
-    }
-    fclose(f);
-    LOG_INFO("system_config loaded from %s", filename);
     return 0;
 }

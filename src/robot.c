@@ -1,3 +1,43 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
 /**
  * @file robot.c
  * @brief Main robot control loop with telemetry and IPC integration
@@ -32,9 +72,6 @@ pos_config_t g_pos_config;
 
 // Runtime-tunable motor/RoboClaw drive parameters (initialised in robot_init)
 motor_config_t g_motor_config;
-
-// System hardware config
-system_config_t g_system_config;
 
 // Debug configuration (defined in debug_config.h, initialized in main.c)
 debug_config_t g_debug_config;
@@ -198,6 +235,31 @@ int robot_init(void)
     return 0;
 }
 
+// Reads 3S LiPo via BBB AIN1 (68k/10k divider, 7.8x)
+// or falls back to RoboClaw main battery voltage.
+static int read_battery_voltage(float *volts)
+{
+    // Try BBB ADC first (AIN channel 1, sysfs IIO)
+    int fd = open("/sys/bus/iio/devices/iio:device0/in_voltage1_raw", O_RDONLY);
+    if (fd >= 0)
+    {
+        char buf[16] = {0};
+        int n = read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n > 0)
+        {
+            int raw = atoi(buf);
+            // BBB AIN: 12-bit, 0–1.8V ref. Divider ratio 7.8x (68k/10k).
+            *volts = (raw / 4095.0f) * 1.8f * 7.8f;
+            if (*volts > 5.0f) // sanity: must look like a real battery
+                return 0;
+        }
+    }
+
+    // Fall back to RoboClaw
+    return motor_hal_read_voltage(volts);
+}
+
 /**
  * @brief Main control loop (~100 Hz)
  */
@@ -219,8 +281,15 @@ void robot_run(void)
         }
         last_loop_us = now_us;
 
-        // Battery voltage is read by update_system_telemetry() from /run/batt_status.json
-        // or the slow_poll thread for claw voltage. Nothing to do here.
+        // ── Battery voltage ───────────────────────────────────────────────
+        static uint64_t last_batt_us = 0;
+        if (now_us - last_batt_us >= 1000000ULL)
+        {
+            float volts = 0.0f;
+            if (read_battery_voltage(&volts) == 0)
+                g_telemetry_data.system.battery_voltage = volts;
+            last_batt_us = now_us;
+        }
 
         // ── Disarm handling ───────────────────────────────────────────────
         static int prev_armed = 0;
@@ -557,7 +626,7 @@ void robot_run(void)
                         correction = -g_pos_config.max_correction;
 
                     state.d2_correction_out = correction;
-                    state.theta_ref = -correction;
+                    state.theta_ref = correction;
                 }
                 else
                 {

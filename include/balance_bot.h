@@ -1,3 +1,43 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
 /**
  * @file balance_bot.h
  * @brief Main header for balance_bot
@@ -183,31 +223,8 @@ typedef struct
 } motor_config_t;
 
 // ============================================================================
-// SYSTEM CONFIG
+// DATA STRUCTURES
 // ============================================================================
-
-/**
- * @brief System-level hardware configuration.
- *
- * use_batt_adc — 1 = read battery voltage from BBB AIN1 via batt_monitor,
- *                0 = skip ADC read (hardware not connected)
- * batt_r1      — top resistor of voltage divider (ohms), e.g. 68000
- * batt_r2      — bottom resistor of voltage divider (ohms), e.g. 10000
- */
-typedef struct
-{
-    int   use_batt_adc; // 0 = disabled, 1 = enabled
-    float batt_r1;      // top resistor (ohms)
-    float batt_r2;      // bottom resistor (ohms)
-    float batt_trim;    // multiplicative trim factor (1.0 = no correction)
-} system_config_t;
-
-#define SYSTEM_USE_BATT_ADC_DEFAULT 0
-#define SYSTEM_BATT_R1_DEFAULT      68000.0f
-#define SYSTEM_BATT_R2_DEFAULT      10000.0f
-#define SYSTEM_BATT_TRIM_DEFAULT    1.0f
-
-extern system_config_t g_system_config;
 
 /**
  * @brief Generic input packet from an external UART source.
@@ -432,12 +449,8 @@ int motor_config_save(const char *filename, const motor_config_t *cfg);
 int motor_config_load_or_default(const char *filename, motor_config_t *cfg);
 
 // ============================================================================
-// SYSTEM CONFIG (pid_config.c)
+// XBOX CONTROLLER (input_xbox.c)
 // ============================================================================
-
-void system_config_apply(const system_config_t *cfg);
-int  system_config_save(const char *filename, const system_config_t *cfg);
-int  system_config_load_or_default(const char *filename, system_config_t *cfg);
 
 int xbox_init(const char *device);
 int xbox_update(void);
