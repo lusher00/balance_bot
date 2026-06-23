@@ -20,10 +20,10 @@ WEB_PORT=8888
 
 INPUT_ARGS=""
 if [[ "$1" == "--sbus" ]]; then
-    INPUT_ARGS="-i sbus -u /dev/ttyO5"
+    INPUT_ARGS="-i sbus -u /dev/ttyS5"
     shift
 fi
-BOT_ARGS="-d all -m /dev/ttyO1 -B 460800 $INPUT_ARGS ${@}"
+BOT_ARGS="-d all -m /dev/ttyS1 -B 460800 $INPUT_ARGS ${@}"
 
 # ── sanity checks ──────────────────────────────────────────────────
 if [ ! -f "$SERVER_JS" ]; then

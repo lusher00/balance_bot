@@ -89,8 +89,8 @@
 
 static struct roboclaw *g_rc = NULL;
 static pthread_mutex_t g_rc_mutex = PTHREAD_MUTEX_INITIALIZER;
-static char g_device[64] = "/dev/ttyO1";
-static int  g_baud        = 460800;
+static char g_device[64] = "/dev/ttyS1";
+static int g_baud = 460800;
 
 /* last encoder values — cached so motor_hal_encoder_read() works per-side */
 static int32_t g_enc_l = 0;
@@ -122,7 +122,7 @@ static int refresh_encoders(void)
 int motor_hal_init(const char *device, int baud)
 {
     if (!device)
-        device = "/dev/ttyO2";
+        device = "/dev/ttyS1";
     if (baud <= 0)
         baud = 460800;
     strncpy(g_device, device, sizeof(g_device) - 1);
@@ -314,7 +314,7 @@ int motor_hal_set_claw_pid(float kp, float ki, float kd)
 {
     if (!g_rc)
         return -1;
-    roboclaw_vel_pid_t pid = { .kp = kp, .ki = ki, .kd = kd };
+    roboclaw_vel_pid_t pid = {.kp = kp, .ki = ki, .kd = kd};
     uint32_t qpps = (uint32_t)g_motor_config.qpps_max;
     pthread_mutex_lock(&g_rc_mutex);
     int ret = roboclaw_set_velocity_pid(g_rc, RC_ADDRESS, &pid, qpps);
