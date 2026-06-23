@@ -49,7 +49,7 @@ Always exits 0 so a failure never blocks the service from starting.
 
 import os, sys, struct, time, termios, tty
 
-PORT = '/dev/ttyO1'
+PORT = '/dev/ttyS1'
 BAUD = 460800
 ADDR = 0x80
 
