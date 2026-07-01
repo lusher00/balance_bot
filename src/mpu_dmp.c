@@ -155,31 +155,31 @@
 #define TAP_XYZ 0x07
 
 /* DMP memory addresses (from Invensense MotionApps / librobotcontrol common.h) */
-#define D_0_22          (22+512)    /* 534  = 0x0216 */
-#define D_0_104         104         /* 104  = 0x0068 */
-#define CFG_6           2753        /* 2753 = 0x0AC1 */
-#define CFG_15          2727        /* 2727 = 0x0AA7 */
-#define CFG_20          2224        /* 2224 = 0x08B0 */
-#define CFG_27          2742        /* 2742 = 0x0AB6 */
-#define CFG_LP_QUAT     2712        /* 2712 = 0x0A98 */
-#define CFG_8           2718        /* 2718 = 0x0A9E — 6x LP quat enable */
-#define FCFG_1          1062        /* 1062 = 0x0426 */
-#define FCFG_2          1066        /* 1066 = 0x042A */
-#define FCFG_3          1088        /* 1088 = 0x0440 */
-#define FCFG_7          1073        /* 1073 = 0x0431 */
+#define D_0_22 (22 + 512)           /* 534  = 0x0216 */
+#define D_0_104 104                 /* 104  = 0x0068 */
+#define CFG_6 2753                  /* 2753 = 0x0AC1 */
+#define CFG_15 2727                 /* 2727 = 0x0AA7 */
+#define CFG_20 2224                 /* 2224 = 0x08B0 */
+#define CFG_27 2742                 /* 2742 = 0x0AB6 */
+#define CFG_LP_QUAT 2712            /* 2712 = 0x0A98 */
+#define CFG_8 2718                  /* 2718 = 0x0A9E — 6x LP quat enable */
+#define FCFG_1 1062                 /* 1062 = 0x0426 */
+#define FCFG_2 1066                 /* 1066 = 0x042A */
+#define FCFG_3 1088                 /* 1088 = 0x0440 */
+#define FCFG_7 1073                 /* 1073 = 0x0431 */
 #define CFG_FIFO_ON_EVENT 2690      /* 2690 = 0x0A82 */
 #define CFG_GYRO_RAW_DATA 2722      /* 2722 = 0x0AA2 */
 #define CFG_ANDROID_ORIENT_INT 1853 /* 1853 = 0x073D */
 #define CFG_MOTION_BIAS 1208        /* 1208 = 0x04B8 */
-#define D_1_36          (256 + 36)
-#define D_1_40          (256 + 40)
-#define D_1_44          (256 + 44)
-#define D_1_72          (256 + 72)
-#define D_1_79          (256 + 79)
-#define D_1_88          (256 + 88)
-#define D_1_90          (256 + 90)
-#define D_1_92          (256 + 92)
-#define D_1_218         (256 + 218)
+#define D_1_36 (256 + 36)
+#define D_1_40 (256 + 40)
+#define D_1_44 (256 + 44)
+#define D_1_72 (256 + 72)
+#define D_1_79 (256 + 79)
+#define D_1_88 (256 + 88)
+#define D_1_90 (256 + 90)
+#define D_1_92 (256 + 92)
+#define D_1_218 (256 + 218)
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define RAD_TO_DEG 57.295779513
@@ -215,15 +215,15 @@ static int i2c_read_byte(uint8_t reg, uint8_t *val)
 {
     struct i2c_msg msgs[2];
     struct i2c_rdwr_ioctl_data idata;
-    msgs[0].addr  = g_i2c_addr;
+    msgs[0].addr = g_i2c_addr;
     msgs[0].flags = 0;
-    msgs[0].len   = 1;
-    msgs[0].buf   = &reg;
-    msgs[1].addr  = g_i2c_addr;
+    msgs[0].len = 1;
+    msgs[0].buf = &reg;
+    msgs[1].addr = g_i2c_addr;
     msgs[1].flags = I2C_M_RD;
-    msgs[1].len   = 1;
-    msgs[1].buf   = val;
-    idata.msgs  = msgs;
+    msgs[1].len = 1;
+    msgs[1].buf = val;
+    idata.msgs = msgs;
     idata.nmsgs = 2;
     return ioctl(g_i2c_fd, I2C_RDWR, &idata) < 0 ? -1 : 0;
 }
@@ -242,15 +242,15 @@ static int i2c_read_bytes(uint8_t reg, uint16_t len, uint8_t *data)
 {
     struct i2c_msg msgs[2];
     struct i2c_rdwr_ioctl_data idata;
-    msgs[0].addr  = g_i2c_addr;
+    msgs[0].addr = g_i2c_addr;
     msgs[0].flags = 0;
-    msgs[0].len   = 1;
-    msgs[0].buf   = &reg;
-    msgs[1].addr  = g_i2c_addr;
+    msgs[0].len = 1;
+    msgs[0].buf = &reg;
+    msgs[1].addr = g_i2c_addr;
     msgs[1].flags = I2C_M_RD;
-    msgs[1].len   = len;
-    msgs[1].buf   = data;
-    idata.msgs  = msgs;
+    msgs[1].len = len;
+    msgs[1].buf = data;
+    idata.msgs = msgs;
     idata.nmsgs = 2;
     return ioctl(g_i2c_fd, I2C_RDWR, &idata) < 0 ? -1 : (int)len;
 }
@@ -312,24 +312,31 @@ static int mpu_reset_fifo(void)
     uint8_t data;
 
     /* Disable interrupts, FIFO, DMP */
-    if (i2c_write_byte(MPU_INT_ENABLE, 0x00)) return -1;
-    if (i2c_write_byte(MPU_FIFO_EN, 0x00))    return -1;
-    if (i2c_write_byte(MPU_USER_CTRL, 0x00))  return -1;
+    if (i2c_write_byte(MPU_INT_ENABLE, 0x00))
+        return -1;
+    if (i2c_write_byte(MPU_FIFO_EN, 0x00))
+        return -1;
+    if (i2c_write_byte(MPU_USER_CTRL, 0x00))
+        return -1;
 
     /* Reset FIFO and DMP */
     data = BIT_FIFO_RST | BIT_DMP_RST;
-    if (i2c_write_byte(MPU_USER_CTRL, data)) return -1;
+    if (i2c_write_byte(MPU_USER_CTRL, data))
+        return -1;
     usleep(50000);
 
     /* Re-enable DMP + FIFO */
     data = BIT_DMP_EN | BIT_FIFO_EN;
-    if (i2c_write_byte(MPU_USER_CTRL, data)) return -1;
+    if (i2c_write_byte(MPU_USER_CTRL, data))
+        return -1;
 
     /* Re-enable DMP interrupt */
     data = BIT_DMP_INT_EN;
-    if (i2c_write_byte(MPU_INT_ENABLE, data)) return -1;
+    if (i2c_write_byte(MPU_INT_ENABLE, data))
+        return -1;
     data = 0;
-    if (i2c_write_byte(MPU_FIFO_EN, data)) return -1;
+    if (i2c_write_byte(MPU_FIFO_EN, data))
+        return -1;
 
     return 0;
 }
@@ -449,12 +456,15 @@ static int dmp_set_fifo_rate(unsigned short rate)
 static int dmp_enable_lp_quat(int enable)
 {
     uint8_t regs[4];
-    if (enable) {
+    if (enable)
+    {
         regs[0] = DINBC0;
         regs[1] = DINBC2;
         regs[2] = DINBC4;
         regs[3] = DINBC6;
-    } else {
+    }
+    else
+    {
         memset(regs, 0x8B, 4);
     }
     return dmp_write_mem(CFG_LP_QUAT, 4, regs);
@@ -464,10 +474,13 @@ static int dmp_enable_lp_quat(int enable)
 
 static int dmp_enable_gyro_cal(int enable)
 {
-    if (enable) {
+    if (enable)
+    {
         uint8_t regs[9] = {0xb8, 0xaa, 0xb3, 0x8d, 0xb4, 0x98, 0x0d, 0x35, 0x5d};
         return dmp_write_mem(CFG_MOTION_BIAS, 9, regs);
-    } else {
+    }
+    else
+    {
         uint8_t regs[9] = {0xb8, 0xaa, 0xaa, 0xaa, 0xb0, 0x88, 0xc3, 0xc5, 0xc7};
         return dmp_write_mem(CFG_MOTION_BIAS, 9, regs);
     }
@@ -876,9 +889,9 @@ static int read_dmp_fifo(rc_mpu_data_t *data, uint16_t fifo_count)
 static void *mpu_thread(void *arg)
 {
     (void)arg;
-    usleep(200000); /* let DMP settle */
+    usleep(200000);   /* let DMP settle */
     mpu_reset_fifo(); /* drain anything accumulated during settle */
-    usleep(20000);   /* brief pause after reset before polling */
+    usleep(20000);    /* brief pause after reset before polling */
 
     while (g_running)
     {
@@ -957,9 +970,9 @@ int _mpu_dmp_open(int i2c_bus, int i2c_addr, int sample_rate_hz)
     i2c_write_byte(MPU_ACCEL_CONFIG2, 0x48);
 
     /* Gyro FSR 2000 dps, Accel FSR 8g, DLPF 184 Hz */
-    i2c_write_byte(MPU_GYRO_CONFIG, 0x18);  /* 2000 dps */
-    i2c_write_byte(MPU_ACCEL_CONFIG, 0x10); /* 8g */
-    i2c_write_byte(MPU_CONFIG, 0x01);       /* DLPF 184 Hz */
+    i2c_write_byte(MPU_GYRO_CONFIG, 0x18);   /* 2000 dps */
+    i2c_write_byte(MPU_ACCEL_CONFIG, 0x10);  /* 8g */
+    i2c_write_byte(MPU_CONFIG, 0x01);        /* DLPF 184 Hz */
     i2c_write_byte(MPU_ACCEL_CONFIG2, 0x41); /* DLPF 184 Hz + FIFO size 1024 */
 
     /* Sample rate = 200 Hz internal (DMP requires 200) */
@@ -988,7 +1001,7 @@ int _mpu_dmp_open(int i2c_bus, int i2c_addr, int sample_rate_hz)
     fprintf(stderr, "mpu_dmp: firmware loaded OK\n");
 
     /* Set orientation — X_DOWN for BBB Blue mounted with +X down, +Z forward */
-    if (dmp_set_orientation(136) < 0)  /* 136 = Y_UP: +Y up, -Z forward */
+    if (dmp_set_orientation(136) < 0) /* 136 = Y_UP: +Y up, -Z forward */
     {
         fprintf(stderr, "mpu_dmp: set_orientation failed\n");
         return -1;
@@ -1026,14 +1039,7 @@ int _mpu_dmp_open(int i2c_bus, int i2c_addr, int sample_rate_hz)
 
     fprintf(stderr, "mpu_dmp: init complete, packet_len=%d\n", g_packet_len);
 
-    /* Start background thread */
-    g_running = 1;
-    if (pthread_create(&g_thread, NULL, mpu_thread, NULL) != 0)
-    {
-        fprintf(stderr, "mpu_dmp: failed to start thread\n");
-        return -1;
-    }
-
+    /* Thread started in _mpu_set_callback to guarantee g_data and g_callback are set first */
     return 0;
 }
 
@@ -1063,4 +1069,8 @@ void _mpu_dmp_close(void)
 void _mpu_set_callback(void (*cb)(void))
 {
     g_callback = cb;
+    /* Start thread now that g_data and g_callback are both set */
+    g_running = 1;
+    if (pthread_create(&g_thread, NULL, mpu_thread, NULL) != 0)
+        fprintf(stderr, "mpu_dmp: failed to start thread\n");
 }
