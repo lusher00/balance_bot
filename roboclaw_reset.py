@@ -95,7 +95,24 @@ def send_acked(fd, payload, timeout=1.0):
             time.sleep(0.01)
     return False
 
+def gpio_high(gpio):
+    try:
+        gpio_path = "/sys/class/gpio/gpio%d" % gpio
+        if not os.path.exists(gpio_path):
+            with open("/sys/class/gpio/export", "w") as f:
+                f.write(str(gpio))
+            time.sleep(0.15)
+        with open("%s/direction" % gpio_path, "w") as f:
+            f.write("out")
+        with open("%s/value" % gpio_path, "w") as f:
+            f.write("1")
+        print("roboclaw_reset: GPIO%d -> HIGH" % gpio)
+    except Exception as e:
+        print("roboclaw_reset: GPIO%d warning: %s" % (gpio, e))
+
 try:
+    gpio_high(569)
+    time.sleep(0.1)
     fd = open_port(PORT, BAUD)
     time.sleep(0.1)
 
