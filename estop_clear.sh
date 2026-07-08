@@ -1,9 +1,9 @@
 #!/bin/bash
-GPIO=/sys/class/gpio/gpio569
+GPIO=/sys/class/gpio/gpio537
 if [ ! -d "$GPIO" ]; then
-    echo 569 > /sys/class/gpio/export
+    echo 537 > /sys/class/gpio/export
     sleep 0.15
 fi
 echo out > ${GPIO}/direction
 echo 1   > ${GPIO}/value
-echo "E-stop cleared, GPIO569=1"
+echo "E-stop cleared, GPIO537=1"
