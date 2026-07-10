@@ -4,7 +4,7 @@
         {
             "label": "build and install",
             "type": "shell",
-            "command": "ssh boneblue-0 'cd ~/balance_bot && make && make install-only'",
+            "command": "ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -64,7 +64,7 @@
         {
             "label": "install",
             "type": "shell",
-            "command": "ssh boneblue-0 'cd ~/balance_bot && make install-only'",
+            "command": "ssh boneblue-0 'cd ~/balance_bot && make install'",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -84,7 +84,7 @@
         {
             "label": "sync and build",
             "type": "shell",
-            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install-only'",
+            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "group": {
                 "kind": "build",
                 "isDefault": true
