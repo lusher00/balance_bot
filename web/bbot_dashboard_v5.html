@@ -942,6 +942,9 @@
     <div id="conn-dot" class="off"></div>
     <span id="conn-label">Offline</span>
     <div class="sep"></div>
+    <div class="stat" id="fs-warn" style="display:none">
+      <span class="val" id="h-fs" style="color:var(--red);font-weight:700">RO FS</span>
+    </div>
     <div class="stat">
       <span class="label">Batt</span>
       <span class="val" id="h-batt" style="color:var(--txt3)">––</span>
@@ -1500,6 +1503,7 @@
     const state = {
       armed: false, mode: 1, motorMode: 0,
       battery: 0, battVoltage: null, battStatus: null,
+      rootRO: null,
       loopHz: 0, packetsReceived: 0,
       imu: { theta: 0, phi: 0, psi: 0 },
       encoders: null,
@@ -1949,6 +1953,7 @@
         state.battStatus = d.system.batt_status ?? null;
         state.clawVoltage = (d.system.claw_voltage > 0) ? d.system.claw_voltage : null;
         state.clawTemp    = (d.system.claw_temp > 0) ? d.system.claw_temp : null;
+        state.rootRO      = !!d.system.root_ro;
       }
       if (d.imu) {
         state.imu.theta = d.imu.theta ?? 0;
@@ -2037,6 +2042,9 @@
     // UI update
     // ════════════════════════════════════════════════════════════════════════════
     function updateUI() {
+      const fsWarn = document.getElementById('fs-warn');
+      if (fsWarn) fsWarn.style.display = state.rootRO ? '' : 'none';
+
       const bv = state.battVoltage;
       const battStr = bv != null ? `${bv.toFixed(2)}V` : '––';
       const battCol = state.battStatus === 1 ? 'var(--green)' : state.battStatus === 2 ? 'var(--yellow)' : state.battStatus === 3 ? 'var(--red)' : 'var(--txt3)';
