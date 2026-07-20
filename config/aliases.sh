@@ -1,18 +1,23 @@
 # ── balance_bot aliases ───────────────────────────────────────────────
-alias ll='ls -l'
-alias la='ls -lA'
-alias l='ls -CF'
-alias bots='systemctl status balance_bot balance_bot_server batt_monitor'  # status all
-alias sbot='sudo systemctl stop balance_bot balance_bot_server batt_monitor' # stop all
-alias rbot='sudo systemctl restart balance_bot balance_bot_server'           # restart all
-alias zbot='sudo systemctl status balance_bot'                               # bot status
-alias zsrv='sudo systemctl status balance_bot_server'                        # server status
-alias batt='sudo systemctl status batt_monitor'                              # batt status
-alias rbatt='sudo systemctl restart batt_monitor'                            # batt restart
-alias sbatt='sudo systemctl stop batt_monitor'                               # batt stop
-alias oled='sudo systemctl status bbb-oled'                                  # oled status
-alias roled='sudo systemctl restart bbb-oled'                                # oled restart
-alias soled='sudo systemctl stop bbb-oled'                                   # oled stop
+alias botss='systemctl status balance_bot balance_bot_server batt_monitor' 		 # status all
+alias sbots='sudo systemctl stop balance_bot balance_bot_server batt_monitor' 	  	# stop all
+alias rbots='sudo systemctl restart balance_bot balance_bot_server batt_monitor'           # restart all
+
+alias sbot='sudo systemctl stop balance_bot'                               # bot status
+alias bots='systemctl status balance_bot'
+alias rbot='sudo systemctl restart balance_bot'
+
+alias ssrv='sudo systemctl stop balance_bot_server'                        # server status
+alias srvs='systemctl status balance_bot_server'
+alias rsrv='sudo systemctl restart balance_bot_server'
+
+alias sbatt='sudo systemctl stop batt_monitor'                              # batt status
+alias batts='systemctl status batt_monitor'                            # batt restart
+alias rbatt='sudo systemctl restart batt_monitor'
+ 
+alias soled='sudo systemctl stop bbb-oled'                                  # oled status
+alias oleds='systemctl status bbb-oled'                                # oled restart
+alias roled='sudo systemctl restart bbb-oled'                                   # oled stop
 
 # ── help ──────────────────────────────────────────────────────────────
 bhelp() {
