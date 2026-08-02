@@ -942,9 +942,6 @@
     <div id="conn-dot" class="off"></div>
     <span id="conn-label">Offline</span>
     <div class="sep"></div>
-    <div class="stat" id="fs-warn" style="display:none">
-      <span class="val" id="h-fs" style="color:var(--red);font-weight:700">RO FS</span>
-    </div>
     <div class="stat">
       <span class="label">Batt</span>
       <span class="val" id="h-batt" style="color:var(--txt3)">––</span>
@@ -1298,8 +1295,8 @@
           <input type="range" class="pid-slider" id="sl-qpps" min="100" max="6000" step="50"
             oninput="onClawCfg('qpps_max',this.value)">
           <div class="pid-ctrl">
-            <input class="val-box" id="vb-qpps" value="2500"
-              onchange="onClawCfg('qpps_max',this.value)" onblur="onClawCfg('qpps_max',this.value)">
+            <input class="val-box" id="vb-qpps" value="2500" onchange="onClawCfg('qpps_max',this.value)"
+              onblur="onClawCfg('qpps_max',this.value)">
           </div>
         </div>
         <div class="pid-row">
@@ -1307,8 +1304,8 @@
           <input type="range" class="pid-slider" id="sl-accel" min="100" max="20000" step="100"
             oninput="onClawCfg('accel_qpps',this.value)">
           <div class="pid-ctrl">
-            <input class="val-box" id="vb-accel" value="5000"
-              onchange="onClawCfg('accel_qpps',this.value)" onblur="onClawCfg('accel_qpps',this.value)">
+            <input class="val-box" id="vb-accel" value="5000" onchange="onClawCfg('accel_qpps',this.value)"
+              onblur="onClawCfg('accel_qpps',this.value)">
           </div>
         </div>
       </div>
@@ -1350,15 +1347,16 @@
 
       <!-- Velocity PID -->
       <div class="card">
-        <div class="card-title">Velocity PID <span style="font-size:9px;color:var(--txt3);font-weight:400">(modes 1 &amp; 2 only)</span></div>
+        <div class="card-title">Velocity PID <span style="font-size:9px;color:var(--txt3);font-weight:400">(modes 1
+            &amp; 2 only)</span></div>
         <div class="pid-row">
           <span class="pid-label">Kp</span>
           <input type="range" class="pid-slider" id="sl-claw-kp" min="0" max="10" step="0.01"
             oninput="onClawPID('kp',this.value)">
           <div class="pid-ctrl">
             <button class="step-btn" onclick="stepClawPID('kp',-1)">−</button>
-            <input class="val-box" id="vb-claw-kp" value="1.000"
-              onchange="onClawPID('kp',this.value)" onblur="onClawPID('kp',this.value)">
+            <input class="val-box" id="vb-claw-kp" value="1.000" onchange="onClawPID('kp',this.value)"
+              onblur="onClawPID('kp',this.value)">
             <button class="step-btn" onclick="stepClawPID('kp',1)">+</button>
           </div>
         </div>
@@ -1368,8 +1366,8 @@
             oninput="onClawPID('ki',this.value)">
           <div class="pid-ctrl">
             <button class="step-btn" onclick="stepClawPID('ki',-1)">−</button>
-            <input class="val-box" id="vb-claw-ki" value="0.500"
-              onchange="onClawPID('ki',this.value)" onblur="onClawPID('ki',this.value)">
+            <input class="val-box" id="vb-claw-ki" value="0.500" onchange="onClawPID('ki',this.value)"
+              onblur="onClawPID('ki',this.value)">
             <button class="step-btn" onclick="stepClawPID('ki',1)">+</button>
           </div>
         </div>
@@ -1379,8 +1377,8 @@
             oninput="onClawPID('kd',this.value)">
           <div class="pid-ctrl">
             <button class="step-btn" onclick="stepClawPID('kd',-1)">−</button>
-            <input class="val-box" id="vb-claw-kd" value="0.250"
-              onchange="onClawPID('kd',this.value)" onblur="onClawPID('kd',this.value)">
+            <input class="val-box" id="vb-claw-kd" value="0.250" onchange="onClawPID('kd',this.value)"
+              onblur="onClawPID('kd',this.value)">
             <button class="step-btn" onclick="stepClawPID('kd',1)">+</button>
           </div>
         </div>
@@ -1400,8 +1398,8 @@
           Changes BBB serial baud to match RoboClaw setting. Takes effect immediately.
         </div>
         <div class="seg-group" id="baud-seg" style="flex-wrap:wrap">
-          <button class="seg-btn" data-baud="9600"   onclick="setBaud(9600)">9600</button>
-          <button class="seg-btn" data-baud="38400"  onclick="setBaud(38400)">38400</button>
+          <button class="seg-btn" data-baud="9600" onclick="setBaud(9600)">9600</button>
+          <button class="seg-btn" data-baud="38400" onclick="setBaud(38400)">38400</button>
           <button class="seg-btn" data-baud="115200" onclick="setBaud(115200)">115200</button>
           <button class="seg-btn" data-baud="230400" onclick="setBaud(230400)">230400</button>
           <button class="seg-btn active" data-baud="460800" onclick="setBaud(460800)">460800</button>
@@ -1414,16 +1412,16 @@
         <div class="row" style="gap:8px">
           <button class="icon-btn" style="flex:1" onclick="sendCmd({type:'save_pid'})">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-              <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+              <polyline points="17 21 17 13 7 13 7 21" />
+              <polyline points="7 3 7 8 15 8" />
             </svg>
             SAVE
           </button>
-          <button class="icon-btn" style="flex:1;color:var(--orange);border-color:var(--orange)"
-            onclick="doReboot()">
+          <button class="icon-btn" style="flex:1;color:var(--orange);border-color:var(--orange)" onclick="doReboot()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-              <polyline points="1 4 1 10 7 10"/>
-              <path d="M3.51 15a9 9 0 1 0 .49-4.95"/>
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 1 0 .49-4.95" />
             </svg>
             REBOOT
           </button>
@@ -1503,7 +1501,6 @@
     const state = {
       armed: false, mode: 1, motorMode: 0,
       battery: 0, battVoltage: null, battStatus: null,
-      rootRO: null,
       loopHz: 0, packetsReceived: 0,
       imu: { theta: 0, phi: 0, psi: 0 },
       encoders: null,
@@ -1641,7 +1638,7 @@
 
     function resetGraph() {
       graphBufs.forEach((b, i) => { SERIES_KEYS.forEach(k => b[k] = []); graphT0[i] = null; });
-      recording = false; recordBuf = [{}, {}, {}]; updateRecBtn();
+      recording = false; recordBuf = [[], [], []]; updateRecBtn();
     }
 
     // ── Plot state ────────────────────────────────────────────────────────────────
@@ -1812,11 +1809,11 @@
 
     // ── Recording ─────────────────────────────────────────────────────────────────
     let recording = false;
-    let recordBuf = [{}, {}, {}];
+    let recordBuf = [[], [], []];
 
     function toggleRecord() {
-      if (recording) { recording = false; saveCSV(); recordBuf = [{}, {}, {}]; }
-      else { recording = true; recordBuf = [{}, {}, {}]; }
+      if (recording) { recording = false; saveCSV(); recordBuf = [[], [], []]; }
+      else { recording = true; recordBuf = [[], [], []]; }
       updateRecBtn();
     }
     function updateRecBtn() {
@@ -1829,12 +1826,12 @@
       const ctrlNames = ['d1', 'd2', 'd3'];
       const cols = ['t'].concat(ctrlNames.flatMap(c => SERIES_KEYS.map(k => c + '_' + k)));
       let csv = cols.join(',') + '\n';
-      const maxLen = Math.max(...recordBuf.map(b => (b[SERIES_KEYS[0]] || []).length));
+      const maxLen = Math.max(...recordBuf.map(b => b.length));
       for (let i = 0; i < maxLen; i++) {
-        const tVal = recordBuf.map(b => b[SERIES_KEYS[0]]?.[i]?.t).find(v => v !== undefined) ?? 0;
+        const tVal = recordBuf.map(b => b[i]?.t).find(v => v !== undefined) ?? 0;
         let row = [tVal.toFixed(3)];
         recordBuf.forEach(b => {
-          SERIES_KEYS.forEach(k => row.push(((b[k]?.[i]?.v) ?? 0).toFixed(4)));
+          SERIES_KEYS.forEach(k => row.push(((b[i]?.[k]) ?? 0).toFixed(4)));
         });
         csv += row.join(',') + '\n';
       }
@@ -1850,13 +1847,13 @@
     let wsReconnectTimer = null;
 
     // Auto-populate IP: use hostname if served from BBB, else restore last saved IP
-    (function() {
+    (function () {
       const hostname = window.location.hostname;
-      const savedIp  = localStorage.getItem('bbot_ip');
+      const savedIp = localStorage.getItem('bbot_ip');
       const savedPort = localStorage.getItem('bbot_port');
       const ip = (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1')
-                 ? hostname
-                 : (savedIp || '192.168.1.137');
+        ? hostname
+        : (savedIp || '192.168.1.137');
       document.getElementById('cfg-bbb-ip').value = ip;
       if (savedPort) document.getElementById('cfg-ws-port').value = savedPort;
     })();
@@ -1952,8 +1949,7 @@
         state.battVoltage = d.system.batt_voltage ?? null;
         state.battStatus = d.system.batt_status ?? null;
         state.clawVoltage = (d.system.claw_voltage > 0) ? d.system.claw_voltage : null;
-        state.clawTemp    = (d.system.claw_temp > 0) ? d.system.claw_temp : null;
-        state.rootRO      = !!d.system.root_ro;
+        state.clawTemp = (d.system.claw_temp > 0) ? d.system.claw_temp : null;
       }
       if (d.imu) {
         state.imu.theta = d.imu.theta ?? 0;
@@ -2018,18 +2014,18 @@
         state.motorMode = d.motor_config.mode ?? 0;
         if (!clawCfg.received) {
           const mc = d.motor_config;
-          clawCfg.mode       = mc.mode        ?? clawCfg.mode;
-          clawCfg.qpps_max   = mc.qpps_max    ?? clawCfg.qpps_max;
-          clawCfg.accel_qpps = mc.accel_qpps  ?? clawCfg.accel_qpps;
-          clawCfg.pol_l      = mc.pol_l        ?? clawCfg.pol_l;
-          clawCfg.pol_r      = mc.pol_r        ?? clawCfg.pol_r;
-          clawCfg.enc_pol_l  = mc.enc_pol_l    ?? clawCfg.enc_pol_l;
-          clawCfg.enc_pol_r  = mc.enc_pol_r    ?? clawCfg.enc_pol_r;
-          clawCfg.kp         = mc.claw_kp      ?? clawCfg.kp;
-          clawCfg.ki         = mc.claw_ki      ?? clawCfg.ki;
-          clawCfg.kd         = mc.claw_kd      ?? clawCfg.kd;
-          clawCfg.baud       = mc.baud         ?? clawCfg.baud;
-          clawCfg.received   = true;
+          clawCfg.mode = mc.mode ?? clawCfg.mode;
+          clawCfg.qpps_max = mc.qpps_max ?? clawCfg.qpps_max;
+          clawCfg.accel_qpps = mc.accel_qpps ?? clawCfg.accel_qpps;
+          clawCfg.pol_l = mc.pol_l ?? clawCfg.pol_l;
+          clawCfg.pol_r = mc.pol_r ?? clawCfg.pol_r;
+          clawCfg.enc_pol_l = mc.enc_pol_l ?? clawCfg.enc_pol_l;
+          clawCfg.enc_pol_r = mc.enc_pol_r ?? clawCfg.enc_pol_r;
+          clawCfg.kp = mc.claw_kp ?? clawCfg.kp;
+          clawCfg.ki = mc.claw_ki ?? clawCfg.ki;
+          clawCfg.kd = mc.claw_kd ?? clawCfg.kd;
+          clawCfg.baud = mc.baud ?? clawCfg.baud;
+          clawCfg.received = true;
           syncClawTab();
         }
       }
@@ -2042,9 +2038,6 @@
     // UI update
     // ════════════════════════════════════════════════════════════════════════════
     function updateUI() {
-      const fsWarn = document.getElementById('fs-warn');
-      if (fsWarn) fsWarn.style.display = state.rootRO ? '' : 'none';
-
       const bv = state.battVoltage;
       const battStr = bv != null ? `${bv.toFixed(2)}V` : '––';
       const battCol = state.battStatus === 1 ? 'var(--green)' : state.battStatus === 2 ? 'var(--yellow)' : state.battStatus === 3 ? 'var(--red)' : 'var(--txt3)';
@@ -2054,8 +2047,8 @@
       const cv = state.clawVoltage;
       const clawVStr = cv != null ? `${cv.toFixed(1)}V` : '––';
       const clawVCol = cv == null ? 'var(--txt3)' : cv > 11.0 ? 'var(--green)' : cv > 10.0 ? 'var(--yellow)' : 'var(--red)';
-      setTxt('h-claw-v',   clawVStr, clawVCol);
-      setTxt('c-claw-v',   clawVStr, clawVCol);
+      setTxt('h-claw-v', clawVStr, clawVCol);
+      setTxt('c-claw-v', clawVStr, clawVCol);
       setTxt('claw-v-big', clawVStr, clawVCol);
 
       const ct = state.clawTemp;
@@ -2514,8 +2507,8 @@
       setSliderVal('qpps', clawCfg.qpps_max);
       setSliderVal('accel', clawCfg.accel_qpps);
       // polarity segs
-      syncPolSeg('pol-l-seg',     clawCfg.pol_l);
-      syncPolSeg('pol-r-seg',     clawCfg.pol_r);
+      syncPolSeg('pol-l-seg', clawCfg.pol_l);
+      syncPolSeg('pol-r-seg', clawCfg.pol_r);
       syncPolSeg('enc-pol-l-seg', clawCfg.enc_pol_l);
       syncPolSeg('enc-pol-r-seg', clawCfg.enc_pol_r);
       // velocity PID
