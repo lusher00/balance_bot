@@ -607,28 +607,28 @@ int roboclaw_duty_m1m2(struct roboclaw *rc, uint8_t address, int16_t duty_m1, in
  * Wire format: [addr][cmd][D:4][P:4][I:4][QPPS:4][CRC:2]
  * Gains are stored as fixed-point uint32 (float * 65536). */
 static int encode_set_velocity_pid(uint8_t *buffer, uint8_t address, uint8_t cmd,
-                                   const roboclaw_vel_pid_t *pid, uint32_t qpps)
+								   const roboclaw_vel_pid_t *pid, uint32_t qpps)
 {
-    uint8_t bytes = 0;
-    buffer[bytes++] = address;
-    buffer[bytes++] = cmd;
-    bytes += encode_uint32(buffer, bytes, (uint32_t)(pid->kd * 65536.0f));
-    bytes += encode_uint32(buffer, bytes, (uint32_t)(pid->kp * 65536.0f));
-    bytes += encode_uint32(buffer, bytes, (uint32_t)(pid->ki * 65536.0f));
-    bytes += encode_uint32(buffer, bytes, qpps);
-    bytes += encode_checksum(buffer, bytes);
-    return bytes;
+	uint8_t bytes = 0;
+	buffer[bytes++] = address;
+	buffer[bytes++] = cmd;
+	bytes += encode_uint32(buffer, bytes, (uint32_t)(pid->kd * 65536.0f));
+	bytes += encode_uint32(buffer, bytes, (uint32_t)(pid->kp * 65536.0f));
+	bytes += encode_uint32(buffer, bytes, (uint32_t)(pid->ki * 65536.0f));
+	bytes += encode_uint32(buffer, bytes, qpps);
+	bytes += encode_checksum(buffer, bytes);
+	return bytes;
 }
 
 int roboclaw_set_velocity_pid(struct roboclaw *rc, uint8_t address,
-                              const roboclaw_vel_pid_t *pid, uint32_t qpps)
+							  const roboclaw_vel_pid_t *pid, uint32_t qpps)
 {
-    int ret, bytes;
-    bytes = encode_set_velocity_pid(rc->buffer, address, SETM1PID, pid, qpps);
-    if ((ret = send_cmd_wait_answer(rc, bytes, ROBOCLAW_ACK_BYTES, 0)) != ROBOCLAW_OK)
-        return ret;
-    bytes = encode_set_velocity_pid(rc->buffer, address, SETM2PID, pid, qpps);
-    return send_cmd_wait_answer(rc, bytes, ROBOCLAW_ACK_BYTES, 0);
+	int ret, bytes;
+	bytes = encode_set_velocity_pid(rc->buffer, address, SETM1PID, pid, qpps);
+	if ((ret = send_cmd_wait_answer(rc, bytes, ROBOCLAW_ACK_BYTES, 0)) != ROBOCLAW_OK)
+		return ret;
+	bytes = encode_set_velocity_pid(rc->buffer, address, SETM2PID, pid, qpps);
+	return send_cmd_wait_answer(rc, bytes, ROBOCLAW_ACK_BYTES, 0);
 }
 
 int roboclaw_reset_encoders(struct roboclaw *rc, uint8_t address)
@@ -701,38 +701,44 @@ int roboclaw_encoders(struct roboclaw *rc, uint8_t address, int32_t *enc_m1, int
  */
 static int encode_read_speed(uint8_t *buffer, uint8_t address, uint8_t cmd, uint16_t *crc)
 {
-    uint8_t bytes = 0;
-    buffer[bytes++] = address;
-    buffer[bytes++] = cmd;
-    *crc = calculate_crc16(buffer, bytes);
-    return bytes;
+	uint8_t bytes = 0;
+	buffer[bytes++] = address;
+	buffer[bytes++] = cmd;
+	*crc = calculate_crc16(buffer, bytes);
+	return bytes;
 }
 
 int roboclaw_encoder_speeds(struct roboclaw *rc, uint8_t address,
-                            int32_t *m1_qpps, int32_t *m2_qpps)
+							int32_t *m1_qpps, int32_t *m2_qpps)
 {
-    int bytes, ret;
-    uint16_t crc;
+	int bytes, ret;
+	uint16_t crc;
 
-    bytes = encode_read_speed(rc->buffer, address, GETM1SPEED, &crc);
-    if ((ret = send_cmd_wait_answer(rc, bytes, 7, crc)) < 0)
-        return ret;
-    {
-        uint32_t raw = decode_uint32_t(rc->buffer + bytes);
-        uint8_t dir = rc->buffer[bytes + 4];
-        *m1_qpps = dir ? -(int32_t)raw : (int32_t)raw;
-    }
+	bytes = encode_read_speed(rc->buffer, address, GETM1SPEED, &crc);
+	if ((ret = send_cmd_wait_answer(rc, bytes, 7, crc)) < 0)
+		return ret;
+	{
+		uint32_t raw = decode_uint32_t(rc->buffer + bytes);
+		uint8_t dir = rc->buffer[bytes + 4];
+		int32_t v = (int32_t)raw; /* firmware sends two's complement */
+		if (dir && v > 0)
+			v = -v; /* apply dir byte only if raw was unsigned */
+		*m1_qpps = v;
+	}
 
-    bytes = encode_read_speed(rc->buffer, address, GETM2SPEED, &crc);
-    if ((ret = send_cmd_wait_answer(rc, bytes, 7, crc)) < 0)
-        return ret;
-    {
-        uint32_t raw = decode_uint32_t(rc->buffer + bytes);
-        uint8_t dir = rc->buffer[bytes + 4];
-        *m2_qpps = dir ? -(int32_t)raw : (int32_t)raw;
-    }
+	bytes = encode_read_speed(rc->buffer, address, GETM2SPEED, &crc);
+	if ((ret = send_cmd_wait_answer(rc, bytes, 7, crc)) < 0)
+		return ret;
+	{
+		uint32_t raw = decode_uint32_t(rc->buffer + bytes);
+		uint8_t dir = rc->buffer[bytes + 4];
+		int32_t v = (int32_t)raw; /* firmware sends two's complement */
+		if (dir && v > 0)
+			v = -v; /* apply dir byte only if raw was unsigned */
+		*m2_qpps = v;
+	}
 
-    return ROBOCLAW_OK;
+	return ROBOCLAW_OK;
 }
 
 /* ── Temperature (GETTEMP cmd 82) ──────────────────────────────────────────
@@ -740,15 +746,15 @@ int roboclaw_encoder_speeds(struct roboclaw *rc, uint8_t address,
  */
 int roboclaw_temperature(struct roboclaw *rc, uint8_t address, float *temp_c)
 {
-    uint8_t bytes = 0;
-    uint16_t crc;
-    rc->buffer[bytes++] = address;
-    rc->buffer[bytes++] = GETTEMP;
-    crc = calculate_crc16(rc->buffer, bytes);
-    int ret = send_cmd_wait_answer(rc, bytes, 4, crc);
-    if (ret != ROBOCLAW_OK)
-        return ret;
-    uint16_t raw = decode_uint16(rc->buffer + bytes);
-    *temp_c = raw / 10.0f;
-    return ROBOCLAW_OK;
+	uint8_t bytes = 0;
+	uint16_t crc;
+	rc->buffer[bytes++] = address;
+	rc->buffer[bytes++] = GETTEMP;
+	crc = calculate_crc16(rc->buffer, bytes);
+	int ret = send_cmd_wait_answer(rc, bytes, 4, crc);
+	if (ret != ROBOCLAW_OK)
+		return ret;
+	uint16_t raw = decode_uint16(rc->buffer + bytes);
+	*temp_c = raw / 10.0f;
+	return ROBOCLAW_OK;
 }
