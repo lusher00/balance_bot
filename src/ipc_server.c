@@ -56,6 +56,7 @@
 #include "balance_bot.h"
 #include "motor_hal.h"
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -230,6 +231,8 @@ static int handle_command(const char *json_cmd, char *response, size_t response_
  * Supported commands:
  * - {"type":"set_controller","controller":"D1_balance","enabled":true}
  * - {"type":"set_pid","controller":"D1_balance","kp":40.0,"ki":0.0,"kd":5.0}
+ *   (D1_balance and D3_steering only — D2_drive has no gains, use set_pos_config)
+ * - {"type":"set_pos_config","scale_d":30.0,"max_correction":5.0,...}
  * - {"type":"set_telemetry","encoders":true,"imu_full":false,...}
  * - {"type":"arm","value":true}
  * - {"type":"set_mode","value":1}
@@ -485,6 +488,7 @@ static int parse_json_command(const char *json_cmd)
 
     // {"type":"set_pid","controller":"D1_balance","kp":40.0,"ki":0.5,"kd":5.0}
     // {"type":"set_pid","controller":"D3_steering","kp":1.0,"ki":0.0,"kd":0.1}
+    // D1 and D3 only. D2_drive is not a PID — it is tuned via set_pos_config.
     if (strstr(json_cmd, "\"type\":\"set_pid\""))
     {
         float kp = 0.0f, ki = 0.0f, kd = 0.0f;
@@ -509,8 +513,13 @@ static int parse_json_command(const char *json_cmd)
         }
         if (strstr(json_cmd, "\"controller\":\"D2_drive\""))
         {
-            LOG_INFO("iPhone: D2_drive kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
-            return 0;
+            // D2 has no PID gains — it is a zone-based position hold. Accepting
+            // this silently (as the previous revision did) made it look like the
+            // gains were being applied. Reject it and point at the real knobs.
+            LOG_WARN("set_pid: D2_drive is not a PID and has no kp/ki/kd. "
+                     "Use set_pos_config (zone_a/b/c, scale_a/b/c/d, "
+                     "max_correction, max_angle_rate) instead.");
+            return -1;
         }
         if (strstr(json_cmd, "\"controller\":\"D3_steering\""))
         {
@@ -588,7 +597,19 @@ static int parse_json_command(const char *json_cmd)
 #undef PCFG_INT
 
         pos_config_apply(&cfg);
-        LOG_INFO("iPhone: pos_config updated");
+
+        // Persist immediately. Previously this handler applied but never saved,
+        // so a tuning session only reached pidconfig.txt if the operator happened
+        // to fire zero_imu / set_theta_offset / set_pid afterwards — each of which
+        // saves the whole config as a side effect. Tune pos_config alone and
+        // restart, and the entire session was silently lost.
+        {
+            pos_config_t pcfg;
+            pos_config_get_current(&pcfg);
+            if (pos_config_save(NULL, &pcfg) != 0)
+                LOG_WARN("pos_config updated but could not be saved to disk");
+        }
+        LOG_INFO("iPhone: pos_config updated + saved");
         return 0;
     }
 
@@ -723,19 +744,45 @@ static int parse_json_command(const char *json_cmd)
  * @param buffer Output buffer for JSON string
  * @param size Size of output buffer
  */
+/**
+ * @brief Bounds-safe append used by build_telemetry_json().
+ *
+ * Replaces the idiom
+ *     pos = json_append(buffer, pos, size, ...);
+ * which is unsafe: snprintf returns the length it WOULD have written, so on
+ * truncation pos runs past size. pos is size_t, so the next call computes
+ * (size - pos) as a huge unsigned value and snprintf writes past the end of
+ * the buffer. This clamps pos at size instead, so an oversized payload
+ * truncates cleanly and every later append becomes a no-op.
+ */
+__attribute__((format(printf, 4, 5)))
+static size_t json_append(char *buf, size_t pos, size_t size, const char *fmt, ...)
+{
+    if (pos >= size)
+        return size;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf + pos, size - pos, fmt, ap);
+    va_end(ap);
+    if (n < 0)
+        return pos;
+    pos += (size_t)n;
+    return (pos > size) ? size : pos;
+}
+
 static void build_telemetry_json(char *buffer, size_t size)
 {
     size_t pos = 0;
 
-    pos += snprintf(buffer + pos, size - pos, "{");
-    pos += snprintf(buffer + pos, size - pos, "\"type\":\"telemetry\",");
-    pos += snprintf(buffer + pos, size - pos, "\"timestamp\":%llu,",
+    pos = json_append(buffer, pos, size, "{");
+    pos = json_append(buffer, pos, size, "\"type\":\"telemetry\",");
+    pos = json_append(buffer, pos, size, "\"timestamp\":%llu,",
                     (unsigned long long)(rc_nanos_since_boot() / 1000));
 
     // System status (always included)
     if (g_debug_config.telemetry.system_status)
     {
-        pos += snprintf(buffer + pos, size - pos,
+        pos = json_append(buffer, pos, size,
                         "\"system\":{\"battery\":%.2f,\"armed\":%s,\"mode\":%d,\"loop_hz\":%.1f,\"theta_offset\":%.4f,"
                         "\"batt_voltage\":%.3f,\"batt_status\":%d,\"claw_voltage\":%.2f,\"claw_temp\":%.1f},",
                         g_telemetry_data.system.battery_voltage,
@@ -750,7 +797,7 @@ static void build_telemetry_json(char *buffer, size_t size)
     }
 
     // Motor config (always included — small, static, useful for app to confirm active mode)
-    pos += snprintf(buffer + pos, size - pos,
+    pos = json_append(buffer, pos, size,
                     "\"motor_config\":{\"mode\":%d,\"qpps_max\":%d,\"accel_qpps\":%d,"
                     "\"pol_l\":%.1f,\"pol_r\":%.1f,\"enc_pol_l\":%.1f,\"enc_pol_r\":%.1f,"
                     "\"claw_kp\":%.6f,\"claw_ki\":%.6f,\"claw_kd\":%.6f,\"baud\":%d},",
@@ -769,7 +816,7 @@ static void build_telemetry_json(char *buffer, size_t size)
     // Encoders
     if (g_debug_config.telemetry.encoders)
     {
-        pos += snprintf(buffer + pos, size - pos,
+        pos = json_append(buffer, pos, size,
                         "\"encoders\":{\"left_ticks\":%d,\"right_ticks\":%d,"
                         "\"left_rad\":%.3f,\"right_rad\":%.3f,"
                         "\"left_vel\":%.3f,\"right_vel\":%.3f},",
@@ -784,7 +831,7 @@ static void build_telemetry_json(char *buffer, size_t size)
     // IMU attitude (for 3D visualization)
     if (g_debug_config.telemetry.imu_attitude)
     {
-        pos += snprintf(buffer + pos, size - pos,
+        pos = json_append(buffer, pos, size,
                         "\"imu\":{\"theta\":%.4f,\"phi\":%.4f,\"psi\":%.4f,"
                         "\"theta_dot\":%.4f,\"phi_dot\":%.4f,\"psi_dot\":%.4f,"
                         "\"qw\":%.6f,\"qx\":%.6f,\"qy\":%.6f,\"qz\":%.6f",
@@ -802,7 +849,7 @@ static void build_telemetry_json(char *buffer, size_t size)
         // Add full IMU data if enabled
         if (g_debug_config.telemetry.imu_full)
         {
-            pos += snprintf(buffer + pos, size - pos,
+            pos = json_append(buffer, pos, size,
                             ",\"accel_x\":%.3f,\"accel_y\":%.3f,\"accel_z\":%.3f,"
                             "\"gyro_x\":%.3f,\"gyro_y\":%.3f,\"gyro_z\":%.3f",
                             g_telemetry_data.imu.accel_x,
@@ -813,13 +860,13 @@ static void build_telemetry_json(char *buffer, size_t size)
                             g_telemetry_data.imu.gyro_z);
         }
 
-        pos += snprintf(buffer + pos, size - pos, "},");
+        pos = json_append(buffer, pos, size, "},");
     }
 
     // PID states
     if (g_debug_config.telemetry.pid_states)
     {
-        pos += snprintf(buffer + pos, size - pos,
+        pos = json_append(buffer, pos, size,
                         "\"D1_balance\":{\"enabled\":%s,\"setpoint\":%.4f,"
                         "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
                         "\"p_term\":%.4f,\"i_term\":%.4f,\"d_term\":%.4f,"
@@ -836,24 +883,27 @@ static void build_telemetry_json(char *buffer, size_t size)
                         g_telemetry_data.D1_balance.ki,
                         g_telemetry_data.D1_balance.kd);
 
-        pos += snprintf(buffer + pos, size - pos,
-                        "\"D2_drive\":{\"enabled\":%s,\"setpoint\":%.4f,"
-                        "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
-                        "\"p_term\":%.4f,\"i_term\":%.4f,\"d_term\":%.4f,"
-                        "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},",
+        // D2 is a zone-based position hold, not a PID. Its keys deliberately
+        // do not match D1/D3 — consumers must not treat them interchangeably.
+        // "kind" is emitted so a client can branch on it instead of assuming.
+        pos = json_append(buffer, pos, size,
+                        "\"D2_drive\":{\"enabled\":%s,\"kind\":\"zone_position_hold\","
+                        "\"enc_pos_target\":%d,\"enc_pos\":%d,\"enc_error\":%d,"
+                        "\"enc_velocity\":%.3f,\"pos_correction\":%.4f,\"vel_damp\":%.4f,"
+                        "\"theta_ref_adj\":%.4f,\"active_scale\":%.4f,"
+                        "\"max_correction\":%.4f},",
                         g_telemetry_data.D2_drive.enabled ? "true" : "false",
-                        g_telemetry_data.D2_drive.setpoint,
-                        g_telemetry_data.D2_drive.measurement,
-                        g_telemetry_data.D2_drive.error,
-                        g_telemetry_data.D2_drive.output,
-                        g_telemetry_data.D2_drive.p_term,
-                        g_telemetry_data.D2_drive.i_term,
-                        g_telemetry_data.D2_drive.d_term,
-                        g_telemetry_data.D2_drive.kp,
-                        g_telemetry_data.D2_drive.ki,
-                        g_telemetry_data.D2_drive.kd);
+                        (int)g_telemetry_data.D2_drive.enc_pos_target,
+                        (int)g_telemetry_data.D2_drive.enc_pos,
+                        (int)g_telemetry_data.D2_drive.enc_error,
+                        g_telemetry_data.D2_drive.enc_velocity,
+                        g_telemetry_data.D2_drive.pos_correction,
+                        g_telemetry_data.D2_drive.vel_damp,
+                        g_telemetry_data.D2_drive.theta_ref_adj,
+                        g_telemetry_data.D2_drive.active_scale,
+                        g_telemetry_data.D2_drive.max_correction);
 
-        pos += snprintf(buffer + pos, size - pos,
+        pos = json_append(buffer, pos, size,
                         "\"D3_steering\":{\"enabled\":%s,\"setpoint\":%.4f,"
                         "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
                         "\"p_term\":%.4f,\"i_term\":%.4f,\"d_term\":%.4f,"
@@ -874,15 +924,24 @@ static void build_telemetry_json(char *buffer, size_t size)
     // Cat position
     if (g_debug_config.telemetry.ext_input && g_telemetry_data.ext_input.valid)
     {
-        pos += snprintf(buffer + pos, size - pos,
+        pos = json_append(buffer, pos, size,
                         "\"ext_input\":{\"valid\":true,\"x\":%.3f,\"y\":%.3f,\"confidence\":%.2f},",
                         g_telemetry_data.ext_input.x,
                         g_telemetry_data.ext_input.y,
                         g_telemetry_data.ext_input.confidence);
     }
 
+    // motors -- per-wheel duty as actually commanded. Written by the control
+    // loop into g_telemetry_data.motors. Without this block left/right duty
+    // reached the OLED and nothing else, leaving any drive-side asymmetry
+    // completely unobservable from a log.
+    pos = json_append(buffer, pos, size,
+                    "\"motors\":{\"left_duty\":%.4f,\"right_duty\":%.4f},",
+                    g_telemetry_data.motors.left_duty,
+                    g_telemetry_data.motors.right_duty);
+
     // pos_config -- always included so app can sync on connect
-    pos += snprintf(buffer + pos, size - pos,
+    pos = json_append(buffer, pos, size,
                     "\"pos_config\":{"
                     "\"zone_a\":%d,\"zone_b\":%d,\"zone_c\":%d,"
                     "\"scale_a\":%.1f,\"scale_b\":%.1f,\"scale_c\":%.1f,\"scale_d\":%.1f,"
@@ -897,11 +956,36 @@ static void build_telemetry_json(char *buffer, size_t size)
                     g_pos_config.stopped_vel, g_pos_config.max_correction,
                     g_pos_config.max_angle_rate, g_pos_config.back_to_spot);
 
+    // sbus -- raw transmitter state. input_sbus.c already decodes all 16
+    // channels and both flags; this block is the only thing that was missing
+    // to get it off the bot. Mirrors what draw_sbus() shows in the ncurses UI.
+    //
+    // Raw channel values are 172..1811, centre 992 (see SBUS_MIN/MID/MAX_RAW).
+    // Decoded fields are what the firmware actually derived from them, so the
+    // dashboard can show the mapping working rather than just the numbers.
+    pos = json_append(buffer, pos, size,
+                    "\"sbus\":{\"connected\":%s,\"failsafe\":%s,\"ch\":[",
+                    sbus_is_connected() ? "true" : "false",
+                    sbus_get_failsafe() ? "true" : "false");
+    for (int i = 0; i < 16; i++)
+        pos = json_append(buffer, pos, size,
+                        "%s%u", i ? "," : "", (unsigned)sbus_get_channel_raw(i));
+    pos = json_append(buffer, pos, size,
+                    "],\"drive\":%.4f,\"turn\":%.4f,"
+                    "\"arm\":%d,\"kill\":%d,\"speed\":%d,"
+                    "\"sw_c\":%d,\"sw_e\":%d,\"sw_f\":%s,"
+                    "\"aux1\":%.4f,\"aux2\":%.4f},",
+                    sbus_get_drive(), sbus_get_turn(),
+                    sbus_get_arm(), sbus_get_kill(), sbus_get_speed_mode(),
+                    sbus_get_sw_c(), sbus_get_sw_e(),
+                    sbus_get_sw_f() ? "true" : "false",
+                    sbus_get_aux1(), sbus_get_aux2());
+
     // Remove trailing comma
     if (buffer[pos - 1] == ',')
         pos--;
 
-    pos += snprintf(buffer + pos, size - pos, "}\n");
+    pos = json_append(buffer, pos, size, "}\n");
 }
 
 /**

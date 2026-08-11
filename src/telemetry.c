@@ -160,43 +160,46 @@ static void update_pid_telemetry(void)
     g_telemetry_data.D1_balance.setpoint = state.theta_ref + state.theta_offset;
     g_telemetry_data.D1_balance.measurement = state.theta;
     g_telemetry_data.D1_balance.error = balance_pid.prev_error;
-    g_telemetry_data.D1_balance.p_term = balance_pid.kp * balance_pid.prev_error;
-    g_telemetry_data.D1_balance.i_term = balance_pid.ki * balance_pid.integrator;
-    g_telemetry_data.D1_balance.d_term = 0.0f;
-    g_telemetry_data.D1_balance.output = g_telemetry_data.D1_balance.p_term + g_telemetry_data.D1_balance.i_term;
+    // Read the terms recorded by pid_update() rather than recomputing them.
+    // d_term cannot be reconstructed here (prev_error has already advanced),
+    // and output must be the real controller output — a p+i reconstruction
+    // silently hides the derivative contribution from every log and graph.
+    g_telemetry_data.D1_balance.p_term = balance_pid.last_p_term;
+    g_telemetry_data.D1_balance.i_term = balance_pid.last_i_term;
+    g_telemetry_data.D1_balance.d_term = balance_pid.last_d_term;
+    g_telemetry_data.D1_balance.output = balance_pid.last_output;
     g_telemetry_data.D1_balance.kp = balance_pid.kp;
     g_telemetry_data.D1_balance.ki = balance_pid.ki;
     g_telemetry_data.D1_balance.kd = balance_pid.kd;
 
-    // D2: Drive (position) controller -- zone-based, not a true PID.
-    // Map fields to encoder-tick semantics so the graph is meaningful:
-    //   setpoint    = enc_pos_target (ticks)
-    //   measurement = enc_pos        (ticks)
-    //   error       = enc_pos - enc_pos_target (ticks, sign: +ve = ahead of target)
-    //   output      = last correction injected into theta_ref (deg) -- tracked via
-    //                 the steering_latch field reuse; approximate from error/scale
-    //   kp/ki/kd    = not applicable; send pos_config zone/scale summary as kp
+    // D2: Drive (position-hold) controller — NOT a PID. See drive_telemetry_t.
+    // Every field is named for the quantity it actually carries. Do not
+    // reintroduce setpoint/measurement/p_term/i_term/d_term aliases here.
     g_telemetry_data.D2_drive.enabled = g_controllers.D2_drive;
-    g_telemetry_data.D2_drive.setpoint = (float)state.enc_pos_target;
-    g_telemetry_data.D2_drive.measurement = (float)state.enc_pos;
-    g_telemetry_data.D2_drive.error = (float)(state.enc_pos - state.enc_pos_target);
-    g_telemetry_data.D2_drive.p_term = state.d2_pos_correction;   // position error → lean (deg)
-    g_telemetry_data.D2_drive.i_term = state.d2_vel_damp;         // velocity damp  → lean (deg)
-    g_telemetry_data.D2_drive.d_term = (float)state.enc_velocity; // raw tick velocity
-    g_telemetry_data.D2_drive.output = state.d2_correction_out;   // final lean correction injected (deg)
-    g_telemetry_data.D2_drive.kp = (float)g_pos_config.zone_a;
-    g_telemetry_data.D2_drive.ki = g_pos_config.scale_a;
-    g_telemetry_data.D2_drive.kd = g_pos_config.max_correction;
+    g_telemetry_data.D2_drive.enc_pos_target = state.enc_pos_target;
+    g_telemetry_data.D2_drive.enc_pos = state.enc_pos;
+    // Sign matches robot.c: err = enc_pos_target - enc_pos, which is the error
+    // the zone logic actually divides by active_scale. It also matches D1/D3,
+    // which log (setpoint - measurement). Logging enc_pos - enc_pos_target here
+    // made every trace show error and pos_correction moving in opposite
+    // directions, which is exactly as misleading as the old p_term aliases.
+    g_telemetry_data.D2_drive.enc_error = state.enc_pos_target - state.enc_pos;
+    g_telemetry_data.D2_drive.enc_velocity = state.enc_velocity;
+    g_telemetry_data.D2_drive.pos_correction = state.d2_pos_correction;
+    g_telemetry_data.D2_drive.vel_damp = state.d2_vel_damp;
+    g_telemetry_data.D2_drive.theta_ref_adj = state.d2_correction_out;
+    g_telemetry_data.D2_drive.active_scale = state.d2_active_scale;
+    g_telemetry_data.D2_drive.max_correction = g_pos_config.max_correction;
 
     // D3: Steering controller
     g_telemetry_data.D3_steering.enabled = g_controllers.D3_steering;
     g_telemetry_data.D3_steering.setpoint = state.steering;
     g_telemetry_data.D3_steering.measurement = (state.phi_left - state.phi_right) / 2.0f;  // deg diff
     g_telemetry_data.D3_steering.error = steering_pid.prev_error;
-    g_telemetry_data.D3_steering.p_term = steering_pid.kp * steering_pid.prev_error;
-    g_telemetry_data.D3_steering.i_term = steering_pid.ki * steering_pid.integrator;
-    g_telemetry_data.D3_steering.d_term = 0.0f;
-    g_telemetry_data.D3_steering.output = g_telemetry_data.D3_steering.p_term + g_telemetry_data.D3_steering.i_term;
+    g_telemetry_data.D3_steering.p_term = steering_pid.last_p_term;
+    g_telemetry_data.D3_steering.i_term = steering_pid.last_i_term;
+    g_telemetry_data.D3_steering.d_term = steering_pid.last_d_term;
+    g_telemetry_data.D3_steering.output = steering_pid.last_output;
     g_telemetry_data.D3_steering.kp = steering_pid.kp;
     g_telemetry_data.D3_steering.ki = steering_pid.ki;
     g_telemetry_data.D3_steering.kd = steering_pid.kd;
@@ -211,8 +214,10 @@ static void update_motor_telemetry(void)
     // Motor duty cycles are set in the control loop
     // We can read them back if needed, or track them
     // For now, leaving as 0 - implement if motor readback is available
-    g_telemetry_data.motors.left_duty = 0.0;  // TODO: Track in control loop
-    g_telemetry_data.motors.right_duty = 0.0; // TODO: Track in control loop
+    // Motor duty is written by the control loop itself (robot.c, from
+    // last_left_duty / last_right_duty) immediately after telemetry_update()
+    // returns. Do NOT zero it here — that used to blank the values every tick
+    // and only worked by accident of ordering.
 }
 
 /**

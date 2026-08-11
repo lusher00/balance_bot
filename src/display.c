@@ -327,20 +327,33 @@ static void draw_sbus(int r)
 static void draw_pid(int r)
 {
     hdr(r, "PID"); r++;
-    const char *names[3]      = { "D1 Balance", "D2 Drive  ", "D3 Steer  " };
-    pid_telemetry_t *pids[3]  = { &g_telemetry_data.D1_balance,
-                                   &g_telemetry_data.D2_drive,
-                                   &g_telemetry_data.D3_steering };
+
+    /* D1 and D3 only. D2_drive is a drive_telemetry_t, not a pid_telemetry_t —
+     * it is a zone-scheduled position hold with no gains and no P/I/D terms, so
+     * it cannot share this table and gets its own row set below. */
+    const char *names[2]     = { "D1 Balance", "D3 Steer  " };
+    pid_telemetry_t *pids[2] = { &g_telemetry_data.D1_balance,
+                                 &g_telemetry_data.D3_steering };
     attron(A_DIM);
     mvprintw(r, 1, "%-10s  %7s  %7s  %7s  %7s  %7s  %7s  %7s",
              "Controller", "setp", "meas", "err", "P", "I", "D", "out");
     attroff(A_DIM); r++;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 2; i++) {
         pid_telemetry_t *p = pids[i];
         mvprintw(r+i, 1, "%-10s  %+7.3f  %+7.3f  %+7.3f  %+7.3f  %+7.3f  %+7.3f  %+7.3f",
                  names[i], p->setpoint, p->measurement, p->error,
                  p->p_term, p->i_term, p->d_term, p->output);
     }
+    r += 2;
+
+    drive_telemetry_t *d = &g_telemetry_data.D2_drive;
+    attron(A_DIM);
+    mvprintw(r, 1, "%-10s  %7s  %7s  %7s  %7s  %7s  %7s  %7s",
+             "D2 Drive", "target", "pos", "err", "vel", "poscorr", "veldamp", "th_adj");
+    attroff(A_DIM); r++;
+    mvprintw(r, 1, "%-10s  %7d  %7d  %7d  %7d  %+7.3f  %+7.3f  %+7.3f",
+             "(zone)", d->enc_pos_target, d->enc_pos, d->enc_error,
+             d->enc_velocity, d->pos_correction, d->vel_damp, d->theta_ref_adj);
 }
 
 static void draw_encoders(int r)

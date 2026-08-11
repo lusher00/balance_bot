@@ -1,0 +1,24 @@
+[Unit]
+Description=Balance Bot system recorder (lockup / SSH-drop diagnosis)
+# Deliberately NOT tied to balance_bot.service. If the board wedges while
+# balance_bot is stopped, that is itself a finding — the recorder has to be
+# running whenever the board is.
+DefaultDependencies=yes
+After=local-fs.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /home/debian/balance_bot/tools/bbot_watch.py
+
+# Never let the recorder be the thing that starves the control loop.
+Nice=10
+IOSchedulingClass=idle
+CPUWeight=10
+
+# It fsyncs every second by design; that is the point, not an accident.
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

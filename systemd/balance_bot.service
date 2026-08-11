@@ -1,0 +1,39 @@
+[Unit]
+Description=Balance Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/debian/balance_bot
+
+# Device paths, baud rates and input mode live here, NOT in this file.
+# They are board- and wiring-specific (/dev/ttyS5 is this BeagleBone's SBUS
+# UART, not a portable fact), so they stay out of version control.
+# The leading '-' means the unit still starts if the file is absent.
+EnvironmentFile=-/etc/default/balance_bot
+
+# Fallback if /etc/default/balance_bot is missing. Deliberately conservative:
+# no input source, so a fresh board comes up inert rather than driving motors
+# from a receiver that may not be bound.
+# Quoted: Environment= splits on whitespace and treats each token as its own
+# NAME=VALUE, so an unquoted "BOT_ARGS=-q -i none" silently sets BOT_ARGS=-q
+# and discards the rest.
+Environment="BOT_ARGS=-q -i none"
+
+# Clears the RoboClaw's latched e-stop and resets the unit over serial.
+# Exits 0 unconditionally so a reset failure never blocks startup.
+ExecStartPre=/usr/bin/python3 /home/debian/balance_bot/roboclaw_reset.py
+
+ExecStart=/usr/local/bin/balance_bot $BOT_ARGS
+
+# ExecStartPre must finish inside this window. roboclaw_reset.py currently
+# waits ~2s after WriteNVM plus up to 1s for the ACK; 60s leaves room if the
+# RoboClaw is slow to re-enumerate after a power cycle.
+TimeoutStartSec=60
+
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

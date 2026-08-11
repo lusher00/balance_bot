@@ -305,6 +305,7 @@ void pid_config_print(const pid_config_file_t *config)
     printf("  Ki = %.2f\n", config->D1_balance.ki);
     printf("  Kd = %.2f\n", config->D1_balance.kd);
     printf("\nD2 Drive Controller:\n");
+    printf("  (zone-based position hold — no PID gains; see pos_config)\n");
     printf("\nD3 Steering Controller:\n");
     printf("  Kp = %.2f\n", config->D3_steering.kp);
     printf("  Ki = %.2f\n", config->D3_steering.ki);

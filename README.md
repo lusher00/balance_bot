@@ -10,7 +10,7 @@ A self-balancing two-wheeled robot running on a BeagleBone Blue. Controlled via 
 
 ## Features
 
-- **Cascade PID control** — D1 balance (angle), D3 steering (yaw), D2 position hold (encoder-based)
+- **Cascade control** — D1 balance (angle, PID), D3 steering (yaw, PID), D2 position hold (encoder-based, zone-scheduled — not a PID)
 - **SBUS input** — FrSky R-XSR receiver via BeagleBone UART with custom 115200 baud driver and signal inverter circuit
 - **Xbox controller input** — hot-plug via `/dev/input/js0`
 - **Cat following mode** — vision input from Raspberry Pi 5 running a Hailo-8L NPU, received over UART
@@ -206,7 +206,7 @@ ssh debian@boneblue-0 "cd ~/balance_bot && python3 web/serve_web.py &"
 | Tab | Contents |
 |-----|----------|
 | Control | ARM/DISARM, E-STOP, CLR ESTOP, Zero IMU, Zero Encoders, mode/motor mode pickers, encoder readout, MJPEG video with cat overlay |
-| PID | D1/D2/D3 picker, Kp/Ki/Kd sliders with ×1/×10/×100 step, full D2 pos_config (all 13 fields) |
+| PID | D1/D2/D3 picker. Kp/Ki/Kd sliders with ×1/×10/×100 step for D1 and D3 only; D2 shows its pos_config instead (all 13 fields) since it has no gains |
 | Graph | Live scrolling plots, D1+D2 dual-axis combined view, series toggle, CSV record/download |
 | Debug | Syntax-highlighted raw telemetry JSON |
 | Settings | BBB IP/port, Pi 5 IP, video URL, telemetry option toggles |
@@ -233,11 +233,16 @@ After a fall the RoboClaw latches its e-stop internally. To recover without rest
 
 Gains are loaded from `pidconfig.txt` at startup and can be updated live from either client without restarting.
 
+**Only D1 and D3 have gains.** D2 is not a PID controller — it is a zone-based
+gain-scheduled position hold and is configured entirely by the `# pos_config`
+section below (zones, scales, `max_correction`, `max_angle_rate`). There is no
+D2 gain line in this file; the parser reads line 3 as D1 and line 4 as D3, so
+inserting one would silently load D2's numbers as D3's steering gains.
+
 ```
 0                         # legacy holdPosition flag (unused)
 0.000                     # balance_angle / theta_offset trim (deg)
 0.050 0.010 0.005         # D1 balance:  Kp Ki Kd
-0.000 0.000 0.000         # D2 drive:    Kp Ki Kd (unused — zone-based controller)
 0.010 0.010 0.000         # D3 steering: Kp Ki Kd
 
 # pos_config

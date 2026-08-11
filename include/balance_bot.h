@@ -102,7 +102,22 @@
 #define POS_MAX_CORRECTION_DEFAULT 10.0f
 #define POS_MAX_ANGLE_RATE_DEFAULT 0.05f // deg/tick — ramps 0.5°/s at 10 Hz vel window
 #define POS_BACK_TO_SPOT_DEFAULT 1       // Full zone hold by default
-#define POS_VEL_PERIOD_MS 100
+// How often the RoboClaw is polled for wheel speed (ms).
+//
+// This is a POLL RATE, not a measurement window: roboclaw_encoder_speeds()
+// returns an instantaneous hardware QPPS reading, and the /10 applied in
+// robot.c is a pure unit conversion (pulses/sec -> ticks/100ms). So changing
+// this does NOT rescale enc_velocity and does NOT invalidate vel_scale_stop.
+//
+// Was 100, which held one sample for 10 control ticks. Measured against
+// d(enc_pos)/dt, reported velocity lagged true velocity by ~102 ms — 19 deg of
+// phase error on the D2 damping term at the observed ~1.9 s position limit
+// cycle. Damping that far out of antiphase stops opposing motion and starts
+// behaving like a position term, producing a ~100-150 mm rocking oscillation
+// that no value of vel_scale_stop or scale_d could remove.
+//
+// One serial round-trip per poll. If loop_hz drops below ~100, raise this.
+#define POS_VEL_PERIOD_MS 40
 
 /**
  * @brief Runtime-tunable parameters for the D2 position (hold/drive) controller.
@@ -254,6 +269,15 @@ typedef struct
     float prev_error;
     float dt;
     float integrator_max;
+
+    // Last computed terms, recorded by pid_update() for telemetry.
+    // Telemetry must read these rather than recomputing from kp/ki/integrator:
+    // the derivative depends on the previous error, which is overwritten each
+    // tick, so it cannot be reconstructed after the fact.
+    float last_p_term;
+    float last_i_term;
+    float last_d_term;
+    float last_output;
 } pid_controller_t;
 
 /**
@@ -285,11 +309,11 @@ typedef struct
     float phi_right; // Right wheel angle (deg)
 
     // D2 position controller (encoder-tick based)
-    int32_t enc_pos;          // Sum of left+right encoder ticks (position)
-    int32_t enc_pos_target;   // Target tick position (held when stick is centered)
-    int32_t enc_velocity;     // Tick velocity (ticks per 100 ms window)
-    int32_t enc_velocity_raw; // Raw delta before the stopped-check
-    int enc_vel_reset;        // Set to 1 by ipc_server after zero_encoders; cleared by robot.c
+    int32_t enc_pos;        // Sum of left+right encoder ticks (position)
+    int32_t enc_pos_target; // Target tick position (held when stick is centered)
+    float enc_velocity;     // Tick velocity (ticks per 100 ms window)
+    float enc_velocity_raw; // Raw delta before the stopped-check
+    int enc_vel_reset;      // Set to 1 by ipc_server after zero_encoders; cleared by robot.c
 
     // Legacy degree-based position (kept for telemetry)
     float pos;          // avg wheel angle (deg)
@@ -312,6 +336,9 @@ typedef struct
     float d2_pos_correction; // lean angle from position error (deg)
     float d2_vel_damp;       // lean angle from velocity damping (deg)
     float d2_correction_out; // final rate-limited, clamped correction injected (deg)
+    float d2_active_scale;   // zone divisor used this tick (0 = deadband, no correction).
+                             // D2 is gain-scheduled, so "which zone am I in" is the
+                             // closest thing it has to a gain — log it explicitly.
 
     robot_mode_t mode;
     int trying;

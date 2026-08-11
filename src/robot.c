@@ -228,6 +228,10 @@ int robot_init(void)
     state.theta_ref = 0.0f;
     state.theta_offset = 0.0f;
     state.steering = 0.0f;
+    state.d2_pos_correction = 0.0f;
+    state.d2_vel_damp = 0.0f;
+    state.d2_correction_out = 0.0f;
+    state.d2_active_scale = 0.0f;
 
     rc_make_pid_file();
     rc_set_state(RUNNING);
@@ -362,8 +366,12 @@ void robot_run(void)
                 {
                     /* Sum both motors (same convention as enc_pos = L + R),
                      * scale to ticks/100ms for backward-compat with vel_scale */
-                    state.enc_velocity_raw = m1 + m2;
-                    state.enc_velocity = (m1 + m2) / 10;
+                    state.enc_velocity_raw = (float)(m1 + m2);
+                    /* 10.0f not 10: m1/m2 are int32_t, so integer division here
+                     * would quantize to whole ticks/100ms BEFORE the assignment and
+                     * the float field would gain nothing. At vel_scale_stop=5 each
+                     * lost tick was 0.2 deg of theta_ref. */
+                    state.enc_velocity = (float)(m1 + m2) / 10.0f;
                 }
                 last_vel_us = now_us;
             }
@@ -556,7 +564,7 @@ void robot_run(void)
                         d2_log_last_us = d2_now_us;
                         int32_t d2_err = state.enc_pos_target - state.enc_pos;
                         LOG_INFO("[D2] armed=%d D2_en=%d stick_cen=%d raw_stick=%.3f "
-                                 "pos=%d tgt=%d err=%d vel=%d stopped_vel=%d "
+                                 "pos=%d tgt=%d err=%d vel=%.2f stopped_vel=%d "
                                  "last_corr=%.4f theta_ref=%.4f",
                                  state.armed,
                                  g_controllers.D2_drive,
@@ -580,32 +588,46 @@ void robot_run(void)
 
                     if (absErr < 2)
                     {
-                        // Inside tight deadband — zero and skip zone logic entirely
-                        last_correction = 0.0f;
+                        // Inside tight deadband — no position push, but do NOT slam
+                        // last_correction to 0. Leaving it intact lets the rate limiter
+                        // below ease the correction out at max_angle_rate instead of
+                        // dropping it discontinuously, and stops the ramp having to
+                        // rebuild from zero on the way back out. Damping is unaffected
+                        // (it is applied after the limiter and is no longer gated).
                         correction = 0.0f;
+                        state.d2_active_scale = 0.0f;
                     }
                     else if (g_pos_config.back_to_spot)
                     {
                         // Full zone-based proportional hold
                         if (absErr > g_pos_config.zone_a)
-                            correction = (float)err / g_pos_config.scale_a;
+                            state.d2_active_scale = g_pos_config.scale_a;
                         else if (absErr > g_pos_config.zone_b)
-                            correction = (float)err / g_pos_config.scale_b;
+                            state.d2_active_scale = g_pos_config.scale_b;
                         else if (absErr > g_pos_config.zone_c)
-                            correction = (float)err / g_pos_config.scale_c;
+                            state.d2_active_scale = g_pos_config.scale_c;
                         else
-                            correction = (float)err / g_pos_config.scale_d;
+                            state.d2_active_scale = g_pos_config.scale_d;
+
+                        correction = (float)err / state.d2_active_scale;
                     }
                     else
                     {
                         if (absErr < g_pos_config.zone_c)
-                            correction = (float)err / g_pos_config.scale_d;
+                        {
+                            state.d2_active_scale = g_pos_config.scale_d;
+                            correction = (float)err / state.d2_active_scale;
+                        }
                         else
+                        {
+                            // Outside zone_c in loose-hold mode: abandon the old
+                            // target rather than correcting toward it.
+                            state.d2_active_scale = 0.0f;
                             state.enc_pos_target = state.enc_pos;
+                        }
                     }
 
                     state.d2_pos_correction = correction;
-                    state.d2_vel_damp = -vel_damp;
 
                     // Rate-limit the position correction — prevents slamming theta_ref
                     float delta = correction - last_correction;
@@ -616,9 +638,23 @@ void robot_run(void)
                     correction = last_correction + delta;
                     last_correction = correction;
 
-                    // Apply vel_damp after rate limiter so decel/accel acts at full speed
-                    if (absErr > 5)
-                        correction -= vel_damp;
+                    // Apply vel_damp after rate limiter so decel/accel acts at full speed.
+                    //
+                    // UNGATED. This was previously `if (absErr > 5)`, which cut velocity
+                    // damping inside +/-5 ticks — 23% of a typical run, centred exactly on
+                    // the target. The bot arrived at the target with no brakes, coasted
+                    // through at full speed (5.00 ticks/100ms inside the zone vs 5.18
+                    // outside) and rang at a fixed ~2.9s period that no value of scale_d
+                    // could touch, because scale_d does not reach into the dead zone.
+                    // The suppressed damping averaged 1.000 deg and peaked at 2.200 deg
+                    // against a mean position correction of 0.286 deg.
+                    //
+                    // Note the interaction with the absErr < 2 deadband above: there
+                    // correction and last_correction are both forced to 0, so inside the
+                    // deadband the output is now pure damping — brake at the target, no
+                    // position push. That is the intent. Do not re-add a gate here.
+                    correction -= vel_damp;
+                    state.d2_vel_damp = -vel_damp;
 
                     // Hard clamp
                     if (correction > g_pos_config.max_correction)
@@ -640,6 +676,14 @@ void robot_run(void)
                         correction += vel_comp;
                     }
                     state.enc_pos_target = state.enc_pos;
+
+                    // Position hold is not running while driving. Clear the hold
+                    // telemetry so it does not sit at stale values from the last
+                    // centred tick and get read as live position-hold activity.
+                    state.d2_pos_correction = 0.0f;
+                    state.d2_vel_damp = 0.0f;
+                    state.d2_active_scale = 0.0f;
+                    state.d2_correction_out = correction;
                 }
             } // end if (g_controllers.D2_drive && state.armed)
             else
@@ -674,7 +718,7 @@ void robot_run(void)
                 diag_last_us = diag_now_us;
                 int32_t d2_err = state.enc_pos_target - state.enc_pos;
                 float phi_diff = (state.phi_left - state.phi_right) / 2.0f;
-                LOG_INFO("[D2] en=%d pos=%d tgt=%d err=%d vel=%d corr_out=%.3f theta_ref=%.3f",
+                LOG_INFO("[D2] en=%d pos=%d tgt=%d err=%d vel=%.2f corr_out=%.3f theta_ref=%.3f",
                          g_controllers.D2_drive,
                          state.enc_pos, state.enc_pos_target, d2_err,
                          state.enc_velocity,

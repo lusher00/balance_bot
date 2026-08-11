@@ -1,0 +1,713 @@
+diff --git a/README.md b/README.md
+index 563861d..3bfd7d7 100644
+--- a/README.md
++++ b/README.md
+@@ -10,7 +10,7 @@ A self-balancing two-wheeled robot running on a BeagleBone Blue. Controlled via
+ 
+ ## Features
+ 
+-- **Cascade PID control** — D1 balance (angle), D3 steering (yaw), D2 position hold (encoder-based)
++- **Cascade control** — D1 balance (angle, PID), D3 steering (yaw, PID), D2 position hold (encoder-based, zone-scheduled — not a PID)
+ - **SBUS input** — FrSky R-XSR receiver via BeagleBone UART with custom 115200 baud driver and signal inverter circuit
+ - **Xbox controller input** — hot-plug via `/dev/input/js0`
+ - **Cat following mode** — vision input from Raspberry Pi 5 running a Hailo-8L NPU, received over UART
+@@ -206,7 +206,7 @@ ssh debian@boneblue-0 "cd ~/balance_bot && python3 web/serve_web.py &"
+ | Tab | Contents |
+ |-----|----------|
+ | Control | ARM/DISARM, E-STOP, CLR ESTOP, Zero IMU, Zero Encoders, mode/motor mode pickers, encoder readout, MJPEG video with cat overlay |
+-| PID | D1/D2/D3 picker, Kp/Ki/Kd sliders with ×1/×10/×100 step, full D2 pos_config (all 13 fields) |
++| PID | D1/D2/D3 picker. Kp/Ki/Kd sliders with ×1/×10/×100 step for D1 and D3 only; D2 shows its pos_config instead (all 13 fields) since it has no gains |
+ | Graph | Live scrolling plots, D1+D2 dual-axis combined view, series toggle, CSV record/download |
+ | Debug | Syntax-highlighted raw telemetry JSON |
+ | Settings | BBB IP/port, Pi 5 IP, video URL, telemetry option toggles |
+@@ -233,11 +233,16 @@ After a fall the RoboClaw latches its e-stop internally. To recover without rest
+ 
+ Gains are loaded from `pidconfig.txt` at startup and can be updated live from either client without restarting.
+ 
++**Only D1 and D3 have gains.** D2 is not a PID controller — it is a zone-based
++gain-scheduled position hold and is configured entirely by the `# pos_config`
++section below (zones, scales, `max_correction`, `max_angle_rate`). There is no
++D2 gain line in this file; the parser reads line 3 as D1 and line 4 as D3, so
++inserting one would silently load D2's numbers as D3's steering gains.
++
+ ```
+ 0                         # legacy holdPosition flag (unused)
+ 0.000                     # balance_angle / theta_offset trim (deg)
+ 0.050 0.010 0.005         # D1 balance:  Kp Ki Kd
+-0.000 0.000 0.000         # D2 drive:    Kp Ki Kd (unused — zone-based controller)
+ 0.010 0.010 0.000         # D3 steering: Kp Ki Kd
+ 
+ # pos_config
+diff --git a/include/balance_bot.h b/include/balance_bot.h
+index 51b63af..cc498dd 100644
+--- a/include/balance_bot.h
++++ b/include/balance_bot.h
+@@ -254,6 +254,15 @@ typedef struct
+     float prev_error;
+     float dt;
+     float integrator_max;
++
++    // Last computed terms, recorded by pid_update() for telemetry.
++    // Telemetry must read these rather than recomputing from kp/ki/integrator:
++    // the derivative depends on the previous error, which is overwritten each
++    // tick, so it cannot be reconstructed after the fact.
++    float last_p_term;
++    float last_i_term;
++    float last_d_term;
++    float last_output;
+ } pid_controller_t;
+ 
+ /**
+@@ -312,6 +321,9 @@ typedef struct
+     float d2_pos_correction; // lean angle from position error (deg)
+     float d2_vel_damp;       // lean angle from velocity damping (deg)
+     float d2_correction_out; // final rate-limited, clamped correction injected (deg)
++    float d2_active_scale;   // zone divisor used this tick (0 = deadband, no correction).
++                             // D2 is gain-scheduled, so "which zone am I in" is the
++                             // closest thing it has to a gain — log it explicitly.
+ 
+     robot_mode_t mode;
+     int trying;
+diff --git a/include/debug_config.h b/include/debug_config.h
+index d2d84a5..d1de8d5 100644
+--- a/include/debug_config.h
++++ b/include/debug_config.h
+@@ -100,6 +100,9 @@ typedef struct {
+ 
+ /**
+  * @brief PID controller state (for telemetry)
++ *
++ * Used by D1_balance and D3_steering ONLY. Both are genuine PID loops
++ * running pid_update(). D2 is not — see drive_telemetry_t below.
+  */
+ typedef struct {
+     bool enabled;            // Is this controller active?
+@@ -113,6 +116,37 @@ typedef struct {
+     float kp, ki, kd;        // Current gains (for app sync on connect)
+ } pid_telemetry_t;
+ 
++/**
++ * @brief D2 drive (position-hold) controller state — NOT A PID
++ *
++ * D2 does not run pid_update() and has no gains. It is a zone-based
++ * gain-scheduled position hold implemented inline in robot.c:
++ *
++ *   1. err = enc_pos_target - enc_pos                      (encoder ticks)
++ *   2. correction = err / scale_X, where scale_X is chosen by |err|
++ *      falling into zone A/B/C/D                           (degrees)
++ *   3. correction is slew-rate-limited by max_angle_rate    (deg/tick)
++ *   4. velocity damping is subtracted AFTER the rate limiter
++ *   5. result is hard-clamped to +/- max_correction and written to theta_ref
++ *
++ * There is no proportional gain, no integrator, and no derivative. Do not
++ * add p_term/i_term/d_term/kp/ki/kd fields here — the previous revision
++ * reused pid_telemetry_t and the resulting CSV exports were misread as
++ * PID traces. Field names below describe what is actually computed.
++ */
++typedef struct {
++    bool enabled;            // Is this controller active?
++    int32_t enc_pos_target;  // Target tick position being held
++    int32_t enc_pos;         // Current tick position
++    int32_t enc_error;       // enc_pos - enc_pos_target (+ve = ahead of target)
++    float enc_velocity;    // Tick velocity (ticks per 100 ms window)
++    float pos_correction;    // Zone-scheduled correction, pre-limit (deg)
++    float vel_damp;          // Velocity damping applied (deg)
++    float theta_ref_adj;     // Final rate-limited, clamped value written to theta_ref (deg)
++    float active_scale;      // Zone divisor in effect this tick (0 = deadband/none)
++    float max_correction;    // Clamp limit currently configured (deg)
++} drive_telemetry_t;
++
+ /**
+  * @brief Motor command telemetry
+  */
+@@ -167,7 +201,7 @@ typedef struct {
+     imu_telemetry_t imu;             // IMU data
+     
+     pid_telemetry_t D1_balance;      // Balance PID state
+-    pid_telemetry_t D2_drive;        // Drive PID state
++    drive_telemetry_t D2_drive;      // Drive position-hold state (not a PID)
+     pid_telemetry_t D3_steering;     // Steering PID state
+     
+     motor_telemetry_t motors;        // Motor commands
+diff --git a/server/public/index.html b/server/public/index.html
+index 7ca8d84..7ca0c03 100644
+--- a/server/public/index.html
++++ b/server/public/index.html
+@@ -1234,6 +1234,7 @@
+           <div>
+             <div class="card-title">D2: Position Hold</div>
+             <div style="font-size:9px;color:var(--txt3)">Encoder ticks → Lean angle bias · Keeps bot in place</div>
++            <div style="font-size:9px;color:var(--txt3);margin-top:2px">Not a PID — zone-scheduled, no kp/ki/kd</div>
+           </div>
+           <button class="enable-btn off" id="pid-d2-en" onclick="toggleCtrl('D2_drive','d2')">OFF</button>
+         </div>
+@@ -1505,17 +1506,18 @@
+       encoders: null,
+       cat: null,
+       d1: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
+-      d2: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
++      // D2 is a zone-based position hold, not a PID — different shape on purpose.
++      d2: { enabled: false, encTarget: 0, encPos: 0, encError: 0, encVel: 0, posCorr: 0, velDamp: 0, thetaAdj: 0, activeScale: 0, maxCorrection: 0 },
+       d3: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
+     };
+ 
++    // D1 and D3 only. D2 has no gains; see posCfg for its tuning parameters.
+     const pidCfg = {
+       d1: { kp: 40, ki: 0, kd: 5, received: false },
+-      d2: { kp: 20, ki: 0.5, kd: 2, received: false },
+       d3: { kp: 15, ki: 0, kd: 1.5, received: false },
+     };
+ 
+-    const pidMult = { d1: 1, d2: 1, d3: 1, claw: 1 };
++    const pidMult = { d1: 1, d3: 1, claw: 1 };
+ 
+     // Claw motor controller config (mirrors motor_config_t)
+     const clawCfg = {
+@@ -1564,6 +1566,7 @@
+     const TOP_PAD = 6;
+ 
+     const SERIES_COLORS = {
++      // D1 / D3 — genuine PID loops
+       setpoint: '#4fc3f7',
+       measurement: '#00e676',
+       error: '#ff9500',
+@@ -1571,8 +1574,26 @@
+       iTerm: '#00e5ff',
+       dTerm: '#64ffda',
+       output: '#ff3d3d',
++      // D2 — zone-based position hold, distinct key namespace on purpose
++      encTarget: '#4fc3f7',
++      encPos: '#00e676',
++      encError: '#ff9500',
++      encVel: '#64ffda',
++      posCorr: '#b388ff',
++      velDamp: '#00e5ff',
++      thetaAdj: '#ff3d3d',
++      activeScale: '#ffd54f',
+     };
+-    const SERIES_KEYS = ['setpoint', 'measurement', 'error', 'pTerm', 'iTerm', 'dTerm', 'output'];
++
++    // D1 and D3 run pid_update(). D2 does not — it is a zone-based position
++    // hold with no gains, no integrator and no derivative. It gets its own key
++    // set so that nothing (graphs, legends, CSV headers) can present its
++    // signals as P/I/D terms. Do not collapse these back into one list.
++    const PID_KEYS = ['setpoint', 'measurement', 'error', 'pTerm', 'iTerm', 'dTerm', 'output'];
++    const DRIVE_KEYS = ['encTarget', 'encPos', 'encError', 'encVel', 'posCorr', 'velDamp', 'thetaAdj', 'activeScale'];
++    const CTRL_KEYS = [PID_KEYS, DRIVE_KEYS, PID_KEYS];
++    const keysFor = ctrl => CTRL_KEYS[ctrl];
++
+     const SERIES_LABELS = {
+       setpoint: 'Setpoint',
+       measurement: 'Meas',
+@@ -1581,29 +1602,27 @@
+       iTerm: 'I term',
+       dTerm: 'D term',
+       output: 'Output',
+-    };
+-    // D2-specific label overrides shown in plot headers
+-    const D2_LABELS = {
+-      error: 'Err (ticks)',
+-      pTerm: 'Pos corr (°)',
+-      iTerm: 'Vel damp (°)',
+-      dTerm: 'Tick vel',
+-      output: 'θ_ref adj (°)',
+-      measurement: 'Pos (ticks)',
+-      setpoint: 'Target (ticks)',
++      encTarget: 'Target (ticks)',
++      encPos: 'Pos (ticks)',
++      encError: 'Err (ticks)',
++      encVel: 'Tick vel',
++      posCorr: 'Pos corr (°)',
++      velDamp: 'Vel damp (°)',
++      thetaAdj: 'θ_ref adj (°)',
++      activeScale: 'Zone scale',
+     };
+     function seriesLabel(ctrl, key) {
+-      return (ctrl === 1 && D2_LABELS[key]) ? D2_LABELS[key] : SERIES_LABELS[key];
++      return SERIES_LABELS[key] || key;
+     }
+     const CTRL_NAMES = ['D1', 'D2', 'D3'];
+     const CTRL_DASH = [[], [8, 4], [2, 4]];
+ 
+-    function makeBuf() {
++    function makeBuf(ctrlIdx) {
+       const o = {};
+-      SERIES_KEYS.forEach(k => o[k] = []);
++      keysFor(ctrlIdx).forEach(k => o[k] = []);
+       return o;
+     }
+-    const graphBufs = [makeBuf(), makeBuf(), makeBuf()];
++    const graphBufs = [makeBuf(0), makeBuf(1), makeBuf(2)];
+     const graphT0 = [null, null, null];
+ 
+     function currentT(ctrlIdx) {
+@@ -1622,28 +1641,40 @@
+         while (buf[key].length && buf[key][0].t < cutoff) buf[key].shift();
+         if (buf[key].length > MAX_PTS) buf[key].splice(0, buf[key].length - MAX_PTS);
+       }
+-      add('setpoint', s.setpoint || 0);
+-      add('measurement', s.measurement !== undefined ? s.measurement : 0);
+-      add('error', s.error || 0);
+-      add('pTerm', s.pTerm !== undefined ? s.pTerm : (s.p_term || 0));
+-      add('iTerm', s.iTerm !== undefined ? s.iTerm : (s.i_term || 0));
+-      add('dTerm', s.dTerm !== undefined ? s.dTerm : (s.d_term || 0));
+-      add('output', s.output || 0);
++      if (ctrlIdx === 1) {
++        // D2 — position hold. Keys are drive-specific by design.
++        add('encTarget', s.encTarget || 0);
++        add('encPos', s.encPos || 0);
++        add('encError', s.encError || 0);
++        add('encVel', s.encVel || 0);
++        add('posCorr', s.posCorr || 0);
++        add('velDamp', s.velDamp || 0);
++        add('thetaAdj', s.thetaAdj || 0);
++        add('activeScale', s.activeScale || 0);
++      } else {
++        add('setpoint', s.setpoint || 0);
++        add('measurement', s.measurement !== undefined ? s.measurement : 0);
++        add('error', s.error || 0);
++        add('pTerm', s.pTerm !== undefined ? s.pTerm : (s.p_term || 0));
++        add('iTerm', s.iTerm !== undefined ? s.iTerm : (s.i_term || 0));
++        add('dTerm', s.dTerm !== undefined ? s.dTerm : (s.d_term || 0));
++        add('output', s.output || 0);
++      }
+       if (recording) {
+         if (!recordBuf[ctrlIdx]) recordBuf[ctrlIdx] = [];
+-        recordBuf[ctrlIdx].push({ t, ...Object.fromEntries(SERIES_KEYS.map(k => [k, buf[k].at(-1)?.v ?? 0])) });
++        recordBuf[ctrlIdx].push({ t, ...Object.fromEntries(keysFor(ctrlIdx).map(k => [k, buf[k].at(-1)?.v ?? 0])) });
+       }
+     }
+ 
+     function resetGraph() {
+-      graphBufs.forEach((b, i) => { SERIES_KEYS.forEach(k => b[k] = []); graphT0[i] = null; });
++      graphBufs.forEach((b, i) => { keysFor(i).forEach(k => b[k] = []); graphT0[i] = null; });
+       recording = false; recordBuf = [{}, {}, {}]; updateRecBtn();
+     }
+ 
+     // ── Plot state ────────────────────────────────────────────────────────────────
+     let plots = [
+-      { id: 0, series: [{ ctrl: 1, key: 'error' }, { ctrl: 1, key: 'dTerm' }] },
+-      { id: 1, series: [{ ctrl: 1, key: 'pTerm' }, { ctrl: 1, key: 'iTerm' }, { ctrl: 1, key: 'output' }] },
++      { id: 0, series: [{ ctrl: 1, key: 'encError' }, { ctrl: 1, key: 'encVel' }] },
++      { id: 1, series: [{ ctrl: 1, key: 'posCorr' }, { ctrl: 1, key: 'velDamp' }, { ctrl: 1, key: 'thetaAdj' }] },
+       { id: 2, series: [{ ctrl: 0, key: 'measurement' }, { ctrl: 0, key: 'setpoint' }, { ctrl: 0, key: 'output' }] },
+     ];
+     let nextPlotId = 3;
+@@ -1738,7 +1769,7 @@
+           grp.textContent = CTRL_NAMES[ci];
+           dropdown.appendChild(grp);
+ 
+-          SERIES_KEYS.forEach(function (k) {
++          keysFor(ci).forEach(function (k) {
+             const active = plot.series.find(function (s) { return s.ctrl === ci && s.key === k; });
+             const col = SERIES_COLORS[k];
+             const item = document.createElement('div');
+@@ -1823,14 +1854,17 @@
+     }
+     function saveCSV() {
+       const ctrlNames = ['d1', 'd2', 'd3'];
+-      const cols = ['t'].concat(ctrlNames.flatMap(c => SERIES_KEYS.map(k => c + '_' + k)));
++      // Headers come from each controller's own key set, so d2 columns are
++      // named d2_encError / d2_posCorr / etc. An exported d2_pTerm column would
++      // be read as a PID trace by anyone opening the file later — it is not one.
++      const cols = ['t'].concat(ctrlNames.flatMap((c, ci) => keysFor(ci).map(k => c + '_' + k)));
+       let csv = cols.join(',') + '\n';
+-      const maxLen = Math.max(...recordBuf.map(b => (b[SERIES_KEYS[0]] || []).length));
++      const maxLen = Math.max(...recordBuf.map((b, ci) => (b[keysFor(ci)[0]] || []).length));
+       for (let i = 0; i < maxLen; i++) {
+-        const tVal = recordBuf.map(b => b[SERIES_KEYS[0]]?.[i]?.t).find(v => v !== undefined) ?? 0;
++        const tVal = recordBuf.map((b, ci) => b[keysFor(ci)[0]]?.[i]?.t).find(v => v !== undefined) ?? 0;
+         let row = [tVal.toFixed(3)];
+-        recordBuf.forEach(b => {
+-          SERIES_KEYS.forEach(k => row.push(((b[k]?.[i]?.v) ?? 0).toFixed(4)));
++        recordBuf.forEach((b, ci) => {
++          keysFor(ci).forEach(k => row.push(((b[k]?.[i]?.v) ?? 0).toFixed(4)));
+         });
+         csv += row.join(',') + '\n';
+       }
+@@ -1909,6 +1943,8 @@
+     // ════════════════════════════════════════════════════════════════════════════
+     // Telemetry
+     // ════════════════════════════════════════════════════════════════════════════
++    // D1 / D3 only. These are real PID loops; p_term/i_term/d_term/output are
++    // the actual terms recorded inside pid_update().
+     function normPID(raw) {
+       if (!raw) return null;
+       return {
+@@ -1924,6 +1960,25 @@
+       };
+     }
+ 
++    // D2 only. Separate function from normPID because D2 is a zone-based
++    // position hold, not a PID — it has no gains and nothing here maps onto
++    // P, I or D. Firmware emits kind:"zone_position_hold" on this block.
++    function normDrive(raw) {
++      if (!raw) return null;
++      return {
++        enabled: raw.enabled ?? false,
++        encTarget: raw.enc_pos_target ?? 0,
++        encPos: raw.enc_pos ?? 0,
++        encError: raw.enc_error ?? 0,
++        encVel: raw.enc_velocity ?? 0,
++        posCorr: raw.pos_correction ?? 0,
++        velDamp: raw.vel_damp ?? 0,
++        thetaAdj: raw.theta_ref_adj ?? 0,
++        activeScale: raw.active_scale ?? 0,
++        maxCorrection: raw.max_correction ?? 0,
++      };
++    }
++
+     function handleTelemetry(d) {
+       state.packetsReceived++;
+ 
+@@ -1945,7 +2000,7 @@
+       if (d.cat) state.cat = d.cat;
+ 
+       const d1r = normPID(d.D1_balance);
+-      const d2r = normPID(d.D2_drive);
++      const d2r = normDrive(d.D2_drive);
+       const d3r = normPID(d.D3_steering);
+ 
+       if (d1r) {
+@@ -1958,12 +2013,10 @@
+         }
+       }
+       if (d2r) {
++        // No gain sync here — D2 has no gains. Its tuning arrives in
++        // d.pos_config (zones, scales, max_correction, max_angle_rate).
+         Object.assign(state.d2, d2r);
+         appendGraphPoint(1, d2r);
+-        if (!pidCfg.d2.received && d2r.kp != null) {
+-          pidCfg.d2.kp = d2r.kp; pidCfg.d2.ki = d2r.ki ?? 0; pidCfg.d2.kd = d2r.kd ?? 0;
+-          pidCfg.d2.received = true;
+-        }
+       }
+       if (d3r) {
+         Object.assign(state.d3, d3r);
+@@ -2121,18 +2174,20 @@
+       const errEl = document.getElementById(`${ctrl}-err`);
+       const outEl = document.getElementById(`${ctrl}-out`);
+       const barEl = document.getElementById(`${ctrl}-bar`);
+-      if (errEl) errEl.textContent = s.error.toFixed(ctrl === 'd2' ? 0 : 3);
+-      if (outEl && ctrl !== 'd2') outEl.textContent = s.output.toFixed(3);
+       if (ctrl === 'd2') {
++        // D2 reads from drive fields, not setpoint/measurement/error/output.
++        if (errEl) errEl.textContent = s.encError.toFixed(0);
+         const maxErr = posCfg.zone_a || 8000;
+-        const frac = Math.min(Math.abs(s.error) / maxErr, 1.0) * 100;
+-        const col = Math.abs(s.error) < posCfg.zone_c ? 'var(--green)' :
+-          Math.abs(s.error) < posCfg.zone_b ? 'var(--yellow)' : 'var(--orange)';
++        const frac = Math.min(Math.abs(s.encError) / maxErr, 1.0) * 100;
++        const col = Math.abs(s.encError) < posCfg.zone_c ? 'var(--green)' :
++          Math.abs(s.encError) < posCfg.zone_b ? 'var(--yellow)' : 'var(--orange)';
+         if (barEl) { barEl.style.width = frac + '%'; barEl.style.background = col; }
+-        setTxt(`d2-sp`, s.setpoint.toFixed(0));
+-        setTxt(`d2-meas`, s.measurement.toFixed(0));
+-        setTxt(`d2-err`, s.error.toFixed(0), 'var(--orange)');
++        setTxt(`d2-sp`, s.encTarget.toFixed(0));
++        setTxt(`d2-meas`, s.encPos.toFixed(0));
++        setTxt(`d2-err`, s.encError.toFixed(0), 'var(--orange)');
+       } else {
++        if (errEl) errEl.textContent = s.error.toFixed(3);
++        if (outEl) outEl.textContent = s.output.toFixed(3);
+         if (barEl) {
+           const frac = Math.min(Math.abs(s.output), 1.0) * 100;
+           barEl.style.width = frac + '%';
+@@ -2270,8 +2325,14 @@
+     }
+ 
+     function sendPIDUpdate(ctrl) {
++      // d2 is deliberately absent: D2_drive is not a PID and the firmware
++      // rejects set_pid for it. D2 is tuned through sendPosConfig().
++      const names = { d1: 'D1_balance', d3: 'D3_steering' };
++      if (!names[ctrl]) {
++        console.warn(`sendPIDUpdate: ${ctrl} has no PID gains — ignoring`);
++        return;
++      }
+       const c = pidCfg[ctrl];
+-      const names = { d1: 'D1_balance', d2: 'D2_drive', d3: 'D3_steering' };
+       sendCmd({ type: 'set_pid', controller: names[ctrl], kp: c.kp, ki: c.ki, kd: c.kd });
+     }
+ 
+diff --git a/src/ipc_server.c b/src/ipc_server.c
+index 3410280..d522e06 100644
+--- a/src/ipc_server.c
++++ b/src/ipc_server.c
+@@ -230,6 +230,8 @@ static int handle_command(const char *json_cmd, char *response, size_t response_
+  * Supported commands:
+  * - {"type":"set_controller","controller":"D1_balance","enabled":true}
+  * - {"type":"set_pid","controller":"D1_balance","kp":40.0,"ki":0.0,"kd":5.0}
++ *   (D1_balance and D3_steering only — D2_drive has no gains, use set_pos_config)
++ * - {"type":"set_pos_config","scale_d":30.0,"max_correction":5.0,...}
+  * - {"type":"set_telemetry","encoders":true,"imu_full":false,...}
+  * - {"type":"arm","value":true}
+  * - {"type":"set_mode","value":1}
+@@ -485,6 +487,7 @@ static int parse_json_command(const char *json_cmd)
+ 
+     // {"type":"set_pid","controller":"D1_balance","kp":40.0,"ki":0.5,"kd":5.0}
+     // {"type":"set_pid","controller":"D3_steering","kp":1.0,"ki":0.0,"kd":0.1}
++    // D1 and D3 only. D2_drive is not a PID — it is tuned via set_pos_config.
+     if (strstr(json_cmd, "\"type\":\"set_pid\""))
+     {
+         float kp = 0.0f, ki = 0.0f, kd = 0.0f;
+@@ -509,8 +512,13 @@ static int parse_json_command(const char *json_cmd)
+         }
+         if (strstr(json_cmd, "\"controller\":\"D2_drive\""))
+         {
+-            LOG_INFO("iPhone: D2_drive kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
+-            return 0;
++            // D2 has no PID gains — it is a zone-based position hold. Accepting
++            // this silently (as the previous revision did) made it look like the
++            // gains were being applied. Reject it and point at the real knobs.
++            LOG_WARN("set_pid: D2_drive is not a PID and has no kp/ki/kd. "
++                     "Use set_pos_config (zone_a/b/c, scale_a/b/c/d, "
++                     "max_correction, max_angle_rate) instead.");
++            return -1;
+         }
+         if (strstr(json_cmd, "\"controller\":\"D3_steering\""))
+         {
+@@ -836,22 +844,25 @@ static void build_telemetry_json(char *buffer, size_t size)
+                         g_telemetry_data.D1_balance.ki,
+                         g_telemetry_data.D1_balance.kd);
+ 
++        // D2 is a zone-based position hold, not a PID. Its keys deliberately
++        // do not match D1/D3 — consumers must not treat them interchangeably.
++        // "kind" is emitted so a client can branch on it instead of assuming.
+         pos += snprintf(buffer + pos, size - pos,
+-                        "\"D2_drive\":{\"enabled\":%s,\"setpoint\":%.4f,"
+-                        "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
+-                        "\"p_term\":%.4f,\"i_term\":%.4f,\"d_term\":%.4f,"
+-                        "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},",
++                        "\"D2_drive\":{\"enabled\":%s,\"kind\":\"zone_position_hold\","
++                        "\"enc_pos_target\":%d,\"enc_pos\":%d,\"enc_error\":%d,"
++                        "\"enc_velocity\":%d,\"pos_correction\":%.4f,\"vel_damp\":%.4f,"
++                        "\"theta_ref_adj\":%.4f,\"active_scale\":%.4f,"
++                        "\"max_correction\":%.4f},",
+                         g_telemetry_data.D2_drive.enabled ? "true" : "false",
+-                        g_telemetry_data.D2_drive.setpoint,
+-                        g_telemetry_data.D2_drive.measurement,
+-                        g_telemetry_data.D2_drive.error,
+-                        g_telemetry_data.D2_drive.output,
+-                        g_telemetry_data.D2_drive.p_term,
+-                        g_telemetry_data.D2_drive.i_term,
+-                        g_telemetry_data.D2_drive.d_term,
+-                        g_telemetry_data.D2_drive.kp,
+-                        g_telemetry_data.D2_drive.ki,
+-                        g_telemetry_data.D2_drive.kd);
++                        (int)g_telemetry_data.D2_drive.enc_pos_target,
++                        (int)g_telemetry_data.D2_drive.enc_pos,
++                        (int)g_telemetry_data.D2_drive.enc_error,
++                        (int)g_telemetry_data.D2_drive.enc_velocity,
++                        g_telemetry_data.D2_drive.pos_correction,
++                        g_telemetry_data.D2_drive.vel_damp,
++                        g_telemetry_data.D2_drive.theta_ref_adj,
++                        g_telemetry_data.D2_drive.active_scale,
++                        g_telemetry_data.D2_drive.max_correction);
+ 
+         pos += snprintf(buffer + pos, size - pos,
+                         "\"D3_steering\":{\"enabled\":%s,\"setpoint\":%.4f,"
+diff --git a/src/pid.c b/src/pid.c
+index a686850..93aa272 100644
+--- a/src/pid.c
++++ b/src/pid.c
+@@ -54,6 +54,10 @@ void pid_init(pid_controller_t* pid, float kp, float ki, float kd, float dt) {
+     pid->integrator = 0.0f;
+     pid->prev_error = 0.0f;
+     pid->integrator_max = 1.0f;  // Default anti-windup limit
++    pid->last_p_term = 0.0f;
++    pid->last_i_term = 0.0f;
++    pid->last_d_term = 0.0f;
++    pid->last_output = 0.0f;
+ }
+ 
+ float pid_update(pid_controller_t* pid, float setpoint, float measurement) {
+@@ -73,17 +77,29 @@ float pid_update(pid_controller_t* pid, float setpoint, float measurement) {
+     
+     // Derivative term
+     float d_term = pid->kd * (error - pid->prev_error) / pid->dt;
+-    
++
+     // Save error for next iteration
+     pid->prev_error = error;
+-    
+-    // Return total output
+-    return p_term + i_term + d_term;
++
++    float output = p_term + i_term + d_term;
++
++    // Record the actual terms for telemetry. d_term in particular cannot be
++    // recovered later because prev_error has just been overwritten.
++    pid->last_p_term = p_term;
++    pid->last_i_term = i_term;
++    pid->last_d_term = d_term;
++    pid->last_output = output;
++
++    return output;
+ }
+ 
+ void pid_reset(pid_controller_t* pid) {
+     pid->integrator = 0.0f;
+     pid->prev_error = 0.0f;
++    pid->last_p_term = 0.0f;
++    pid->last_i_term = 0.0f;
++    pid->last_d_term = 0.0f;
++    pid->last_output = 0.0f;
+ }
+ 
+ void pid_set_gains(pid_controller_t* pid, float kp, float ki, float kd) {
+diff --git a/src/pid_config.c b/src/pid_config.c
+index 16cc082..92cf080 100644
+--- a/src/pid_config.c
++++ b/src/pid_config.c
+@@ -305,6 +305,7 @@ void pid_config_print(const pid_config_file_t *config)
+     printf("  Ki = %.2f\n", config->D1_balance.ki);
+     printf("  Kd = %.2f\n", config->D1_balance.kd);
+     printf("\nD2 Drive Controller:\n");
++    printf("  (zone-based position hold — no PID gains; see pos_config)\n");
+     printf("\nD3 Steering Controller:\n");
+     printf("  Kp = %.2f\n", config->D3_steering.kp);
+     printf("  Ki = %.2f\n", config->D3_steering.ki);
+diff --git a/src/robot.c b/src/robot.c
+index 2227001..4cc4bd4 100644
+--- a/src/robot.c
++++ b/src/robot.c
+@@ -228,6 +228,10 @@ int robot_init(void)
+     state.theta_ref = 0.0f;
+     state.theta_offset = 0.0f;
+     state.steering = 0.0f;
++    state.d2_pos_correction = 0.0f;
++    state.d2_vel_damp = 0.0f;
++    state.d2_correction_out = 0.0f;
++    state.d2_active_scale = 0.0f;
+ 
+     rc_make_pid_file();
+     rc_set_state(RUNNING);
+@@ -583,25 +587,36 @@ void robot_run(void)
+                         // Inside tight deadband — zero and skip zone logic entirely
+                         last_correction = 0.0f;
+                         correction = 0.0f;
++                        state.d2_active_scale = 0.0f;
+                     }
+                     else if (g_pos_config.back_to_spot)
+                     {
+                         // Full zone-based proportional hold
+                         if (absErr > g_pos_config.zone_a)
+-                            correction = (float)err / g_pos_config.scale_a;
++                            state.d2_active_scale = g_pos_config.scale_a;
+                         else if (absErr > g_pos_config.zone_b)
+-                            correction = (float)err / g_pos_config.scale_b;
++                            state.d2_active_scale = g_pos_config.scale_b;
+                         else if (absErr > g_pos_config.zone_c)
+-                            correction = (float)err / g_pos_config.scale_c;
++                            state.d2_active_scale = g_pos_config.scale_c;
+                         else
+-                            correction = (float)err / g_pos_config.scale_d;
++                            state.d2_active_scale = g_pos_config.scale_d;
++
++                        correction = (float)err / state.d2_active_scale;
+                     }
+                     else
+                     {
+                         if (absErr < g_pos_config.zone_c)
+-                            correction = (float)err / g_pos_config.scale_d;
++                        {
++                            state.d2_active_scale = g_pos_config.scale_d;
++                            correction = (float)err / state.d2_active_scale;
++                        }
+                         else
++                        {
++                            // Outside zone_c in loose-hold mode: abandon the old
++                            // target rather than correcting toward it.
++                            state.d2_active_scale = 0.0f;
+                             state.enc_pos_target = state.enc_pos;
++                        }
+                     }
+ 
+                     state.d2_pos_correction = correction;
+@@ -640,6 +655,14 @@ void robot_run(void)
+                         correction += vel_comp;
+                     }
+                     state.enc_pos_target = state.enc_pos;
++
++                    // Position hold is not running while driving. Clear the hold
++                    // telemetry so it does not sit at stale values from the last
++                    // centred tick and get read as live position-hold activity.
++                    state.d2_pos_correction = 0.0f;
++                    state.d2_vel_damp = 0.0f;
++                    state.d2_active_scale = 0.0f;
++                    state.d2_correction_out = correction;
+                 }
+             } // end if (g_controllers.D2_drive && state.armed)
+             else
+diff --git a/src/telemetry.c b/src/telemetry.c
+index 58b60c4..93735c5 100644
+--- a/src/telemetry.c
++++ b/src/telemetry.c
+@@ -160,43 +160,41 @@ static void update_pid_telemetry(void)
+     g_telemetry_data.D1_balance.setpoint = state.theta_ref + state.theta_offset;
+     g_telemetry_data.D1_balance.measurement = state.theta;
+     g_telemetry_data.D1_balance.error = balance_pid.prev_error;
+-    g_telemetry_data.D1_balance.p_term = balance_pid.kp * balance_pid.prev_error;
+-    g_telemetry_data.D1_balance.i_term = balance_pid.ki * balance_pid.integrator;
+-    g_telemetry_data.D1_balance.d_term = 0.0f;
+-    g_telemetry_data.D1_balance.output = g_telemetry_data.D1_balance.p_term + g_telemetry_data.D1_balance.i_term;
++    // Read the terms recorded by pid_update() rather than recomputing them.
++    // d_term cannot be reconstructed here (prev_error has already advanced),
++    // and output must be the real controller output — a p+i reconstruction
++    // silently hides the derivative contribution from every log and graph.
++    g_telemetry_data.D1_balance.p_term = balance_pid.last_p_term;
++    g_telemetry_data.D1_balance.i_term = balance_pid.last_i_term;
++    g_telemetry_data.D1_balance.d_term = balance_pid.last_d_term;
++    g_telemetry_data.D1_balance.output = balance_pid.last_output;
+     g_telemetry_data.D1_balance.kp = balance_pid.kp;
+     g_telemetry_data.D1_balance.ki = balance_pid.ki;
+     g_telemetry_data.D1_balance.kd = balance_pid.kd;
+ 
+-    // D2: Drive (position) controller -- zone-based, not a true PID.
+-    // Map fields to encoder-tick semantics so the graph is meaningful:
+-    //   setpoint    = enc_pos_target (ticks)
+-    //   measurement = enc_pos        (ticks)
+-    //   error       = enc_pos - enc_pos_target (ticks, sign: +ve = ahead of target)
+-    //   output      = last correction injected into theta_ref (deg) -- tracked via
+-    //                 the steering_latch field reuse; approximate from error/scale
+-    //   kp/ki/kd    = not applicable; send pos_config zone/scale summary as kp
++    // D2: Drive (position-hold) controller — NOT a PID. See drive_telemetry_t.
++    // Every field is named for the quantity it actually carries. Do not
++    // reintroduce setpoint/measurement/p_term/i_term/d_term aliases here.
+     g_telemetry_data.D2_drive.enabled = g_controllers.D2_drive;
+-    g_telemetry_data.D2_drive.setpoint = (float)state.enc_pos_target;
+-    g_telemetry_data.D2_drive.measurement = (float)state.enc_pos;
+-    g_telemetry_data.D2_drive.error = (float)(state.enc_pos - state.enc_pos_target);
+-    g_telemetry_data.D2_drive.p_term = state.d2_pos_correction;   // position error → lean (deg)
+-    g_telemetry_data.D2_drive.i_term = state.d2_vel_damp;         // velocity damp  → lean (deg)
+-    g_telemetry_data.D2_drive.d_term = (float)state.enc_velocity; // raw tick velocity
+-    g_telemetry_data.D2_drive.output = state.d2_correction_out;   // final lean correction injected (deg)
+-    g_telemetry_data.D2_drive.kp = (float)g_pos_config.zone_a;
+-    g_telemetry_data.D2_drive.ki = g_pos_config.scale_a;
+-    g_telemetry_data.D2_drive.kd = g_pos_config.max_correction;
++    g_telemetry_data.D2_drive.enc_pos_target = state.enc_pos_target;
++    g_telemetry_data.D2_drive.enc_pos = state.enc_pos;
++    g_telemetry_data.D2_drive.enc_error = state.enc_pos - state.enc_pos_target;
++    g_telemetry_data.D2_drive.enc_velocity = state.enc_velocity;
++    g_telemetry_data.D2_drive.pos_correction = state.d2_pos_correction;
++    g_telemetry_data.D2_drive.vel_damp = state.d2_vel_damp;
++    g_telemetry_data.D2_drive.theta_ref_adj = state.d2_correction_out;
++    g_telemetry_data.D2_drive.active_scale = state.d2_active_scale;
++    g_telemetry_data.D2_drive.max_correction = g_pos_config.max_correction;
+ 
+     // D3: Steering controller
+     g_telemetry_data.D3_steering.enabled = g_controllers.D3_steering;
+     g_telemetry_data.D3_steering.setpoint = state.steering;
+     g_telemetry_data.D3_steering.measurement = (state.phi_left - state.phi_right) / 2.0f;  // deg diff
+     g_telemetry_data.D3_steering.error = steering_pid.prev_error;
+-    g_telemetry_data.D3_steering.p_term = steering_pid.kp * steering_pid.prev_error;
+-    g_telemetry_data.D3_steering.i_term = steering_pid.ki * steering_pid.integrator;
+-    g_telemetry_data.D3_steering.d_term = 0.0f;
+-    g_telemetry_data.D3_steering.output = g_telemetry_data.D3_steering.p_term + g_telemetry_data.D3_steering.i_term;
++    g_telemetry_data.D3_steering.p_term = steering_pid.last_p_term;
++    g_telemetry_data.D3_steering.i_term = steering_pid.last_i_term;
++    g_telemetry_data.D3_steering.d_term = steering_pid.last_d_term;
++    g_telemetry_data.D3_steering.output = steering_pid.last_output;
+     g_telemetry_data.D3_steering.kp = steering_pid.kp;
+     g_telemetry_data.D3_steering.ki = steering_pid.ki;
+     g_telemetry_data.D3_steering.kd = steering_pid.kd;

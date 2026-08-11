@@ -1234,6 +1234,7 @@
           <div>
             <div class="card-title">D2: Position Hold</div>
             <div style="font-size:9px;color:var(--txt3)">Encoder ticks → Lean angle bias · Keeps bot in place</div>
+            <div style="font-size:9px;color:var(--txt3);margin-top:2px">Not a PID — zone-scheduled, no kp/ki/kd</div>
           </div>
           <button class="enable-btn off" id="pid-d2-en" onclick="toggleCtrl('D2_drive','d2')">OFF</button>
         </div>
@@ -1295,8 +1296,8 @@
           <input type="range" class="pid-slider" id="sl-qpps" min="100" max="6000" step="50"
             oninput="onClawCfg('qpps_max',this.value)">
           <div class="pid-ctrl">
-            <input class="val-box" id="vb-qpps" value="2500"
-              onchange="onClawCfg('qpps_max',this.value)" onblur="onClawCfg('qpps_max',this.value)">
+            <input class="val-box" id="vb-qpps" value="2500" onchange="onClawCfg('qpps_max',this.value)"
+              onblur="onClawCfg('qpps_max',this.value)">
           </div>
         </div>
         <div class="pid-row">
@@ -1304,8 +1305,8 @@
           <input type="range" class="pid-slider" id="sl-accel" min="100" max="20000" step="100"
             oninput="onClawCfg('accel_qpps',this.value)">
           <div class="pid-ctrl">
-            <input class="val-box" id="vb-accel" value="5000"
-              onchange="onClawCfg('accel_qpps',this.value)" onblur="onClawCfg('accel_qpps',this.value)">
+            <input class="val-box" id="vb-accel" value="5000" onchange="onClawCfg('accel_qpps',this.value)"
+              onblur="onClawCfg('accel_qpps',this.value)">
           </div>
         </div>
       </div>
@@ -1347,15 +1348,16 @@
 
       <!-- Velocity PID -->
       <div class="card">
-        <div class="card-title">Velocity PID <span style="font-size:9px;color:var(--txt3);font-weight:400">(modes 1 &amp; 2 only)</span></div>
+        <div class="card-title">Velocity PID <span style="font-size:9px;color:var(--txt3);font-weight:400">(modes 1
+            &amp; 2 only)</span></div>
         <div class="pid-row">
           <span class="pid-label">Kp</span>
           <input type="range" class="pid-slider" id="sl-claw-kp" min="0" max="10" step="0.01"
             oninput="onClawPID('kp',this.value)">
           <div class="pid-ctrl">
             <button class="step-btn" onclick="stepClawPID('kp',-1)">−</button>
-            <input class="val-box" id="vb-claw-kp" value="1.000"
-              onchange="onClawPID('kp',this.value)" onblur="onClawPID('kp',this.value)">
+            <input class="val-box" id="vb-claw-kp" value="1.000" onchange="onClawPID('kp',this.value)"
+              onblur="onClawPID('kp',this.value)">
             <button class="step-btn" onclick="stepClawPID('kp',1)">+</button>
           </div>
         </div>
@@ -1365,8 +1367,8 @@
             oninput="onClawPID('ki',this.value)">
           <div class="pid-ctrl">
             <button class="step-btn" onclick="stepClawPID('ki',-1)">−</button>
-            <input class="val-box" id="vb-claw-ki" value="0.500"
-              onchange="onClawPID('ki',this.value)" onblur="onClawPID('ki',this.value)">
+            <input class="val-box" id="vb-claw-ki" value="0.500" onchange="onClawPID('ki',this.value)"
+              onblur="onClawPID('ki',this.value)">
             <button class="step-btn" onclick="stepClawPID('ki',1)">+</button>
           </div>
         </div>
@@ -1376,8 +1378,8 @@
             oninput="onClawPID('kd',this.value)">
           <div class="pid-ctrl">
             <button class="step-btn" onclick="stepClawPID('kd',-1)">−</button>
-            <input class="val-box" id="vb-claw-kd" value="0.250"
-              onchange="onClawPID('kd',this.value)" onblur="onClawPID('kd',this.value)">
+            <input class="val-box" id="vb-claw-kd" value="0.250" onchange="onClawPID('kd',this.value)"
+              onblur="onClawPID('kd',this.value)">
             <button class="step-btn" onclick="stepClawPID('kd',1)">+</button>
           </div>
         </div>
@@ -1397,8 +1399,8 @@
           Changes BBB serial baud to match RoboClaw setting. Takes effect immediately.
         </div>
         <div class="seg-group" id="baud-seg" style="flex-wrap:wrap">
-          <button class="seg-btn" data-baud="9600"   onclick="setBaud(9600)">9600</button>
-          <button class="seg-btn" data-baud="38400"  onclick="setBaud(38400)">38400</button>
+          <button class="seg-btn" data-baud="9600" onclick="setBaud(9600)">9600</button>
+          <button class="seg-btn" data-baud="38400" onclick="setBaud(38400)">38400</button>
           <button class="seg-btn" data-baud="115200" onclick="setBaud(115200)">115200</button>
           <button class="seg-btn" data-baud="230400" onclick="setBaud(230400)">230400</button>
           <button class="seg-btn active" data-baud="460800" onclick="setBaud(460800)">460800</button>
@@ -1411,16 +1413,16 @@
         <div class="row" style="gap:8px">
           <button class="icon-btn" style="flex:1" onclick="sendCmd({type:'save_pid'})">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-              <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+              <polyline points="17 21 17 13 7 13 7 21" />
+              <polyline points="7 3 7 8 15 8" />
             </svg>
             SAVE
           </button>
-          <button class="icon-btn" style="flex:1;color:var(--orange);border-color:var(--orange)"
-            onclick="doReboot()">
+          <button class="icon-btn" style="flex:1;color:var(--orange);border-color:var(--orange)" onclick="doReboot()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-              <polyline points="1 4 1 10 7 10"/>
-              <path d="M3.51 15a9 9 0 1 0 .49-4.95"/>
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 1 0 .49-4.95" />
             </svg>
             REBOOT
           </button>
@@ -1505,17 +1507,18 @@
       encoders: null,
       cat: null,
       d1: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
-      d2: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
+      // D2 is a zone-based position hold, not a PID — different shape on purpose.
+      d2: { enabled: false, encTarget: 0, encPos: 0, encError: 0, encVel: 0, posCorr: 0, velDamp: 0, thetaAdj: 0, activeScale: 0, maxCorrection: 0 },
       d3: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
     };
 
+    // D1 and D3 only. D2 has no gains; see posCfg for its tuning parameters.
     const pidCfg = {
       d1: { kp: 40, ki: 0, kd: 5, received: false },
-      d2: { kp: 20, ki: 0.5, kd: 2, received: false },
       d3: { kp: 15, ki: 0, kd: 1.5, received: false },
     };
 
-    const pidMult = { d1: 1, d2: 1, d3: 1, claw: 1 };
+    const pidMult = { d1: 1, d3: 1, claw: 1 };
 
     // Claw motor controller config (mirrors motor_config_t)
     const clawCfg = {
@@ -1564,6 +1567,7 @@
     const TOP_PAD = 6;
 
     const SERIES_COLORS = {
+      // D1 / D3 — genuine PID loops
       setpoint: '#4fc3f7',
       measurement: '#00e676',
       error: '#ff9500',
@@ -1571,8 +1575,26 @@
       iTerm: '#00e5ff',
       dTerm: '#64ffda',
       output: '#ff3d3d',
+      // D2 — zone-based position hold, distinct key namespace on purpose
+      encTarget: '#4fc3f7',
+      encPos: '#00e676',
+      encError: '#ff9500',
+      encVel: '#64ffda',
+      posCorr: '#b388ff',
+      velDamp: '#00e5ff',
+      thetaAdj: '#ff3d3d',
+      activeScale: '#ffd54f',
     };
-    const SERIES_KEYS = ['setpoint', 'measurement', 'error', 'pTerm', 'iTerm', 'dTerm', 'output'];
+
+    // D1 and D3 run pid_update(). D2 does not — it is a zone-based position
+    // hold with no gains, no integrator and no derivative. It gets its own key
+    // set so that nothing (graphs, legends, CSV headers) can present its
+    // signals as P/I/D terms. Do not collapse these back into one list.
+    const PID_KEYS = ['setpoint', 'measurement', 'error', 'pTerm', 'iTerm', 'dTerm', 'output'];
+    const DRIVE_KEYS = ['encTarget', 'encPos', 'encError', 'encVel', 'posCorr', 'velDamp', 'thetaAdj', 'activeScale'];
+    const CTRL_KEYS = [PID_KEYS, DRIVE_KEYS, PID_KEYS];
+    const keysFor = ctrl => CTRL_KEYS[ctrl];
+
     const SERIES_LABELS = {
       setpoint: 'Setpoint',
       measurement: 'Meas',
@@ -1581,29 +1603,27 @@
       iTerm: 'I term',
       dTerm: 'D term',
       output: 'Output',
-    };
-    // D2-specific label overrides shown in plot headers
-    const D2_LABELS = {
-      error: 'Err (ticks)',
-      pTerm: 'Pos corr (°)',
-      iTerm: 'Vel damp (°)',
-      dTerm: 'Tick vel',
-      output: 'θ_ref adj (°)',
-      measurement: 'Pos (ticks)',
-      setpoint: 'Target (ticks)',
+      encTarget: 'Target (ticks)',
+      encPos: 'Pos (ticks)',
+      encError: 'Err (ticks)',
+      encVel: 'Tick vel',
+      posCorr: 'Pos corr (°)',
+      velDamp: 'Vel damp (°)',
+      thetaAdj: 'θ_ref adj (°)',
+      activeScale: 'Zone scale',
     };
     function seriesLabel(ctrl, key) {
-      return (ctrl === 1 && D2_LABELS[key]) ? D2_LABELS[key] : SERIES_LABELS[key];
+      return SERIES_LABELS[key] || key;
     }
     const CTRL_NAMES = ['D1', 'D2', 'D3'];
     const CTRL_DASH = [[], [8, 4], [2, 4]];
 
-    function makeBuf() {
+    function makeBuf(ctrlIdx) {
       const o = {};
-      SERIES_KEYS.forEach(k => o[k] = []);
+      keysFor(ctrlIdx).forEach(k => o[k] = []);
       return o;
     }
-    const graphBufs = [makeBuf(), makeBuf(), makeBuf()];
+    const graphBufs = [makeBuf(0), makeBuf(1), makeBuf(2)];
     const graphT0 = [null, null, null];
 
     function currentT(ctrlIdx) {
@@ -1622,28 +1642,40 @@
         while (buf[key].length && buf[key][0].t < cutoff) buf[key].shift();
         if (buf[key].length > MAX_PTS) buf[key].splice(0, buf[key].length - MAX_PTS);
       }
-      add('setpoint', s.setpoint || 0);
-      add('measurement', s.measurement !== undefined ? s.measurement : 0);
-      add('error', s.error || 0);
-      add('pTerm', s.pTerm !== undefined ? s.pTerm : (s.p_term || 0));
-      add('iTerm', s.iTerm !== undefined ? s.iTerm : (s.i_term || 0));
-      add('dTerm', s.dTerm !== undefined ? s.dTerm : (s.d_term || 0));
-      add('output', s.output || 0);
+      if (ctrlIdx === 1) {
+        // D2 — position hold. Keys are drive-specific by design.
+        add('encTarget', s.encTarget || 0);
+        add('encPos', s.encPos || 0);
+        add('encError', s.encError || 0);
+        add('encVel', s.encVel || 0);
+        add('posCorr', s.posCorr || 0);
+        add('velDamp', s.velDamp || 0);
+        add('thetaAdj', s.thetaAdj || 0);
+        add('activeScale', s.activeScale || 0);
+      } else {
+        add('setpoint', s.setpoint || 0);
+        add('measurement', s.measurement !== undefined ? s.measurement : 0);
+        add('error', s.error || 0);
+        add('pTerm', s.pTerm !== undefined ? s.pTerm : (s.p_term || 0));
+        add('iTerm', s.iTerm !== undefined ? s.iTerm : (s.i_term || 0));
+        add('dTerm', s.dTerm !== undefined ? s.dTerm : (s.d_term || 0));
+        add('output', s.output || 0);
+      }
       if (recording) {
         if (!recordBuf[ctrlIdx]) recordBuf[ctrlIdx] = [];
-        recordBuf[ctrlIdx].push({ t, ...Object.fromEntries(SERIES_KEYS.map(k => [k, buf[k].at(-1)?.v ?? 0])) });
+        recordBuf[ctrlIdx].push({ t, ...Object.fromEntries(keysFor(ctrlIdx).map(k => [k, buf[k].at(-1)?.v ?? 0])) });
       }
     }
 
     function resetGraph() {
-      graphBufs.forEach((b, i) => { SERIES_KEYS.forEach(k => b[k] = []); graphT0[i] = null; });
-      recording = false; recordBuf = [{}, {}, {}]; updateRecBtn();
+      graphBufs.forEach((b, i) => { keysFor(i).forEach(k => b[k] = []); graphT0[i] = null; });
+      recording = false; recordBuf = [[], [], []]; updateRecBtn();
     }
 
     // ── Plot state ────────────────────────────────────────────────────────────────
     let plots = [
-      { id: 0, series: [{ ctrl: 1, key: 'error' }, { ctrl: 1, key: 'dTerm' }] },
-      { id: 1, series: [{ ctrl: 1, key: 'pTerm' }, { ctrl: 1, key: 'iTerm' }, { ctrl: 1, key: 'output' }] },
+      { id: 0, series: [{ ctrl: 1, key: 'encError' }, { ctrl: 1, key: 'encVel' }] },
+      { id: 1, series: [{ ctrl: 1, key: 'posCorr' }, { ctrl: 1, key: 'velDamp' }, { ctrl: 1, key: 'thetaAdj' }] },
       { id: 2, series: [{ ctrl: 0, key: 'measurement' }, { ctrl: 0, key: 'setpoint' }, { ctrl: 0, key: 'output' }] },
     ];
     let nextPlotId = 3;
@@ -1738,7 +1770,7 @@
           grp.textContent = CTRL_NAMES[ci];
           dropdown.appendChild(grp);
 
-          SERIES_KEYS.forEach(function (k) {
+          keysFor(ci).forEach(function (k) {
             const active = plot.series.find(function (s) { return s.ctrl === ci && s.key === k; });
             const col = SERIES_COLORS[k];
             const item = document.createElement('div');
@@ -1808,11 +1840,26 @@
 
     // ── Recording ─────────────────────────────────────────────────────────────────
     let recording = false;
-    let recordBuf = [{}, {}, {}];
+    let recordBuf = [[], [], []];
+    // Config in effect when Rec was pressed. Snapshotted at start, not at save:
+    // pidconfig.txt holds startup DEFAULTS, and the live values can be retuned
+    // from the UI mid-session. A log that does not carry its own config cannot
+    // be compared against another run.
+    let recordMeta = null;
+
+    function snapshotConfig() {
+      return {
+        started: new Date().toISOString(),
+        posCfgLive: posCfgReceived,   // false => values below are UI defaults, not the bot's
+        pos: { ...posCfg },
+        d1: { ...pidCfg.d1 },
+        d3: { ...pidCfg.d3 },
+      };
+    }
 
     function toggleRecord() {
-      if (recording) { recording = false; saveCSV(); recordBuf = [{}, {}, {}]; }
-      else { recording = true; recordBuf = [{}, {}, {}]; }
+      if (recording) { recording = false; saveCSV(); recordBuf = [[], [], []]; recordMeta = null; }
+      else { recording = true; recordBuf = [[], [], []]; recordMeta = snapshotConfig(); }
       updateRecBtn();
     }
     function updateRecBtn() {
@@ -1823,14 +1870,37 @@
     }
     function saveCSV() {
       const ctrlNames = ['d1', 'd2', 'd3'];
-      const cols = ['t'].concat(ctrlNames.flatMap(c => SERIES_KEYS.map(k => c + '_' + k)));
-      let csv = cols.join(',') + '\n';
-      const maxLen = Math.max(...recordBuf.map(b => (b[SERIES_KEYS[0]] || []).length));
+      // Headers come from each controller's own key set, so d2 columns are
+      // named d2_encError / d2_posCorr / etc. An exported d2_pTerm column would
+      // be read as a PID trace by anyone opening the file later — it is not one.
+      const cols = ['t'].concat(ctrlNames.flatMap((c, ci) => keysFor(ci).map(k => c + '_' + k)));
+
+      // Commented preamble: the config this run was actually recorded under.
+      // Readable with pandas.read_csv(..., comment='#') or csv module + filter.
+      const m = recordMeta || snapshotConfig();
+      const p = m.pos;
+      let csv = '';
+      csv += `# bbot telemetry log\n`;
+      csv += `# started=${m.started}\n`;
+      csv += `# config_source=${m.posCfgLive ? 'live (synced from firmware telemetry)' : 'UI DEFAULTS — bot never reported pos_config, values below are NOT authoritative'}\n`;
+      csv += `# pos_config: zone_a=${p.zone_a} zone_b=${p.zone_b} zone_c=${p.zone_c}\n`;
+      csv += `#   scale_a=${p.scale_a} scale_b=${p.scale_b} scale_c=${p.scale_c} scale_d=${p.scale_d}\n`;
+      csv += `#   vel_scale_stop=${p.vel_scale_stop} vel_scale_move=${p.vel_scale_move} vel_scale_turning=${p.vel_scale_turning}\n`;
+      csv += `#   stopped_vel=${p.stopped_vel} max_correction=${p.max_correction} max_angle_rate=${p.max_angle_rate}\n`;
+      csv += `#   back_to_spot=${p.back_to_spot}\n`;
+      csv += `# d1_gains: kp=${m.d1.kp} ki=${m.d1.ki} kd=${m.d1.kd}\n`;
+      csv += `# d3_gains: kp=${m.d3.kp} ki=${m.d3.ki} kd=${m.d3.kd}\n`;
+      csv += `# note: D2 is a zone-scheduled position hold, not a PID — it has no gains.\n`;
+      csv += `#   d2_encError is (enc_pos_target - enc_pos), same sign as the error the\n`;
+      csv += `#   controller acts on, so d2_posCorr == d2_encError / d2_activeScale.\n`;
+
+      csv += cols.join(',') + '\n';
+      const maxLen = Math.max(...recordBuf.map(b => b.length));
       for (let i = 0; i < maxLen; i++) {
-        const tVal = recordBuf.map(b => b[SERIES_KEYS[0]]?.[i]?.t).find(v => v !== undefined) ?? 0;
+        const tVal = recordBuf.map(b => b[i]?.t).find(v => v !== undefined) ?? 0;
         let row = [tVal.toFixed(3)];
-        recordBuf.forEach(b => {
-          SERIES_KEYS.forEach(k => row.push(((b[k]?.[i]?.v) ?? 0).toFixed(4)));
+        recordBuf.forEach((b, ci) => {
+          keysFor(ci).forEach(k => row.push(((b[i]?.[k]) ?? 0).toFixed(4)));
         });
         csv += row.join(',') + '\n';
       }
@@ -1846,13 +1916,13 @@
     let wsReconnectTimer = null;
 
     // Auto-populate IP: use hostname if served from BBB, else restore last saved IP
-    (function() {
+    (function () {
       const hostname = window.location.hostname;
-      const savedIp  = localStorage.getItem('bbot_ip');
+      const savedIp = localStorage.getItem('bbot_ip');
       const savedPort = localStorage.getItem('bbot_port');
       const ip = (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1')
-                 ? hostname
-                 : (savedIp || '192.168.1.137');
+        ? hostname
+        : (savedIp || '192.168.1.137');
       document.getElementById('cfg-bbb-ip').value = ip;
       if (savedPort) document.getElementById('cfg-ws-port').value = savedPort;
     })();
@@ -1923,6 +1993,8 @@
     // ════════════════════════════════════════════════════════════════════════════
     // Telemetry
     // ════════════════════════════════════════════════════════════════════════════
+    // D1 / D3 only. These are real PID loops; p_term/i_term/d_term/output are
+    // the actual terms recorded inside pid_update().
     function normPID(raw) {
       if (!raw) return null;
       return {
@@ -1938,6 +2010,25 @@
       };
     }
 
+    // D2 only. Separate function from normPID because D2 is a zone-based
+    // position hold, not a PID — it has no gains and nothing here maps onto
+    // P, I or D. Firmware emits kind:"zone_position_hold" on this block.
+    function normDrive(raw) {
+      if (!raw) return null;
+      return {
+        enabled: raw.enabled ?? false,
+        encTarget: raw.enc_pos_target ?? 0,
+        encPos: raw.enc_pos ?? 0,
+        encError: raw.enc_error ?? 0,
+        encVel: raw.enc_velocity ?? 0,
+        posCorr: raw.pos_correction ?? 0,
+        velDamp: raw.vel_damp ?? 0,
+        thetaAdj: raw.theta_ref_adj ?? 0,
+        activeScale: raw.active_scale ?? 0,
+        maxCorrection: raw.max_correction ?? 0,
+      };
+    }
+
     function handleTelemetry(d) {
       state.packetsReceived++;
 
@@ -1948,7 +2039,7 @@
         state.battVoltage = d.system.batt_voltage ?? null;
         state.battStatus = d.system.batt_status ?? null;
         state.clawVoltage = (d.system.claw_voltage > 0) ? d.system.claw_voltage : null;
-        state.clawTemp    = (d.system.claw_temp > 0) ? d.system.claw_temp : null;
+        state.clawTemp = (d.system.claw_temp > 0) ? d.system.claw_temp : null;
       }
       if (d.imu) {
         state.imu.theta = d.imu.theta ?? 0;
@@ -1959,7 +2050,7 @@
       if (d.cat) state.cat = d.cat;
 
       const d1r = normPID(d.D1_balance);
-      const d2r = normPID(d.D2_drive);
+      const d2r = normDrive(d.D2_drive);
       const d3r = normPID(d.D3_steering);
 
       if (d1r) {
@@ -1972,12 +2063,10 @@
         }
       }
       if (d2r) {
+        // No gain sync here — D2 has no gains. Its tuning arrives in
+        // d.pos_config (zones, scales, max_correction, max_angle_rate).
         Object.assign(state.d2, d2r);
         appendGraphPoint(1, d2r);
-        if (!pidCfg.d2.received && d2r.kp != null) {
-          pidCfg.d2.kp = d2r.kp; pidCfg.d2.ki = d2r.ki ?? 0; pidCfg.d2.kd = d2r.kd ?? 0;
-          pidCfg.d2.received = true;
-        }
       }
       if (d3r) {
         Object.assign(state.d3, d3r);
@@ -2013,18 +2102,18 @@
         state.motorMode = d.motor_config.mode ?? 0;
         if (!clawCfg.received) {
           const mc = d.motor_config;
-          clawCfg.mode       = mc.mode        ?? clawCfg.mode;
-          clawCfg.qpps_max   = mc.qpps_max    ?? clawCfg.qpps_max;
-          clawCfg.accel_qpps = mc.accel_qpps  ?? clawCfg.accel_qpps;
-          clawCfg.pol_l      = mc.pol_l        ?? clawCfg.pol_l;
-          clawCfg.pol_r      = mc.pol_r        ?? clawCfg.pol_r;
-          clawCfg.enc_pol_l  = mc.enc_pol_l    ?? clawCfg.enc_pol_l;
-          clawCfg.enc_pol_r  = mc.enc_pol_r    ?? clawCfg.enc_pol_r;
-          clawCfg.kp         = mc.claw_kp      ?? clawCfg.kp;
-          clawCfg.ki         = mc.claw_ki      ?? clawCfg.ki;
-          clawCfg.kd         = mc.claw_kd      ?? clawCfg.kd;
-          clawCfg.baud       = mc.baud         ?? clawCfg.baud;
-          clawCfg.received   = true;
+          clawCfg.mode = mc.mode ?? clawCfg.mode;
+          clawCfg.qpps_max = mc.qpps_max ?? clawCfg.qpps_max;
+          clawCfg.accel_qpps = mc.accel_qpps ?? clawCfg.accel_qpps;
+          clawCfg.pol_l = mc.pol_l ?? clawCfg.pol_l;
+          clawCfg.pol_r = mc.pol_r ?? clawCfg.pol_r;
+          clawCfg.enc_pol_l = mc.enc_pol_l ?? clawCfg.enc_pol_l;
+          clawCfg.enc_pol_r = mc.enc_pol_r ?? clawCfg.enc_pol_r;
+          clawCfg.kp = mc.claw_kp ?? clawCfg.kp;
+          clawCfg.ki = mc.claw_ki ?? clawCfg.ki;
+          clawCfg.kd = mc.claw_kd ?? clawCfg.kd;
+          clawCfg.baud = mc.baud ?? clawCfg.baud;
+          clawCfg.received = true;
           syncClawTab();
         }
       }
@@ -2046,8 +2135,8 @@
       const cv = state.clawVoltage;
       const clawVStr = cv != null ? `${cv.toFixed(1)}V` : '––';
       const clawVCol = cv == null ? 'var(--txt3)' : cv > 11.0 ? 'var(--green)' : cv > 10.0 ? 'var(--yellow)' : 'var(--red)';
-      setTxt('h-claw-v',   clawVStr, clawVCol);
-      setTxt('c-claw-v',   clawVStr, clawVCol);
+      setTxt('h-claw-v', clawVStr, clawVCol);
+      setTxt('c-claw-v', clawVStr, clawVCol);
       setTxt('claw-v-big', clawVStr, clawVCol);
 
       const ct = state.clawTemp;
@@ -2135,18 +2224,20 @@
       const errEl = document.getElementById(`${ctrl}-err`);
       const outEl = document.getElementById(`${ctrl}-out`);
       const barEl = document.getElementById(`${ctrl}-bar`);
-      if (errEl) errEl.textContent = s.error.toFixed(ctrl === 'd2' ? 0 : 3);
-      if (outEl && ctrl !== 'd2') outEl.textContent = s.output.toFixed(3);
       if (ctrl === 'd2') {
+        // D2 reads from drive fields, not setpoint/measurement/error/output.
+        if (errEl) errEl.textContent = s.encError.toFixed(0);
         const maxErr = posCfg.zone_a || 8000;
-        const frac = Math.min(Math.abs(s.error) / maxErr, 1.0) * 100;
-        const col = Math.abs(s.error) < posCfg.zone_c ? 'var(--green)' :
-          Math.abs(s.error) < posCfg.zone_b ? 'var(--yellow)' : 'var(--orange)';
+        const frac = Math.min(Math.abs(s.encError) / maxErr, 1.0) * 100;
+        const col = Math.abs(s.encError) < posCfg.zone_c ? 'var(--green)' :
+          Math.abs(s.encError) < posCfg.zone_b ? 'var(--yellow)' : 'var(--orange)';
         if (barEl) { barEl.style.width = frac + '%'; barEl.style.background = col; }
-        setTxt(`d2-sp`, s.setpoint.toFixed(0));
-        setTxt(`d2-meas`, s.measurement.toFixed(0));
-        setTxt(`d2-err`, s.error.toFixed(0), 'var(--orange)');
+        setTxt(`d2-sp`, s.encTarget.toFixed(0));
+        setTxt(`d2-meas`, s.encPos.toFixed(0));
+        setTxt(`d2-err`, s.encError.toFixed(0), 'var(--orange)');
       } else {
+        if (errEl) errEl.textContent = s.error.toFixed(3);
+        if (outEl) outEl.textContent = s.output.toFixed(3);
         if (barEl) {
           const frac = Math.min(Math.abs(s.output), 1.0) * 100;
           barEl.style.width = frac + '%';
@@ -2284,8 +2375,14 @@
     }
 
     function sendPIDUpdate(ctrl) {
+      // d2 is deliberately absent: D2_drive is not a PID and the firmware
+      // rejects set_pid for it. D2 is tuned through sendPosConfig().
+      const names = { d1: 'D1_balance', d3: 'D3_steering' };
+      if (!names[ctrl]) {
+        console.warn(`sendPIDUpdate: ${ctrl} has no PID gains — ignoring`);
+        return;
+      }
       const c = pidCfg[ctrl];
-      const names = { d1: 'D1_balance', d2: 'D2_drive', d3: 'D3_steering' };
       sendCmd({ type: 'set_pid', controller: names[ctrl], kp: c.kp, ki: c.ki, kd: c.kd });
     }
 
@@ -2506,8 +2603,8 @@
       setSliderVal('qpps', clawCfg.qpps_max);
       setSliderVal('accel', clawCfg.accel_qpps);
       // polarity segs
-      syncPolSeg('pol-l-seg',     clawCfg.pol_l);
-      syncPolSeg('pol-r-seg',     clawCfg.pol_r);
+      syncPolSeg('pol-l-seg', clawCfg.pol_l);
+      syncPolSeg('pol-r-seg', clawCfg.pol_r);
       syncPolSeg('enc-pol-l-seg', clawCfg.enc_pol_l);
       syncPolSeg('enc-pol-r-seg', clawCfg.enc_pol_r);
       // velocity PID

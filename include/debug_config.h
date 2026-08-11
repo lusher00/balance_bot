@@ -41,7 +41,7 @@
 /**
  * @file debug_config.h
  * @brief Debug configuration and telemetry structures for balance_bot
- * 
+ *
  * This file defines all debug flags, telemetry data structures, and
  * configuration options that can be controlled from the iPhone app.
  */
@@ -61,28 +61,30 @@
 /**
  * @brief Encoder telemetry data
  */
-typedef struct {
-    int32_t left_ticks;      // Raw encoder ticks
+typedef struct
+{
+    int32_t left_ticks; // Raw encoder ticks
     int32_t right_ticks;
-    float left_rad;          // Position in radians
+    float left_rad; // Position in radians
     float right_rad;
-    float left_vel;          // Velocity in rad/s
+    float left_vel; // Velocity in rad/s
     float right_vel;
 } encoder_telemetry_t;
 
 /**
  * @brief IMU telemetry data (full state)
  */
-typedef struct {
+typedef struct
+{
     // Attitude (orientation) - transformed via imu_config, used by PID
-    float theta;             // Pitch - forward/back lean (rad)
-    float phi;               // Roll - side lean (rad)
-    float psi;               // Yaw - rotation (rad)
-    
+    float theta; // Pitch - forward/back lean (rad)
+    float phi;   // Roll - side lean (rad)
+    float psi;   // Yaw - rotation (rad)
+
     // Angular rates
-    float theta_dot;         // Pitch rate (rad/s)
-    float phi_dot;           // Roll rate (rad/s)
-    float psi_dot;           // Yaw rate (rad/s)
+    float theta_dot; // Pitch rate (rad/s)
+    float phi_dot;   // Roll rate (rad/s)
+    float psi_dot;   // Yaw rate (rad/s)
 
     // Raw quaternion from DMP - no gimbal lock, used for 3D visualization
     float qw, qx, qy, qz;
@@ -91,7 +93,7 @@ typedef struct {
     float accel_x;
     float accel_y;
     float accel_z;
-    
+
     // Raw gyroscope (rad/s)
     float gyro_x;
     float gyro_y;
@@ -100,76 +102,119 @@ typedef struct {
 
 /**
  * @brief PID controller state (for telemetry)
+ *
+ * Used by D1_balance and D3_steering ONLY. Both are genuine PID loops
+ * running pid_update(). D2 is not — see drive_telemetry_t below.
  */
-typedef struct {
-    bool enabled;            // Is this controller active?
-    float setpoint;          // Desired value
-    float measurement;       // Actual value
-    float error;             // setpoint - measurement
-    float p_term;            // Proportional term
-    float i_term;            // Integral term
-    float d_term;            // Derivative term
-    float output;            // Final controller output
-    float kp, ki, kd;        // Current gains (for app sync on connect)
+typedef struct
+{
+    bool enabled;      // Is this controller active?
+    float setpoint;    // Desired value
+    float measurement; // Actual value
+    float error;       // setpoint - measurement
+    float p_term;      // Proportional term
+    float i_term;      // Integral term
+    float d_term;      // Derivative term
+    float output;      // Final controller output
+    float kp, ki, kd;  // Current gains (for app sync on connect)
 } pid_telemetry_t;
+
+/**
+ * @brief D2 drive (position-hold) controller state — NOT A PID
+ *
+ * D2 does not run pid_update() and has no gains. It is a zone-based
+ * gain-scheduled position hold implemented inline in robot.c:
+ *
+ *   1. err = enc_pos_target - enc_pos                      (encoder ticks)
+ *   2. correction = err / scale_X, where scale_X is chosen by |err|
+ *      falling into zone A/B/C/D                           (degrees)
+ *   3. correction is slew-rate-limited by max_angle_rate    (deg/tick)
+ *   4. velocity damping is subtracted AFTER the rate limiter
+ *   5. result is hard-clamped to +/- max_correction and written to theta_ref
+ *
+ * There is no proportional gain, no integrator, and no derivative. Do not
+ * add p_term/i_term/d_term/kp/ki/kd fields here — the previous revision
+ * reused pid_telemetry_t and the resulting CSV exports were misread as
+ * PID traces. Field names below describe what is actually computed.
+ */
+typedef struct
+{
+    bool enabled;           // Is this controller active?
+    int32_t enc_pos_target; // Target tick position being held
+    int32_t enc_pos;        // Current tick position
+    int32_t enc_error;      // enc_pos_target - enc_pos (+ve = behind target, must
+                            // drive forward). Same sign as the err the zone logic
+                            // divides, and as D1/D3's (setpoint - measurement).
+    float enc_velocity;     // Tick velocity (ticks per 100 ms window)
+    float pos_correction;   // Zone-scheduled correction, pre-limit (deg)
+    float vel_damp;         // Velocity damping applied (deg)
+    float theta_ref_adj;    // Final rate-limited, clamped value written to theta_ref (deg)
+    float active_scale;     // Zone divisor in effect this tick (0 = deadband/none)
+    float max_correction;   // Clamp limit currently configured (deg)
+} drive_telemetry_t;
 
 /**
  * @brief Motor command telemetry
  */
-typedef struct {
-    float left_duty;         // Left motor duty cycle (-1 to 1)
-    float right_duty;        // Right motor duty cycle (-1 to 1)
+typedef struct
+{
+    float left_duty;  // Left motor duty cycle (-1 to 1)
+    float right_duty; // Right motor duty cycle (-1 to 1)
 } motor_telemetry_t;
 
 /**
  * @brief External UART input telemetry
  */
-typedef struct {
-    bool valid;              // Is data fresh?
-    float x;                 // Lateral command (-1 to 1)
-    float y;                 // Forward command (-1 to 1)
-    float confidence;        // Source confidence (0 to 1)
+typedef struct
+{
+    bool valid;       // Is data fresh?
+    float x;          // Lateral command (-1 to 1)
+    float y;          // Forward command (-1 to 1)
+    float confidence; // Source confidence (0 to 1)
 } ext_input_telemetry_t;
 
 /**
  * @brief System status telemetry
  */
-typedef enum {
-    BATT_UNKNOWN  = 0,
-    BATT_OK       = 1,
-    BATT_WARNING  = 2,
+typedef enum
+{
+    BATT_UNKNOWN = 0,
+    BATT_OK = 1,
+    BATT_WARNING = 2,
     BATT_CRITICAL = 3,
 } batt_status_t;
 
-typedef struct {
-    float battery_voltage;   // Battery voltage (V) — onboard ADC (legacy)
-    bool armed;              // Are motors armed?
-    int mode;                // 0=balance, 1=ext_input, 2=manual
-    float loop_hz;           // Actual control loop frequency
-    uint32_t uptime_sec;     // Seconds since start
-    float theta_offset;      // Balance point trim (deg)
+typedef struct
+{
+    float battery_voltage; // Battery voltage (V) — onboard ADC (legacy)
+    bool armed;            // Are motors armed?
+    int mode;              // 0=balance, 1=ext_input, 2=manual
+    float loop_hz;         // Actual control loop frequency
+    uint32_t uptime_sec;   // Seconds since start
+    float theta_offset;    // Balance point trim (deg)
     float batt_voltage;
     batt_status_t batt_status;
-    float claw_voltage;      // RoboClaw main battery voltage (V), 0 if unavailable
-    float claw_temp;         // RoboClaw board temperature (°C), 0 if unavailable
+    float claw_voltage; // RoboClaw main battery voltage (V), 0 if unavailable
+    float claw_temp;    // RoboClaw board temperature (°C), 0 if unavailable
 } system_telemetry_t;
 
 /**
  * @brief Complete telemetry packet
- * 
+ *
  * This structure contains all possible telemetry data.
  * Only enabled fields are populated and transmitted.
  */
-typedef struct {
-    uint64_t timestamp_us;          // Microsecond timestamp
-    
-    encoder_telemetry_t encoders;   // Encoder data
-    imu_telemetry_t imu;             // IMU data
-    
-    pid_telemetry_t D1_balance;      // Balance PID state
-    pid_telemetry_t D2_drive;        // Drive PID state
-    pid_telemetry_t D3_steering;     // Steering PID state
-    
+typedef struct
+{
+    uint64_t timestamp_us; // Microsecond timestamp
+
+    encoder_telemetry_t encoders; // Encoder data
+    imu_telemetry_t imu;          // IMU data
+
+    pid_telemetry_t D1_balance;  // Balance PID state
+    drive_telemetry_t D2_drive;  // Drive position-hold state (not a PID)
+    pid_telemetry_t D3_steering; // Steering PID state
+
     motor_telemetry_t motors;        // Motor commands
     ext_input_telemetry_t ext_input; // External UART input
     system_telemetry_t system;       // System status
@@ -181,18 +226,19 @@ typedef struct {
 
 /**
  * @brief Telemetry enable flags
- * 
+ *
  * These flags control which telemetry data is collected and transmitted
  * to the iPhone app. Disabling unused telemetry saves bandwidth and CPU.
  */
-typedef struct {
-    bool encoders;           // Encoder ticks/position/velocity
-    bool imu_attitude;       // Theta, phi, psi only (for 3D visualization)
-    bool imu_full;           // All IMU data (accel, gyro) - HIGH BANDWIDTH
-    bool pid_states;         // PID errors, terms, outputs
-    bool motor_commands;     // Motor duty cycles
-    bool ext_input;          // External UART input data
-    bool system_status;      // Battery, armed, mode - always recommended
+typedef struct
+{
+    bool encoders;       // Encoder ticks/position/velocity
+    bool imu_attitude;   // Theta, phi, psi only (for 3D visualization)
+    bool imu_full;       // All IMU data (accel, gyro) - HIGH BANDWIDTH
+    bool pid_states;     // PID errors, terms, outputs
+    bool motor_commands; // Motor duty cycles
+    bool ext_input;      // External UART input data
+    bool system_status;  // Battery, armed, mode - always recommended
 } telemetry_enables_t;
 
 /**
@@ -201,35 +247,39 @@ typedef struct {
  * Flags forwarded to an external coprocessor (e.g. RPi) to control
  * what is overlaid on any video stream it produces.
  */
-typedef struct {
-    bool crosshair;          // Draw crosshair / target marker
-    bool stats;              // Show FPS / detection stats
+typedef struct
+{
+    bool crosshair; // Draw crosshair / target marker
+    bool stats;     // Show FPS / detection stats
 } video_overlays_t;
 
 /**
  * @brief Telemetry update rates (Hz)
  */
-typedef struct {
-    int system_status;       // System status update rate (default: 1 Hz)
-    int pid_states;          // PID state update rate (default: 10 Hz)
-    int full_telemetry;      // Full telemetry rate (default: 10 Hz, max: 100 Hz)
+typedef struct
+{
+    int system_status;  // System status update rate (default: 1 Hz)
+    int pid_states;     // PID state update rate (default: 10 Hz)
+    int full_telemetry; // Full telemetry rate (default: 10 Hz, max: 100 Hz)
 } telemetry_rates_t;
 
 /**
  * @brief Logging configuration
  */
-typedef enum {
-    LOG_LEVEL_DEBUG,         // Everything
-    LOG_LEVEL_INFO,          // Normal operation
-    LOG_LEVEL_WARN,          // Warnings only
-    LOG_LEVEL_ERROR          // Errors only
+typedef enum
+{
+    LOG_LEVEL_DEBUG, // Everything
+    LOG_LEVEL_INFO,  // Normal operation
+    LOG_LEVEL_WARN,  // Warnings only
+    LOG_LEVEL_ERROR  // Errors only
 } log_level_t;
 
-typedef struct {
-    log_level_t level;       // Current log level
-    bool console;            // Print to console
-    bool file;               // Write to log file
-    bool timestamps;         // Include timestamps
+typedef struct
+{
+    log_level_t level; // Current log level
+    bool console;      // Print to console
+    bool file;         // Write to log file
+    bool timestamps;   // Include timestamps
 } logging_config_t;
 
 /**
@@ -248,13 +298,14 @@ typedef struct {
  *   Motors    — left / right duty cycle
  *   System    — armed state, mode, battery voltage, loop Hz
  */
-typedef struct {
-    int sbus_tx;        /**< SBUS TX channel display   (0 = off, else ticks) */
-    int pid;            /**< PID state display          (0 = off, else ticks) */
-    int encoders;       /**< Encoder display            (0 = off, else ticks) */
-    int imu;            /**< IMU display                (0 = off, else ticks) */
-    int motors;         /**< Motor duty display         (0 = off, else ticks) */
-    int system;         /**< System status display      (0 = off, else ticks) */
+typedef struct
+{
+    int sbus_tx;  /**< SBUS TX channel display   (0 = off, else ticks) */
+    int pid;      /**< PID state display          (0 = off, else ticks) */
+    int encoders; /**< Encoder display            (0 = off, else ticks) */
+    int imu;      /**< IMU display                (0 = off, else ticks) */
+    int motors;   /**< Motor duty display         (0 = off, else ticks) */
+    int system;   /**< System status display      (0 = off, else ticks) */
 } display_config_t;
 
 /**
@@ -263,13 +314,14 @@ typedef struct {
  * This is the master configuration structure that controls all
  * debug features, telemetry, and logging.
  */
-typedef struct {
-    telemetry_enables_t telemetry;      // What telemetry to send
-    video_overlays_t overlays;          // Video overlay settings
-    bool debug_d2;                      // Verbose D2 position controller logging
-    telemetry_rates_t rates;            // Update rates
-    logging_config_t logging;           // Logging configuration
-    display_config_t display;           // Console display blocks
+typedef struct
+{
+    telemetry_enables_t telemetry; // What telemetry to send
+    video_overlays_t overlays;     // Video overlay settings
+    bool debug_d2;                 // Verbose D2 position controller logging
+    telemetry_rates_t rates;       // Update rates
+    logging_config_t logging;      // Logging configuration
+    display_config_t display;      // Console display blocks
 } debug_config_t;
 
 // ============================================================================
@@ -286,49 +338,69 @@ extern telemetry_data_t g_telemetry_data;
 /**
  * Conditional logging based on current log level
  */
-#define LOG_DEBUG(fmt, ...) \
-    do { \
-        if (g_debug_config.logging.level <= LOG_LEVEL_DEBUG) { \
-            if (g_debug_config.logging.timestamps) { \
-                printf("[DEBUG][%llu] " fmt "\n", (unsigned long long)(rc_nanos_since_boot()/1000000), ##__VA_ARGS__); \
-            } else { \
-                printf("[DEBUG] " fmt "\n", ##__VA_ARGS__); \
-            } \
-        } \
-    } while(0)
+#define LOG_DEBUG(fmt, ...)                                                                                              \
+    do                                                                                                                   \
+    {                                                                                                                    \
+        if (g_debug_config.logging.level <= LOG_LEVEL_DEBUG)                                                             \
+        {                                                                                                                \
+            if (g_debug_config.logging.timestamps)                                                                       \
+            {                                                                                                            \
+                printf("[DEBUG][%llu] " fmt "\n", (unsigned long long)(rc_nanos_since_boot() / 1000000), ##__VA_ARGS__); \
+            }                                                                                                            \
+            else                                                                                                         \
+            {                                                                                                            \
+                printf("[DEBUG] " fmt "\n", ##__VA_ARGS__);                                                              \
+            }                                                                                                            \
+        }                                                                                                                \
+    } while (0)
 
-#define LOG_INFO(fmt, ...) \
-    do { \
-        if (g_debug_config.logging.level <= LOG_LEVEL_INFO) { \
-            if (g_debug_config.logging.timestamps) { \
-                printf("[INFO][%llu] " fmt "\n", (unsigned long long)(rc_nanos_since_boot()/1000000), ##__VA_ARGS__); \
-            } else { \
-                printf("[INFO] " fmt "\n", ##__VA_ARGS__); \
-            } \
-        } \
-    } while(0)
+#define LOG_INFO(fmt, ...)                                                                                              \
+    do                                                                                                                  \
+    {                                                                                                                   \
+        if (g_debug_config.logging.level <= LOG_LEVEL_INFO)                                                             \
+        {                                                                                                               \
+            if (g_debug_config.logging.timestamps)                                                                      \
+            {                                                                                                           \
+                printf("[INFO][%llu] " fmt "\n", (unsigned long long)(rc_nanos_since_boot() / 1000000), ##__VA_ARGS__); \
+            }                                                                                                           \
+            else                                                                                                        \
+            {                                                                                                           \
+                printf("[INFO] " fmt "\n", ##__VA_ARGS__);                                                              \
+            }                                                                                                           \
+        }                                                                                                               \
+    } while (0)
 
-#define LOG_WARN(fmt, ...) \
-    do { \
-        if (g_debug_config.logging.level <= LOG_LEVEL_WARN) { \
-            if (g_debug_config.logging.timestamps) { \
-                fprintf(stderr, "[WARN][%llu] " fmt "\n", (unsigned long long)(rc_nanos_since_boot()/1000000), ##__VA_ARGS__); \
-            } else { \
-                fprintf(stderr, "[WARN] " fmt "\n", ##__VA_ARGS__); \
-            } \
-        } \
-    } while(0)
+#define LOG_WARN(fmt, ...)                                                                                                       \
+    do                                                                                                                           \
+    {                                                                                                                            \
+        if (g_debug_config.logging.level <= LOG_LEVEL_WARN)                                                                      \
+        {                                                                                                                        \
+            if (g_debug_config.logging.timestamps)                                                                               \
+            {                                                                                                                    \
+                fprintf(stderr, "[WARN][%llu] " fmt "\n", (unsigned long long)(rc_nanos_since_boot() / 1000000), ##__VA_ARGS__); \
+            }                                                                                                                    \
+            else                                                                                                                 \
+            {                                                                                                                    \
+                fprintf(stderr, "[WARN] " fmt "\n", ##__VA_ARGS__);                                                              \
+            }                                                                                                                    \
+        }                                                                                                                        \
+    } while (0)
 
-#define LOG_ERROR(fmt, ...) \
-    do { \
-        if (g_debug_config.logging.level <= LOG_LEVEL_ERROR) { \
-            if (g_debug_config.logging.timestamps) { \
-                fprintf(stderr, "[ERROR][%llu] " fmt "\n", (unsigned long long)(rc_nanos_since_boot()/1000000), ##__VA_ARGS__); \
-            } else { \
-                fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__); \
-            } \
-        } \
-    } while(0)
+#define LOG_ERROR(fmt, ...)                                                                                                       \
+    do                                                                                                                            \
+    {                                                                                                                             \
+        if (g_debug_config.logging.level <= LOG_LEVEL_ERROR)                                                                      \
+        {                                                                                                                         \
+            if (g_debug_config.logging.timestamps)                                                                                \
+            {                                                                                                                     \
+                fprintf(stderr, "[ERROR][%llu] " fmt "\n", (unsigned long long)(rc_nanos_since_boot() / 1000000), ##__VA_ARGS__); \
+            }                                                                                                                     \
+            else                                                                                                                  \
+            {                                                                                                                     \
+                fprintf(stderr, "[ERROR] " fmt "\n", ##__VA_ARGS__);                                                              \
+            }                                                                                                                     \
+        }                                                                                                                         \
+    } while (0)
 
 // ============================================================================
 // DEFAULT CONFIGURATIONS
@@ -336,45 +408,36 @@ extern telemetry_data_t g_telemetry_data;
 
 /**
  * @brief Get default debug configuration
- * 
+ *
  * Returns a sensible default configuration suitable for most use cases.
  * Enables basic telemetry without overwhelming the network.
  */
-static inline debug_config_t get_default_debug_config(void) {
+static inline debug_config_t get_default_debug_config(void)
+{
     debug_config_t config = {
         .telemetry = {
             .encoders = false,
-            .imu_attitude = true,      // For 3D visualization
-            .imu_full = false,         // Disable high-bandwidth data
+            .imu_attitude = true, // For 3D visualization
+            .imu_full = false,    // Disable high-bandwidth data
             .pid_states = true,
             .motor_commands = false,
             .ext_input = true,
-            .system_status = true
-        },
-.overlays = {
-            .crosshair = true,
-            .stats = false
-        },
+            .system_status = true},
+        .overlays = {.crosshair = true, .stats = false},
         .rates = {
-            .system_status = 1,        // 1 Hz
-            .pid_states = 10,          // 10 Hz
-            .full_telemetry = 10       // 10 Hz
+            .system_status = 1,  // 1 Hz
+            .pid_states = 10,    // 10 Hz
+            .full_telemetry = 10 // 10 Hz
         },
-        .logging = {
-            .level = LOG_LEVEL_INFO,
-            .console = true,
-            .file = false,
-            .timestamps = true
-        },
+        .logging = {.level = LOG_LEVEL_INFO, .console = true, .file = false, .timestamps = true},
         .display = {
-            .sbus_tx  = 0,      /* off by default — enable with -d sbus    */
-            .pid      = 0,      /* off by default — enable with -d pid     */
-            .encoders = 0,      /* off by default — enable with -d enc     */
-            .imu      = 0,      /* off by default — enable with -d imu     */
-            .motors   = 0,      /* off by default — enable with -d mot     */
-            .system   = 100,    /* system status on by default  (~1 Hz)    */
-        }
-    };
+            .sbus_tx = 0,  /* off by default — enable with -d sbus    */
+            .pid = 0,      /* off by default — enable with -d pid     */
+            .encoders = 0, /* off by default — enable with -d enc     */
+            .imu = 0,      /* off by default — enable with -d imu     */
+            .motors = 0,   /* off by default — enable with -d mot     */
+            .system = 100, /* system status on by default  (~1 Hz)    */
+        }};
     return config;
 }
 

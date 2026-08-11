@@ -67,9 +67,26 @@ clean:
 # Service name
 SERVICE = balance_bot.service
 SERVER_SERVICE = balance_bot_server.service
+UNIT_DIR = /etc/systemd/system
+DEFAULTS = /etc/default/balance_bot
+
+# Install the unit files from systemd/ — these are the versioned copies.
+# Anything machine-specific (device paths, baud, input mode) belongs in
+# $(DEFAULTS), which is deliberately NOT overwritten if it already exists.
+install-units:
+	@echo "Installing unit files to $(UNIT_DIR)..."
+	sudo cp systemd/$(SERVICE) $(UNIT_DIR)/$(SERVICE)
+	sudo cp systemd/$(SERVER_SERVICE) $(UNIT_DIR)/$(SERVER_SERVICE)
+	@if [ ! -f $(DEFAULTS) ]; then \
+		sudo cp systemd/balance_bot.default.example $(DEFAULTS); \
+		echo "Created $(DEFAULTS) from example — EDIT IT for this board"; \
+	else \
+		echo "Kept existing $(DEFAULTS) (edit by hand; not managed by make)"; \
+	fi
+	sudo systemctl daemon-reload
 
 # Install to system
-install: $(BINDIR)/$(TARGET)
+install: $(BINDIR)/$(TARGET) install-units
 	@echo "Stopping $(SERVICE) and $(SERVER_SERVICE)..."
 	sudo systemctl daemon-reload
 	sudo systemctl stop $(SERVICE) || true

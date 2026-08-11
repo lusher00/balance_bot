@@ -1,0 +1,21 @@
+[Unit]
+Description=Balance Bot WebSocket Bridge
+# NOTE: the deployed unit had "Afterbalance_bot.service" — missing '=', which
+# systemd parses as an unknown directive and ignores. Requires= still pulled
+# balance_bot in, but with no ordering the bridge could start first and race
+# the /tmp/balance_bot.sock IPC socket.
+After=balance_bot.service
+Requires=balance_bot.service
+
+[Service]
+Type=simple
+User=debian
+WorkingDirectory=/home/debian/balance_bot/server
+ExecStart=/usr/bin/node /home/debian/balance_bot/server/server.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

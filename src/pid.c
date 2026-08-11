@@ -54,6 +54,10 @@ void pid_init(pid_controller_t* pid, float kp, float ki, float kd, float dt) {
     pid->integrator = 0.0f;
     pid->prev_error = 0.0f;
     pid->integrator_max = 1.0f;  // Default anti-windup limit
+    pid->last_p_term = 0.0f;
+    pid->last_i_term = 0.0f;
+    pid->last_d_term = 0.0f;
+    pid->last_output = 0.0f;
 }
 
 float pid_update(pid_controller_t* pid, float setpoint, float measurement) {
@@ -73,17 +77,29 @@ float pid_update(pid_controller_t* pid, float setpoint, float measurement) {
     
     // Derivative term
     float d_term = pid->kd * (error - pid->prev_error) / pid->dt;
-    
+
     // Save error for next iteration
     pid->prev_error = error;
-    
-    // Return total output
-    return p_term + i_term + d_term;
+
+    float output = p_term + i_term + d_term;
+
+    // Record the actual terms for telemetry. d_term in particular cannot be
+    // recovered later because prev_error has just been overwritten.
+    pid->last_p_term = p_term;
+    pid->last_i_term = i_term;
+    pid->last_d_term = d_term;
+    pid->last_output = output;
+
+    return output;
 }
 
 void pid_reset(pid_controller_t* pid) {
     pid->integrator = 0.0f;
     pid->prev_error = 0.0f;
+    pid->last_p_term = 0.0f;
+    pid->last_i_term = 0.0f;
+    pid->last_d_term = 0.0f;
+    pid->last_output = 0.0f;
 }
 
 void pid_set_gains(pid_controller_t* pid, float kp, float ki, float kd) {

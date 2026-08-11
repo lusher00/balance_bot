@@ -10,6 +10,22 @@
     href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap"
     rel="stylesheet">
   <style>
+    /* ── RC / SBUS tab ─────────────────────────────────────────────────── */
+    .rc-row { display:flex; align-items:center; gap:8px; margin:3px 0; font-family:var(--mono); font-size:10px; }
+    .rc-name { width:118px; flex:none; color:var(--txt2); white-space:nowrap; }
+    .rc-name b { color:var(--txt); font-weight:600; }
+    .rc-raw  { width:42px; flex:none; text-align:right; color:var(--txt); }
+    /* bipolar bar: fill grows left or right from a centre tick */
+    .rc-bar  { position:relative; flex:1; height:12px; background:var(--bg3);
+               border:1px solid var(--border); border-radius:3px; overflow:hidden; }
+    .rc-bar .mid { position:absolute; left:50%; top:0; bottom:0; width:1px; background:var(--border2); }
+    .rc-bar .fill { position:absolute; top:1px; bottom:1px; background:var(--accent); border-radius:2px; }
+    .rc-chip { padding:2px 7px; border:1px solid var(--border); border-radius:3px;
+               color:var(--txt3); font-size:9px; letter-spacing:.5px; }
+    .rc-chip.on { background:var(--accent); border-color:var(--accent); color:#04121c; font-weight:700; }
+    .rc-chip.on.warn { background:var(--red); border-color:var(--red); color:#fff; }
+    .rc-stale { opacity:.35; }
+
     :root {
       --bg: #080b10;
       --bg1: #0d1117;
@@ -967,6 +983,7 @@
     <div class="tab" data-tab="pid">PID</div>
     <div class="tab" data-tab="graph">Graph</div>
     <div class="tab" data-tab="claw">Claw</div>
+    <div class="tab" data-tab="rc">RC</div>
     <div class="tab" data-tab="debug">Debug</div>
     <div class="tab" data-tab="settings">Settings</div>
   </div>
@@ -1245,7 +1262,7 @@
             <button class="seg-btn" onclick="setPosField('back_to_spot',0)">Loose hold (D only)</button>
           </div>
           <div class="divider"></div>
-          <span class="sub-label">Zone Thresholds (ticks)</span>
+          <!-- heading intentionally omitted: buildPosSliders() emits one per group -->
           <div id="pos-sliders"></div>
         </div>
         <div class="divider"></div>
@@ -1296,8 +1313,8 @@
           <input type="range" class="pid-slider" id="sl-qpps" min="100" max="6000" step="50"
             oninput="onClawCfg('qpps_max',this.value)">
           <div class="pid-ctrl">
-            <input class="val-box" id="vb-qpps" value="2500"
-              onchange="onClawCfg('qpps_max',this.value)" onblur="onClawCfg('qpps_max',this.value)">
+            <input class="val-box" id="vb-qpps" value="2500" onchange="onClawCfg('qpps_max',this.value)"
+              onblur="onClawCfg('qpps_max',this.value)">
           </div>
         </div>
         <div class="pid-row">
@@ -1305,8 +1322,8 @@
           <input type="range" class="pid-slider" id="sl-accel" min="100" max="20000" step="100"
             oninput="onClawCfg('accel_qpps',this.value)">
           <div class="pid-ctrl">
-            <input class="val-box" id="vb-accel" value="5000"
-              onchange="onClawCfg('accel_qpps',this.value)" onblur="onClawCfg('accel_qpps',this.value)">
+            <input class="val-box" id="vb-accel" value="5000" onchange="onClawCfg('accel_qpps',this.value)"
+              onblur="onClawCfg('accel_qpps',this.value)">
           </div>
         </div>
       </div>
@@ -1348,15 +1365,16 @@
 
       <!-- Velocity PID -->
       <div class="card">
-        <div class="card-title">Velocity PID <span style="font-size:9px;color:var(--txt3);font-weight:400">(modes 1 &amp; 2 only)</span></div>
+        <div class="card-title">Velocity PID <span style="font-size:9px;color:var(--txt3);font-weight:400">(modes 1
+            &amp; 2 only)</span></div>
         <div class="pid-row">
           <span class="pid-label">Kp</span>
           <input type="range" class="pid-slider" id="sl-claw-kp" min="0" max="10" step="0.01"
             oninput="onClawPID('kp',this.value)">
           <div class="pid-ctrl">
             <button class="step-btn" onclick="stepClawPID('kp',-1)">−</button>
-            <input class="val-box" id="vb-claw-kp" value="1.000"
-              onchange="onClawPID('kp',this.value)" onblur="onClawPID('kp',this.value)">
+            <input class="val-box" id="vb-claw-kp" value="1.000" onchange="onClawPID('kp',this.value)"
+              onblur="onClawPID('kp',this.value)">
             <button class="step-btn" onclick="stepClawPID('kp',1)">+</button>
           </div>
         </div>
@@ -1366,8 +1384,8 @@
             oninput="onClawPID('ki',this.value)">
           <div class="pid-ctrl">
             <button class="step-btn" onclick="stepClawPID('ki',-1)">−</button>
-            <input class="val-box" id="vb-claw-ki" value="0.500"
-              onchange="onClawPID('ki',this.value)" onblur="onClawPID('ki',this.value)">
+            <input class="val-box" id="vb-claw-ki" value="0.500" onchange="onClawPID('ki',this.value)"
+              onblur="onClawPID('ki',this.value)">
             <button class="step-btn" onclick="stepClawPID('ki',1)">+</button>
           </div>
         </div>
@@ -1377,8 +1395,8 @@
             oninput="onClawPID('kd',this.value)">
           <div class="pid-ctrl">
             <button class="step-btn" onclick="stepClawPID('kd',-1)">−</button>
-            <input class="val-box" id="vb-claw-kd" value="0.250"
-              onchange="onClawPID('kd',this.value)" onblur="onClawPID('kd',this.value)">
+            <input class="val-box" id="vb-claw-kd" value="0.250" onchange="onClawPID('kd',this.value)"
+              onblur="onClawPID('kd',this.value)">
             <button class="step-btn" onclick="stepClawPID('kd',1)">+</button>
           </div>
         </div>
@@ -1398,8 +1416,8 @@
           Changes BBB serial baud to match RoboClaw setting. Takes effect immediately.
         </div>
         <div class="seg-group" id="baud-seg" style="flex-wrap:wrap">
-          <button class="seg-btn" data-baud="9600"   onclick="setBaud(9600)">9600</button>
-          <button class="seg-btn" data-baud="38400"  onclick="setBaud(38400)">38400</button>
+          <button class="seg-btn" data-baud="9600" onclick="setBaud(9600)">9600</button>
+          <button class="seg-btn" data-baud="38400" onclick="setBaud(38400)">38400</button>
           <button class="seg-btn" data-baud="115200" onclick="setBaud(115200)">115200</button>
           <button class="seg-btn" data-baud="230400" onclick="setBaud(230400)">230400</button>
           <button class="seg-btn active" data-baud="460800" onclick="setBaud(460800)">460800</button>
@@ -1412,16 +1430,16 @@
         <div class="row" style="gap:8px">
           <button class="icon-btn" style="flex:1" onclick="sendCmd({type:'save_pid'})">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-              <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+              <polyline points="17 21 17 13 7 13 7 21" />
+              <polyline points="7 3 7 8 15 8" />
             </svg>
             SAVE
           </button>
-          <button class="icon-btn" style="flex:1;color:var(--orange);border-color:var(--orange)"
-            onclick="doReboot()">
+          <button class="icon-btn" style="flex:1;color:var(--orange);border-color:var(--orange)" onclick="doReboot()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-              <polyline points="1 4 1 10 7 10"/>
-              <path d="M3.51 15a9 9 0 1 0 .49-4.95"/>
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 1 0 .49-4.95" />
             </svg>
             REBOOT
           </button>
@@ -1447,6 +1465,33 @@
       <div id="graph-plots-wrap"></div>
     </div>
 
+    <!-- RC -->
+    <div class="panel" id="panel-rc">
+      <div class="card">
+        <div class="row spaced" style="align-items:flex-start">
+          <div>
+            <div class="card-title">SBUS Receiver</div>
+            <div style="font-size:9px;color:var(--txt3)">FrSky R-XSR · 115200 8E2 inverted · /dev/ttyO4</div>
+            <div style="font-size:9px;color:var(--txt3);margin-top:2px">Raw 172 · centre 992 · 1811 max</div>
+          </div>
+          <div style="text-align:right">
+            <div id="rc-link" style="font-size:11px;font-weight:600">NO LINK</div>
+            <div id="rc-failsafe" style="font-size:9px;margin-top:3px">FAILSAFE —</div>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <span class="sub-label">Sticks &amp; Analogue</span>
+        <div id="rc-analog"></div>
+        <span class="sub-label" style="margin-top:10px">Switches</span>
+        <div id="rc-switches"></div>
+        <span class="sub-label" style="margin-top:10px">Unmapped</span>
+        <div id="rc-unmapped"></div>
+        <div class="divider"></div>
+        <span class="sub-label">Decoded by firmware</span>
+        <div id="rc-decoded" class="stat-row" style="flex-wrap:wrap;gap:6px"></div>
+      </div>
+    </div>
+
     <!-- DEBUG -->
     <div class="panel" id="panel-debug">
       <div class="row spaced" style="margin-bottom:8px">
@@ -1460,7 +1505,7 @@
     <div class="panel" id="panel-settings">
       <div class="card">
         <div class="card-title">Connection</div>
-        <div class="field"><label>BeagleBone IP</label><input id="cfg-bbb-ip" value="192.168.1.140"></div>
+        <div class="field"><label>BeagleBone IP</label><input id="cfg-bbb-ip" value="192.168.1.137"></div>
         <div class="field"><label>WebSocket Port</label><input id="cfg-ws-port" value="8675" type="number"></div>
         <button class="btn-primary connect" onclick="doConnect()">Connect</button>
         <button class="btn-primary disconnect" onclick="doDisconnect()">Disconnect</button>
@@ -1509,6 +1554,9 @@
       // D2 is a zone-based position hold, not a PID — different shape on purpose.
       d2: { enabled: false, encTarget: 0, encPos: 0, encError: 0, encVel: 0, posCorr: 0, velDamp: 0, thetaAdj: 0, activeScale: 0, maxCorrection: 0 },
       d3: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
+      // Commanded wheel duty as sent to the RoboClaw — not a controller.
+      mot: { leftDuty: 0, rightDuty: 0 },
+      sbus: null,
     };
 
     // D1 and D3 only. D2 has no gains; see posCfg for its tuning parameters.
@@ -1536,6 +1584,11 @@
       back_to_spot: 1,
     };
     let posCfgReceived = false;
+    // Last pos_config the BOT reported, refreshed on every telemetry packet.
+    // This — not posCfg — is ground truth for what the firmware is running.
+    let posCfgBot = null;
+    // Same for D1/D3 gains: pidCfg is seeded once for the sliders and drifts.
+    let gainsBot = { d1: null, d3: null };
 
     const POS_SLIDERS = [
       { key: 'zone_a', label: 'Zone A (outer)', min: 1000, max: 30000, step: 500, group: 'zones' },
@@ -1544,13 +1597,17 @@
       { key: 'scale_a', label: 'Scale A', min: 10, max: 3000, step: 10, group: 'scales' },
       { key: 'scale_b', label: 'Scale B', min: 10, max: 3000, step: 10, group: 'scales' },
       { key: 'scale_c', label: 'Scale C', min: 10, max: 3000, step: 10, group: 'scales' },
-      { key: 'scale_d', label: 'Scale D (deadband)', min: 1, max: 2000, step: 1, group: 'scales' },
-      { key: 'vel_scale_stop', label: 'Stop damping', min: 10, max: 300, step: 5, group: 'vel' },
+      { key: 'scale_d', label: 'Scale D (inner, |err|<Zone C)', min: 1, max: 2000, step: 1, group: 'scales' },
+      // min was 10, but the tuned value is 5 — the slider could not reach its own setting.
+      { key: 'vel_scale_stop', label: 'Stop damping', min: 1, max: 300, step: 1, group: 'vel' },
       { key: 'vel_scale_move', label: 'Move compensation', min: 10, max: 300, step: 5, group: 'vel' },
       { key: 'vel_scale_turning', label: 'Turn scale-down', min: 10, max: 300, step: 5, group: 'vel' },
       { key: 'max_correction', label: 'Max correction (°)', min: 0.05, max: 20, step: 0.05, group: 'limits' },
       { key: 'max_angle_rate', label: 'Max rate (°/tick)', min: 0.01, max: 5, step: 0.01, group: 'limits' },
-      { key: 'stopped_vel', label: 'Stopped threshold', min: 0, max: 200, step: 1, group: 'limits' },
+      // stopped_vel is read by nothing in the control path — it appears only inside a
+      // LOG_INFO format string (robot.c). The damping gate that looks like it uses it
+      // is a hardcoded constant. Kept visible but disabled so it cannot mislead.
+      { key: 'stopped_vel', label: 'Stopped threshold (unused)', min: 0, max: 200, step: 1, group: 'limits', dead: true },
     ];
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -1583,6 +1640,10 @@
       velDamp: '#00e5ff',
       thetaAdj: '#ff3d3d',
       activeScale: '#ffd54f',
+      // MOT — commanded wheel duty
+      leftDuty: '#4fc3f7',
+      rightDuty: '#00e676',
+      dutyDiff: '#ff3d3d',
     };
 
     // D1 and D3 run pid_update(). D2 does not — it is a zone-based position
@@ -1591,8 +1652,13 @@
     // signals as P/I/D terms. Do not collapse these back into one list.
     const PID_KEYS = ['setpoint', 'measurement', 'error', 'pTerm', 'iTerm', 'dTerm', 'output'];
     const DRIVE_KEYS = ['encTarget', 'encPos', 'encError', 'encVel', 'posCorr', 'velDamp', 'thetaAdj', 'activeScale'];
-    const CTRL_KEYS = [PID_KEYS, DRIVE_KEYS, PID_KEYS];
+    // MOT is not a controller — it is what actually reached the RoboClaw. Kept
+    // as its own group so a left/right asymmetry is visible rather than hidden
+    // behind D1's single scalar output.
+    const MOTOR_KEYS = ['leftDuty', 'rightDuty', 'dutyDiff'];
+    const CTRL_KEYS = [PID_KEYS, DRIVE_KEYS, PID_KEYS, MOTOR_KEYS];
     const keysFor = ctrl => CTRL_KEYS[ctrl];
+    const NUM_CTRL = CTRL_KEYS.length;
 
     const SERIES_LABELS = {
       setpoint: 'Setpoint',
@@ -1610,20 +1676,23 @@
       velDamp: 'Vel damp (°)',
       thetaAdj: 'θ_ref adj (°)',
       activeScale: 'Zone scale',
+      leftDuty: 'L duty',
+      rightDuty: 'R duty',
+      dutyDiff: 'L-R duty',
     };
     function seriesLabel(ctrl, key) {
       return SERIES_LABELS[key] || key;
     }
-    const CTRL_NAMES = ['D1', 'D2', 'D3'];
-    const CTRL_DASH = [[], [8, 4], [2, 4]];
+    const CTRL_NAMES = ['D1', 'D2', 'D3', 'MOT'];
+    const CTRL_DASH = [[], [8, 4], [2, 4], [4, 2, 1, 2]];
 
     function makeBuf(ctrlIdx) {
       const o = {};
       keysFor(ctrlIdx).forEach(k => o[k] = []);
       return o;
     }
-    const graphBufs = [makeBuf(0), makeBuf(1), makeBuf(2)];
-    const graphT0 = [null, null, null];
+    const graphBufs = Array.from({ length: NUM_CTRL }, (_, i) => makeBuf(i));
+    const graphT0 = Array(NUM_CTRL).fill(null);
 
     function currentT(ctrlIdx) {
       if (graphT0[ctrlIdx] === null) return 0;
@@ -1641,7 +1710,12 @@
         while (buf[key].length && buf[key][0].t < cutoff) buf[key].shift();
         if (buf[key].length > MAX_PTS) buf[key].splice(0, buf[key].length - MAX_PTS);
       }
-      if (ctrlIdx === 1) {
+      if (ctrlIdx === 3) {
+        // MOT — commanded wheel duty, not a controller.
+        add('leftDuty', s.leftDuty || 0);
+        add('rightDuty', s.rightDuty || 0);
+        add('dutyDiff', (s.leftDuty || 0) - (s.rightDuty || 0));
+      } else if (ctrlIdx === 1) {
         // D2 — position hold. Keys are drive-specific by design.
         add('encTarget', s.encTarget || 0);
         add('encPos', s.encPos || 0);
@@ -1668,7 +1742,7 @@
 
     function resetGraph() {
       graphBufs.forEach((b, i) => { keysFor(i).forEach(k => b[k] = []); graphT0[i] = null; });
-      recording = false; recordBuf = [{}, {}, {}]; updateRecBtn();
+      recording = false; recordBuf = Array.from({ length: NUM_CTRL }, () => []); updateRecBtn();
     }
 
     // ── Plot state ────────────────────────────────────────────────────────────────
@@ -1763,7 +1837,7 @@
         dropdown.className = 'series-add-dropdown';
         dropdown.id = 'sad-' + plot.id;
 
-        [0, 1, 2].forEach(function (ci) {
+        CTRL_NAMES.forEach(function (_n, ci) {
           const grp = document.createElement('div');
           grp.className = 'sad-group';
           grp.textContent = CTRL_NAMES[ci];
@@ -1839,11 +1913,49 @@
 
     // ── Recording ─────────────────────────────────────────────────────────────────
     let recording = false;
-    let recordBuf = [{}, {}, {}];
+    let recordBuf = Array.from({ length: NUM_CTRL }, () => []);
+    // Config in effect when Rec was pressed. Snapshotted at start, not at save:
+    // pidconfig.txt holds startup DEFAULTS, and the live values can be retuned
+    // from the UI mid-session. A log that does not carry its own config cannot
+    // be compared against another run.
+    let recordMeta = null;
+    // Loop-rate health during the recording. POS_VEL_PERIOD_MS trades serial
+    // traffic for velocity freshness, so a log needs to say whether the control
+    // loop actually kept up while it was being written.
+    let loopStat = null;
+
+    function snapshotConfig() {
+      // Stamp from what the BOT reports, not the UI's copy. The UI copy is
+      // seeded once and goes stale whenever anything else retunes the bot,
+      // which silently mislabels the run.
+      const bot = posCfgBot;
+      const drift = [];
+      if (bot) {
+        for (const k of Object.keys(posCfg)) {
+          if (bot[k] !== undefined && Number(bot[k]) !== Number(posCfg[k])) {
+            drift.push(`${k}: bot=${bot[k]} ui=${posCfg[k]}`);
+          }
+        }
+      }
+      return {
+        started: new Date().toISOString(),
+        haveBot: !!bot,
+        pos: bot ? { ...posCfg, ...bot } : { ...posCfg },
+        d1: gainsBot.d1 || { ...pidCfg.d1 },
+        d3: gainsBot.d3 || { ...pidCfg.d3 },
+        gainsFromBot: !!(gainsBot.d1 && gainsBot.d3),
+        drift,
+      };
+    }
 
     function toggleRecord() {
-      if (recording) { recording = false; saveCSV(); recordBuf = [{}, {}, {}]; }
-      else { recording = true; recordBuf = [{}, {}, {}]; }
+      if (recording) { recording = false; saveCSV(); recordBuf = Array.from({ length: NUM_CTRL }, () => []); recordMeta = null; loopStat = null; }
+      else {
+        recording = true;
+        recordBuf = Array.from({ length: NUM_CTRL }, () => []);
+        recordMeta = snapshotConfig();
+        loopStat = { n: 0, sum: 0, min: Infinity, max: 0, below: 0 };
+      }
       updateRecBtn();
     }
     function updateRecBtn() {
@@ -1853,18 +1965,51 @@
       btn.textContent = recording ? '⏹ Stop' : '⏺ Rec';
     }
     function saveCSV() {
-      const ctrlNames = ['d1', 'd2', 'd3'];
+      const ctrlNames = ['d1', 'd2', 'd3', 'mot'];
       // Headers come from each controller's own key set, so d2 columns are
       // named d2_encError / d2_posCorr / etc. An exported d2_pTerm column would
       // be read as a PID trace by anyone opening the file later — it is not one.
       const cols = ['t'].concat(ctrlNames.flatMap((c, ci) => keysFor(ci).map(k => c + '_' + k)));
-      let csv = cols.join(',') + '\n';
-      const maxLen = Math.max(...recordBuf.map((b, ci) => (b[keysFor(ci)[0]] || []).length));
+
+      // Commented preamble: the config this run was actually recorded under.
+      // Readable with pandas.read_csv(..., comment='#') or csv module + filter.
+      const m = recordMeta || snapshotConfig();
+      const p = m.pos;
+      let csv = '';
+      csv += `# bbot telemetry log\n`;
+      csv += `# started=${m.started}\n`;
+      csv += `# config_source=${m.haveBot ? 'BOT (pos_config from live telemetry, refreshed every packet)' : 'UI DEFAULTS — bot never reported pos_config, values below are NOT authoritative'}\n`;
+      csv += `# gains_source=${m.gainsFromBot ? 'BOT' : 'UI (bot did not report gains)'}\n`;
+      if (m.drift && m.drift.length) {
+        csv += `# WARNING: dashboard sliders disagree with the bot on ${m.drift.length} field(s).\n`;
+        csv += `#   Values below are the BOT's. The UI was retuned elsewhere (iPhone,\n`;
+        csv += `#   pidconfig.txt + restart) and its sliders are stale:\n`;
+        m.drift.forEach(x => { csv += `#     ${x}\n`; });
+      }
+      csv += `# pos_config: zone_a=${p.zone_a} zone_b=${p.zone_b} zone_c=${p.zone_c}\n`;
+      csv += `#   scale_a=${p.scale_a} scale_b=${p.scale_b} scale_c=${p.scale_c} scale_d=${p.scale_d}\n`;
+      csv += `#   vel_scale_stop=${p.vel_scale_stop} vel_scale_move=${p.vel_scale_move} vel_scale_turning=${p.vel_scale_turning}\n`;
+      csv += `#   stopped_vel=${p.stopped_vel} max_correction=${p.max_correction} max_angle_rate=${p.max_angle_rate}\n`;
+      csv += `#   back_to_spot=${p.back_to_spot}\n`;
+      if (loopStat && loopStat.n) {
+        const avg = loopStat.sum / loopStat.n;
+        csv += `# loop_hz: mean=${avg.toFixed(1)} min=${loopStat.min.toFixed(1)} max=${loopStat.max.toFixed(1)} `
+             + `samples=${loopStat.n} below_95Hz=${loopStat.below}`
+             + `${loopStat.below ? '  <-- CONTROL LOOP MISSED RATE, treat this run with suspicion' : ''}\n`;
+      }
+      csv += `# d1_gains: kp=${m.d1.kp} ki=${m.d1.ki} kd=${m.d1.kd}\n`;
+      csv += `# d3_gains: kp=${m.d3.kp} ki=${m.d3.ki} kd=${m.d3.kd}\n`;
+      csv += `# note: D2 is a zone-scheduled position hold, not a PID — it has no gains.\n`;
+      csv += `#   d2_encError is (enc_pos_target - enc_pos), same sign as the error the\n`;
+      csv += `#   controller acts on, so d2_posCorr == d2_encError / d2_activeScale.\n`;
+
+      csv += cols.join(',') + '\n';
+      const maxLen = Math.max(...recordBuf.map(b => b.length));
       for (let i = 0; i < maxLen; i++) {
-        const tVal = recordBuf.map((b, ci) => b[keysFor(ci)[0]]?.[i]?.t).find(v => v !== undefined) ?? 0;
+        const tVal = recordBuf.map(b => b[i]?.t).find(v => v !== undefined) ?? 0;
         let row = [tVal.toFixed(3)];
         recordBuf.forEach((b, ci) => {
-          keysFor(ci).forEach(k => row.push(((b[k]?.[i]?.v) ?? 0).toFixed(4)));
+          keysFor(ci).forEach(k => row.push(((b[i]?.[k]) ?? 0).toFixed(4)));
         });
         csv += row.join(',') + '\n';
       }
@@ -1878,11 +2023,25 @@
     // ════════════════════════════════════════════════════════════════════════════
     let ws = null;
     let wsReconnectTimer = null;
+
+    // Auto-populate IP: use hostname if served from BBB, else restore last saved IP
+    (function () {
+      const hostname = window.location.hostname;
+      const savedIp = localStorage.getItem('bbot_ip');
+      const savedPort = localStorage.getItem('bbot_port');
+      const ip = (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1')
+        ? hostname
+        : (savedIp || '192.168.1.137');
+      document.getElementById('cfg-bbb-ip').value = ip;
+      if (savedPort) document.getElementById('cfg-ws-port').value = savedPort;
+    })();
     let pingInterval = null;
 
     function doConnect() {
       const ip = document.getElementById('cfg-bbb-ip').value.trim();
       const port = document.getElementById('cfg-ws-port').value.trim();
+      localStorage.setItem('bbot_ip', ip);
+      localStorage.setItem('bbot_port', port);
       connect(`ws://${ip}:${port}`);
       applyVideoURL();
     }
@@ -1963,6 +2122,143 @@
     // D2 only. Separate function from normPID because D2 is a zone-based
     // position hold, not a PID — it has no gains and nothing here maps onto
     // P, I or D. Firmware emits kind:"zone_position_hold" on this block.
+    // ════════════════════════════════════════════════════════════════════════════
+    // RC / SBUS
+    // ════════════════════════════════════════════════════════════════════════════
+    // Channel map mirrors draw_sbus() in display.c and the switch thresholds in
+    // input_sbus.c (SBUS_SW_LOW 400 / SBUS_SW_HIGH 1600). Index is 0-based into
+    // the raw array; the CH label is 1-based to match the transmitter.
+    const SBUS_MIN = 172, SBUS_MID = 992, SBUS_MAX = 1811;
+    const SBUS_SW_LOW = 400, SBUS_SW_HIGH = 1600;
+    const RC_ANALOG = [
+      { i: 0, ch: 'CH1',  sw: 'Ail', fn: 'Turn'  },
+      { i: 1, ch: 'CH2',  sw: 'Ele', fn: 'Drive' },
+      { i: 2, ch: 'CH3',  sw: 'Thr', fn: ''      },
+      { i: 3, ch: 'CH4',  sw: 'Rud', fn: ''      },
+      { i: 6, ch: 'CH7',  sw: 'S1',  fn: 'Aux1'  },
+      { i: 7, ch: 'CH8',  sw: 'S2',  fn: 'Aux2'  },
+    ];
+    const RC_SWITCH = [
+      { i: 4,  ch: 'CH5',  sw: 'SA', fn: 'Arm',   pos: 3 },
+      { i: 5,  ch: 'CH6',  sw: 'SB', fn: 'Kill',  pos: 3 },
+      { i: 8,  ch: 'CH9',  sw: 'SC', fn: 'AuxC',  pos: 3 },
+      { i: 9,  ch: 'CH10', sw: 'SD', fn: 'Speed', pos: 3 },
+      { i: 10, ch: 'CH11', sw: 'SE', fn: 'AuxE',  pos: 3 },
+      { i: 11, ch: 'CH12', sw: 'SF', fn: 'AuxF',  pos: 2 },
+    ];
+    const RC_UNMAPPED = [12, 13, 14, 15];
+
+    function normSbus(raw) {
+      if (!raw) return null;
+      const ch = Array.isArray(raw.ch) ? raw.ch : [];
+      return {
+        connected: !!raw.connected,
+        failsafe: !!raw.failsafe,
+        ch: Array.from({ length: 16 }, (_, i) => ch[i] ?? 0),
+        drive: raw.drive ?? 0, turn: raw.turn ?? 0,
+        arm: raw.arm ?? 0, kill: raw.kill ?? 0, speed: raw.speed ?? 0,
+        sw_c: raw.sw_c ?? 0, sw_e: raw.sw_e ?? 0, sw_f: !!raw.sw_f,
+        aux1: raw.aux1 ?? 0, aux2: raw.aux2 ?? 0,
+      };
+    }
+
+    // -1..+1 about SBUS_MID. Uses the larger half-range so an off-centre
+    // trim cannot make the bar exceed the track.
+    const sbusNorm = v =>
+      Math.max(-1, Math.min(1, (v - SBUS_MID) / Math.max(SBUS_MID - SBUS_MIN, SBUS_MAX - SBUS_MID)));
+
+    function rcSwitchPos(v, n) {
+      if (n === 2) return v > SBUS_SW_HIGH ? 1 : 0;
+      if (v < SBUS_SW_LOW) return 0;
+      if (v > SBUS_SW_HIGH) return 2;
+      return 1;
+    }
+
+    let rcBuilt = false;
+    function buildRC() {
+      const nameCell = d => `<span class="rc-name">${d.ch} <b>${d.sw}</b>${d.fn ? ' ' + d.fn : ''}</span>`;
+      document.getElementById('rc-analog').innerHTML = RC_ANALOG.map(d => `
+        <div class="rc-row" id="rcr-${d.i}">
+          ${nameCell(d)}
+          <div class="rc-bar"><div class="mid"></div><div class="fill" id="rcf-${d.i}"></div></div>
+          <span class="rc-raw" id="rcv-${d.i}">0</span>
+        </div>`).join('');
+      document.getElementById('rc-switches').innerHTML = RC_SWITCH.map(d => `
+        <div class="rc-row" id="rcr-${d.i}">
+          ${nameCell(d)}
+          <div style="flex:1;display:flex;gap:4px">
+            ${(d.pos === 3 ? ['LOW', 'MID', 'HIGH'] : ['OFF', 'ON'])
+              .map((l, k) => `<span class="rc-chip" id="rcc-${d.i}-${k}">${l}</span>`).join('')}
+          </div>
+          <span class="rc-raw" id="rcv-${d.i}">0</span>
+        </div>`).join('');
+      document.getElementById('rc-unmapped').innerHTML = RC_UNMAPPED.map(i => `
+        <div class="rc-row" id="rcr-${i}">
+          <span class="rc-name">CH${i + 1}</span>
+          <div class="rc-bar"><div class="mid"></div><div class="fill" id="rcf-${i}"></div></div>
+          <span class="rc-raw" id="rcv-${i}">0</span>
+        </div>`).join('');
+      rcBuilt = true;
+    }
+
+    function updateRC() {
+      if (!rcBuilt) buildRC();
+      const s = state.sbus;
+      const link = document.getElementById('rc-link');
+      const fs = document.getElementById('rc-failsafe');
+      const live = s && s.connected;
+      link.textContent = live ? 'LINK OK' : 'NO LINK';
+      link.style.color = live ? 'var(--green)' : 'var(--red)';
+      const failed = s && s.failsafe;
+      fs.textContent = failed ? 'FAILSAFE ACTIVE' : 'FAILSAFE no';
+      fs.style.color = failed ? 'var(--red)' : 'var(--txt3)';
+      // Stale link: dim everything rather than showing frozen values as current.
+      document.getElementById('panel-rc').classList.toggle('rc-stale', !live);
+      if (!s) return;
+
+      const setBar = (i, v) => {
+        const f = document.getElementById(`rcf-${i}`); if (!f) return;
+        const n = sbusNorm(v), pct = Math.abs(n) * 50;
+        if (n >= 0) { f.style.left = '50%'; f.style.right = ''; f.style.width = pct + '%'; }
+        else { f.style.right = '50%'; f.style.left = ''; f.style.width = pct + '%'; }
+        f.style.background = Math.abs(n) < 0.03 ? 'var(--txt3)' : 'var(--accent)';
+      };
+      const setRaw = (i, v) => {
+        const e = document.getElementById(`rcv-${i}`); if (e) e.textContent = v;
+      };
+      RC_ANALOG.forEach(d => { setBar(d.i, s.ch[d.i]); setRaw(d.i, s.ch[d.i]); });
+      RC_UNMAPPED.forEach(i => { setBar(i, s.ch[i]); setRaw(i, s.ch[i]); });
+      RC_SWITCH.forEach(d => {
+        const p = rcSwitchPos(s.ch[d.i], d.pos);
+        for (let k = 0; k < d.pos; k++) {
+          const c = document.getElementById(`rcc-${d.i}-${k}`); if (!c) continue;
+          c.className = 'rc-chip' + (k === p ? ' on' : '')
+            // Kill switch engaged is the one switch state worth flagging red.
+            + (k === p && d.fn === 'Kill' && p !== 0 ? ' warn' : '');
+        }
+        setRaw(d.i, s.ch[d.i]);
+      });
+
+      const p3 = v => ['LOW', 'MID', 'HIGH'][v] ?? v;
+      document.getElementById('rc-decoded').innerHTML = [
+        ['drive', s.drive.toFixed(3)], ['turn', s.turn.toFixed(3)],
+        ['arm', p3(s.arm)], ['kill', p3(s.kill)], ['speed', p3(s.speed)],
+        ['sw_c', p3(s.sw_c)], ['sw_e', p3(s.sw_e)], ['sw_f', s.sw_f ? 'ON' : 'OFF'],
+        ['aux1', s.aux1.toFixed(3)], ['aux2', s.aux2.toFixed(3)],
+      ].map(([k, v]) =>
+        `<span class="stat-box"><span style="color:var(--txt3)">${k}</span> ${v}</span>`).join('');
+    }
+
+    // MOT only. Per-wheel duty actually commanded. Separate from every
+    // controller block because it is an output of the drive stage, not a loop.
+    function normMotors(raw) {
+      if (!raw) return null;
+      return {
+        leftDuty: raw.left_duty ?? 0,
+        rightDuty: raw.right_duty ?? 0,
+      };
+    }
+
     function normDrive(raw) {
       if (!raw) return null;
       return {
@@ -1986,10 +2282,16 @@
         state.armed = !!d.system.armed;
         state.mode = d.system.mode;
         state.loopHz = d.system.loop_hz ?? 0;
+        if (recording && loopStat && state.loopHz > 0) {
+          loopStat.n++; loopStat.sum += state.loopHz;
+          if (state.loopHz < loopStat.min) loopStat.min = state.loopHz;
+          if (state.loopHz > loopStat.max) loopStat.max = state.loopHz;
+          if (state.loopHz < 95) loopStat.below++;
+        }
         state.battVoltage = d.system.batt_voltage ?? null;
         state.battStatus = d.system.batt_status ?? null;
         state.clawVoltage = (d.system.claw_voltage > 0) ? d.system.claw_voltage : null;
-        state.clawTemp    = (d.system.claw_temp > 0) ? d.system.claw_temp : null;
+        state.clawTemp = (d.system.claw_temp > 0) ? d.system.claw_temp : null;
       }
       if (d.imu) {
         state.imu.theta = d.imu.theta ?? 0;
@@ -2002,10 +2304,12 @@
       const d1r = normPID(d.D1_balance);
       const d2r = normDrive(d.D2_drive);
       const d3r = normPID(d.D3_steering);
+      const motr = normMotors(d.motors);
 
       if (d1r) {
         Object.assign(state.d1, d1r);
         appendGraphPoint(0, d1r);
+        if (d1r.kp != null) gainsBot.d1 = { kp: d1r.kp, ki: d1r.ki ?? 0, kd: d1r.kd ?? 0 };
         if (!pidCfg.d1.received && d1r.kp != null) {
           pidCfg.d1.kp = d1r.kp; pidCfg.d1.ki = d1r.ki ?? 0; pidCfg.d1.kd = d1r.kd ?? 0;
           pidCfg.d1.received = true;
@@ -2021,11 +2325,27 @@
       if (d3r) {
         Object.assign(state.d3, d3r);
         appendGraphPoint(2, d3r);
+        if (d3r.kp != null) gainsBot.d3 = { kp: d3r.kp, ki: d3r.ki ?? 0, kd: d3r.kd ?? 0 };
         if (!pidCfg.d3.received && d3r.kp != null) {
           pidCfg.d3.kp = d3r.kp; pidCfg.d3.ki = d3r.ki ?? 0; pidCfg.d3.kd = d3r.kd ?? 0;
           pidCfg.d3.received = true;
           syncPIDUI('d3');
         }
+      }
+      if (motr) {
+        Object.assign(state.mot, motr);
+        appendGraphPoint(3, motr);
+      }
+      state.sbus = normSbus(d.sbus) || state.sbus;
+      updateRC();
+      if (d.pos_config) {
+        // ALWAYS mirror what the bot reports, every packet, ungated. posCfg
+        // below is the UI's editable copy and is only seeded once (so slider
+        // edits are not fought mid-drag) — but that makes it go stale the
+        // moment anything else changes the config: the iPhone client, a
+        // pidconfig.txt edit plus restart, anything not this dashboard.
+        // CSV preambles must be stamped from posCfgBot, never from posCfg.
+        posCfgBot = { ...d.pos_config };
       }
       if (d.pos_config && !posCfgReceived) {
         const pc = d.pos_config;
@@ -2052,18 +2372,18 @@
         state.motorMode = d.motor_config.mode ?? 0;
         if (!clawCfg.received) {
           const mc = d.motor_config;
-          clawCfg.mode       = mc.mode        ?? clawCfg.mode;
-          clawCfg.qpps_max   = mc.qpps_max    ?? clawCfg.qpps_max;
-          clawCfg.accel_qpps = mc.accel_qpps  ?? clawCfg.accel_qpps;
-          clawCfg.pol_l      = mc.pol_l        ?? clawCfg.pol_l;
-          clawCfg.pol_r      = mc.pol_r        ?? clawCfg.pol_r;
-          clawCfg.enc_pol_l  = mc.enc_pol_l    ?? clawCfg.enc_pol_l;
-          clawCfg.enc_pol_r  = mc.enc_pol_r    ?? clawCfg.enc_pol_r;
-          clawCfg.kp         = mc.claw_kp      ?? clawCfg.kp;
-          clawCfg.ki         = mc.claw_ki      ?? clawCfg.ki;
-          clawCfg.kd         = mc.claw_kd      ?? clawCfg.kd;
-          clawCfg.baud       = mc.baud         ?? clawCfg.baud;
-          clawCfg.received   = true;
+          clawCfg.mode = mc.mode ?? clawCfg.mode;
+          clawCfg.qpps_max = mc.qpps_max ?? clawCfg.qpps_max;
+          clawCfg.accel_qpps = mc.accel_qpps ?? clawCfg.accel_qpps;
+          clawCfg.pol_l = mc.pol_l ?? clawCfg.pol_l;
+          clawCfg.pol_r = mc.pol_r ?? clawCfg.pol_r;
+          clawCfg.enc_pol_l = mc.enc_pol_l ?? clawCfg.enc_pol_l;
+          clawCfg.enc_pol_r = mc.enc_pol_r ?? clawCfg.enc_pol_r;
+          clawCfg.kp = mc.claw_kp ?? clawCfg.kp;
+          clawCfg.ki = mc.claw_ki ?? clawCfg.ki;
+          clawCfg.kd = mc.claw_kd ?? clawCfg.kd;
+          clawCfg.baud = mc.baud ?? clawCfg.baud;
+          clawCfg.received = true;
           syncClawTab();
         }
       }
@@ -2085,8 +2405,8 @@
       const cv = state.clawVoltage;
       const clawVStr = cv != null ? `${cv.toFixed(1)}V` : '––';
       const clawVCol = cv == null ? 'var(--txt3)' : cv > 11.0 ? 'var(--green)' : cv > 10.0 ? 'var(--yellow)' : 'var(--red)';
-      setTxt('h-claw-v',   clawVStr, clawVCol);
-      setTxt('c-claw-v',   clawVStr, clawVCol);
+      setTxt('h-claw-v', clawVStr, clawVCol);
+      setTxt('c-claw-v', clawVStr, clawVCol);
       setTxt('claw-v-big', clawVStr, clawVCol);
 
       const ct = state.clawTemp;
@@ -2352,14 +2672,16 @@
           html += `<span class="sub-label" style="margin-top:10px">${groups[curGroup]}</span>`;
         }
         const v = posCfg[sl.key] ?? 0;
+        const dis = sl.dead ? ' disabled' : '';
+        const sty = sl.dead ? ' style="opacity:.35"' : '';
         html += `
-      <div class="pid-row">
+      <div class="pid-row"${sty}${sl.dead ? ' title="No effect — this field is not read by the control loop"' : ''}>
         <span class="pid-label" style="font-size:10px">${sl.label}</span>
-        <input type="range" class="pid-slider" id="psl-${sl.key}"
+        <input type="range" class="pid-slider" id="psl-${sl.key}"${dis}
           min="${sl.min}" max="${sl.max}" step="${sl.step}" value="${v}"
           oninput="onPosSlider('${sl.key}',this.value)">
         <div class="pid-ctrl">
-          <input class="val-box" id="pvb-${sl.key}" value="${v}"
+          <input class="val-box" id="pvb-${sl.key}" value="${v}"${dis}
             onchange="onPosValBox('${sl.key}',this.value)"
             onblur="onPosValBox('${sl.key}',this.value)">
         </div>
@@ -2553,8 +2875,8 @@
       setSliderVal('qpps', clawCfg.qpps_max);
       setSliderVal('accel', clawCfg.accel_qpps);
       // polarity segs
-      syncPolSeg('pol-l-seg',     clawCfg.pol_l);
-      syncPolSeg('pol-r-seg',     clawCfg.pol_r);
+      syncPolSeg('pol-l-seg', clawCfg.pol_l);
+      syncPolSeg('pol-r-seg', clawCfg.pol_r);
       syncPolSeg('enc-pol-l-seg', clawCfg.enc_pol_l);
       syncPolSeg('enc-pol-r-seg', clawCfg.enc_pol_r);
       // velocity PID
