@@ -972,6 +972,31 @@
       opacity: .35;
       pointer-events: none;
     }
+
+    /* ── Tune tab ─────────────────────────────────────────────────── */
+    .tune-sub{font-weight:400;opacity:.55;font-size:11px;margin-left:8px}
+    .tune-rep{font-size:12px}
+    .tune-rep table{width:100%;border-collapse:collapse}
+    .tune-rep td{padding:3px 4px;border-bottom:1px solid rgba(255,255,255,.05)}
+    .tune-rep td.lbl{opacity:.75}
+    .tune-rep td.val{text-align:right;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:600}
+    .tune-rep td.note{opacity:.45;font-size:11px}
+    .tune-sec{margin:14px 0 4px;font-size:10px;letter-spacing:.1em;opacity:.55;text-transform:uppercase}
+    .pill{display:inline-block;min-width:34px;text-align:center;border-radius:3px;
+          padding:1px 5px;font-size:10px;font-weight:700;letter-spacing:.04em}
+    .pill.ok{background:rgba(74,222,128,.14);color:#4ade80}
+    .pill.warn{background:rgba(251,191,36,.14);color:#fbbf24}
+    .pill.bad{background:rgba(248,113,113,.18);color:#f87171}
+    .tune-run{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;
+              border-bottom:1px solid rgba(255,255,255,.06)}
+    .tune-run .nm{flex:1;font-family:ui-monospace,monospace;opacity:.85}
+    .tune-run .mini{opacity:.5;font-size:11px}
+    .tune-run input{accent-color:#38bdf8}
+    .delta-better{color:#4ade80}.delta-worse{color:#f87171}
+    .tune-todo{margin-top:10px;padding:8px 10px;border-radius:5px;
+               background:rgba(251,191,36,.07);border-left:2px solid #fbbf24;
+               font-size:11.5px;line-height:1.5}
+    .tune-todo.clean{background:rgba(74,222,128,.07);border-left-color:#4ade80}
   </style>
 </head>
 
@@ -1011,6 +1036,7 @@
     <div class="tab" data-tab="claw">Claw</div>
     <div class="tab" data-tab="rc">RC</div>
     <div class="tab" data-tab="debug">Debug</div>
+    <div class="tab" data-tab="tune">Tune</div>
     <div class="tab" data-tab="settings">Settings</div>
   </div>
 
@@ -1546,6 +1572,33 @@
     </div>
 
     <!-- SETTINGS -->
+    <div class="panel" id="panel-tune">
+      <div class="card">
+        <div class="card-title">Tune quality
+          <span class="tune-sub">from the last recording &mdash; press Rec on the Graph tab, fly 30s, press Stop</span>
+        </div>
+        <div id="tune-report" class="tune-rep">
+          <div style="opacity:.5;padding:8px 0">
+            No run analysed yet. Record 30 seconds of balancing and this fills in.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Saved runs <span class="tune-sub">tick two to compare</span></div>
+        <div id="tune-runs"></div>
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="g-btn" onclick="tuneClearRuns()">Clear all</button>
+          <button class="g-btn" onclick="tuneExport()">Export JSON</button>
+        </div>
+      </div>
+
+      <div class="card" id="tune-cmp-card" style="display:none">
+        <div class="card-title">Comparison</div>
+        <div id="tune-compare" class="tune-rep"></div>
+      </div>
+    </div>
+
     <div class="panel" id="panel-settings">
       <div class="card">
         <div class="card-title">Connection</div>
@@ -1993,7 +2046,19 @@
     }
 
     function toggleRecord() {
-      if (recording) { recording = false; saveCSV(); recordBuf = Array.from({ length: NUM_CTRL }, () => []); recordMeta = null; loopStat = null; }
+      if (recording) {
+        recording = false;
+        saveCSV();
+        // Score the run before the buffer is cleared. Same numbers the CSV would
+        // give tools/analyze_tune.py, without the export/import round trip -- and
+        // stored, so the next run has something to be compared against.
+        try {
+          const m = tuneAnalyze(recordBuf, recordMeta, loopStat);
+          if (m) { tuneRenderReport(m); tuneRecordRun(m); }
+          else console.warn('tune: run had no balancing samples, not scored');
+        } catch (e) { console.warn('tune: analysis failed', e); }
+        recordBuf = Array.from({ length: NUM_CTRL }, () => []); recordMeta = null; loopStat = null;
+      }
       else {
         recording = true;
         recordBuf = Array.from({ length: NUM_CTRL }, () => []);
@@ -3123,6 +3188,336 @@
 
     // Tabs
     // ════════════════════════════════════════════════════════════════════════════
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // Tune quality
+    //
+    // Same metrics as tools/analyze_tune.py, computed here from recordBuf so a
+    // run is scored the moment you press Stop. Runs persist in localStorage, so
+    // "was that better?" is answerable against a run from last week rather than
+    // from memory.
+    //
+    // Thresholds are duplicated from the python deliberately: this has to work
+    // with no server round-trip, and a dashboard that silently disagreed with
+    // the CLI would be worse than one that obviously does. Keep them in step.
+    // ════════════════════════════════════════════════════════════════════════════
+    const TUNE_TH = {
+      drift:     { ok: 0.30, bad: 1.00 },
+      thetaRms:  { ok: 1.50, bad: 3.00 },
+      thetaPeak: { ok: 6.00, bad: 12.0 },
+      sat:       { ok: 2.0,  bad: 10.0 },
+      ringAmp:   { ok: 1.0,  bad: 3.0  },
+      posRms:    { ok: 60,   bad: 200  },
+      asym:      { ok: 0.05, bad: 0.15 },
+      loop:      { ok: 2.0,  bad: 10.0 },
+    };
+    const TUNE_MM_PER_TICK = 155.0 * Math.PI / 145.1;
+    const TUNE_KEY = 'bbot.tuneRuns.v1';
+    const TUNE_MAX_RUNS = 24;
+
+    const tMean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+    const tRms = a => a.length ? Math.sqrt(a.reduce((x, y) => x + y * y, 0) / a.length) : 0;
+
+    function tVerdict(v, th) {
+      const m = Math.abs(v);
+      if (m <= th.ok) return 'ok';
+      if (m >= th.bad) return 'bad';
+      return 'warn';
+    }
+
+    // Dominant period by autocorrelation. Matches the python: take the first
+    // peak AFTER the correlation goes negative, which skips the trivial zero-lag
+    // peak without windowing. Downsampled so a 60s run stays under a few ms.
+    function tAutocorr(sig, dt, lo, hi) {
+      lo = lo || 0.05; hi = hi || 5.0;
+      if (!sig || sig.length < 64 || !(dt > 0)) return { period: null, amp: 0 };
+      let step = 1, x = sig;
+      if (sig.length > 1500) { step = Math.ceil(sig.length / 1500); x = sig.filter((_, i) => i % step === 0); }
+      const edt = dt * step;
+      const m = tMean(x), d = x.map(v => v - m);
+      const denom = d.reduce((a, v) => a + v * v, 0);
+      if (denom <= 0) return { period: null, amp: 0 };
+      const loLag = Math.max(1, Math.round(lo / edt));
+      const hiLag = Math.min(Math.floor(d.length / 2), Math.round(hi / edt));
+      if (hiLag <= loLag) return { period: null, amp: 0 };
+      let sawNeg = false, bestLag = null, bestVal = 0;
+      for (let lag = 1; lag < hiLag; lag++) {
+        let s = 0;
+        for (let k = 0; k < d.length - lag; k++) s += d[k] * d[k + lag];
+        s /= denom;
+        if (s < 0) { sawNeg = true; continue; }
+        if (sawNeg && lag >= loLag && s > bestVal) { bestVal = s; bestLag = lag; }
+      }
+      if (bestLag === null) return { period: null, amp: 0 };
+      return { period: bestLag * edt, amp: tRms(d) * Math.sqrt(Math.max(bestVal, 0)) * Math.SQRT2 };
+    }
+
+    function tuneAnalyze(buf, meta, loop) {
+      const bal = buf[0] || [], pos = buf[1] || [], mot = buf[3] || [];
+      if (!bal.length) return null;
+
+      const dur = bal.length > 1 ? (bal.at(-1).t - bal[0].t) : 0;
+      const dt = bal.length > 1 ? dur / (bal.length - 1) : 0;
+
+      // Balancing samples only. A fall or being held would poison every stat.
+      const okIdx = [];
+      for (let i = 0; i < bal.length; i++) if (Math.abs(bal[i].measurement) <= 8) okIdx.push(i);
+      if (!okIdx.length) return null;
+
+      const th = okIdx.map(i => bal[i].measurement);
+      const err = okIdx.map(i => bal[i].setpoint - bal[i].measurement);
+
+      const ev = pos.length ? pos.map(r => r.encVel).filter(v => isFinite(v)) : [];
+      const ee = pos.length ? pos.map(r => r.encError).filter(v => isFinite(v)) : [];
+      const ep = pos.length ? pos.map(r => r.encPos) : [];
+
+      let sat = 0, duty = [], asym = [];
+      for (const r of mot) {
+        if (Math.abs(r.leftDuty) > 0.95 || Math.abs(r.rightDuty) > 0.95) sat++;
+        duty.push((r.leftDuty + r.rightDuty) / 2);
+        asym.push(Math.abs(r.leftDuty - r.rightDuty));
+      }
+
+      const ring = tAutocorr(th, dt);
+      const posRing = ee.length ? tAutocorr(ee, dt, 0.5, 8.0) : { period: null, amp: 0 };
+      const netTicks = ep.length > 1 ? (ep.at(-1) - ep[0]) : 0;
+
+      return {
+        n: bal.length, dur, dt,
+        keep: okIdx.length,
+        droppedPct: 100 * (bal.length - okIdx.length) / bal.length,
+        drift: ev.length ? tMean(ev) : 0,
+        netTicks, netM: netTicks * TUNE_MM_PER_TICK / 1000,
+        thetaRms: tRms(err), thetaPeak: Math.max(...err.map(Math.abs)),
+        thetaMean: tMean(th),
+        satPct: mot.length ? 100 * sat / mot.length : 0,
+        dutyRms: tRms(duty), asym: tMean(asym),
+        ringPeriod: ring.period, ringAmp: ring.amp,
+        posRms: tRms(ee), posPeak: ee.length ? Math.max(...ee.map(Math.abs)) : 0,
+        posTightPct: ee.length ? 100 * ee.filter(v => Math.abs(v) < 2).length / ee.length : 0,
+        posPeriod: posRing.period, posAmp: posRing.amp,
+        loopBelowPct: loop && loop.n ? 100 * loop.below / loop.n : 0,
+        loopMean: loop && loop.n ? loop.sum / loop.n : 0,
+        falls: bal.filter(r => Math.abs(r.measurement) > 14).length,
+        cfg: meta || null,
+      };
+    }
+
+    // ── run storage ─────────────────────────────────────────────────────────────
+    function tuneLoadRuns() {
+      try { return JSON.parse(localStorage.getItem(TUNE_KEY) || '[]'); }
+      catch (e) { return []; }
+    }
+    function tuneSaveRuns(runs) {
+      try { localStorage.setItem(TUNE_KEY, JSON.stringify(runs.slice(-TUNE_MAX_RUNS))); }
+      catch (e) { console.warn('tune: could not persist runs', e); }
+    }
+    function tuneRecordRun(m) {
+      if (!m) return;
+      const runs = tuneLoadRuns();
+      const d = new Date();
+      runs.push({
+        id: Date.now(),
+        label: d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+        m,
+      });
+      tuneSaveRuns(runs);
+      tuneRenderRuns();
+    }
+    function tuneClearRuns() {
+      if (!confirm('Delete all saved tune runs?')) return;
+      tuneSaveRuns([]); tuneRenderRuns();
+      document.getElementById('tune-cmp-card').style.display = 'none';
+    }
+    function tuneExport() {
+      const blob = new Blob([JSON.stringify(tuneLoadRuns(), null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `bbot_tune_runs_${Date.now()}.json`;
+      a.click(); URL.revokeObjectURL(a.href);
+    }
+
+    // ── rendering ───────────────────────────────────────────────────────────────
+    function tRow(label, value, verdictKey, note) {
+      const v = verdictKey ? `<span class="pill ${verdictKey}">${verdictKey.toUpperCase()}</span>` : '';
+      return `<tr><td style="width:44px">${v}</td><td class="lbl">${label}</td>` +
+             `<td class="val">${value}</td><td class="note">${note || ''}</td></tr>`;
+    }
+
+    function tuneRenderReport(m) {
+      const el = document.getElementById('tune-report');
+      if (!el) return;
+      if (!m) { el.innerHTML = '<div style="opacity:.5;padding:8px 0">Run had no balancing samples.</div>'; return; }
+      const f = (x, d) => (x === null || x === undefined || !isFinite(x)) ? '—' : x.toFixed(d === undefined ? 2 : d);
+      let h = `<div style="opacity:.55;font-size:11px;margin-bottom:6px">` +
+              `${m.n} samples over ${f(m.dur, 1)}s · ${m.keep} balancing` +
+              (m.droppedPct > 1 ? ` · ${f(m.droppedPct, 0)}% dropped as falls/held` : '') + `</div>`;
+
+      h += `<div class="tune-sec">Trim — does it hold station?</div><table>`;
+      h += tRow('mean drift', f(m.drift), tVerdict(m.drift, TUNE_TH.drift), `ticks/100ms · ok &lt;${TUNE_TH.drift.ok}`);
+      h += tRow('net travel', f(m.netM), tVerdict(m.drift, TUNE_TH.drift), `m in ${f(m.dur, 0)}s`);
+      h += `</table>`;
+
+      h += `<div class="tune-sec">Balance — how tightly does it track upright?</div><table>`;
+      h += tRow('pitch error RMS', f(m.thetaRms), tVerdict(m.thetaRms, TUNE_TH.thetaRms), `deg · ok &lt;${TUNE_TH.thetaRms.ok}`);
+      h += tRow('pitch error peak', f(m.thetaPeak), tVerdict(m.thetaPeak, TUNE_TH.thetaPeak), `deg · ok &lt;${TUNE_TH.thetaPeak.ok}`);
+      h += tRow('motor saturation', f(m.satPct, 1), tVerdict(m.satPct, TUNE_TH.sat), `% of samples · ok &lt;${TUNE_TH.sat.ok}%`);
+      h += `</table>`;
+
+      h += `<div class="tune-sec">Ringing — one dominant oscillation?</div><table>`;
+      if (m.ringPeriod) {
+        const v = tVerdict(m.ringAmp, TUNE_TH.ringAmp);
+        h += tRow('dominant period', f(m.ringPeriod), v, 's');
+        h += tRow('amplitude', f(m.ringAmp), v, `deg · ok &lt;${TUNE_TH.ringAmp.ok}`);
+      } else {
+        h += tRow('dominant mode', 'none', 'ok', 'no strong periodic component');
+      }
+      h += `</table>`;
+
+      h += `<div class="tune-sec">Position hold — station keeping</div><table>`;
+      h += tRow('position error RMS', f(m.posRms, 0), tVerdict(m.posRms, TUNE_TH.posRms),
+                `ticks = ${f(m.posRms * TUNE_MM_PER_TICK, 0)} mm · ok &lt;${TUNE_TH.posRms.ok}`);
+      h += tRow('position error peak', f(m.posPeak, 0), tVerdict(m.posPeak, TUNE_TH.posRms),
+                `ticks = ${f(m.posPeak * TUNE_MM_PER_TICK / 1000, 2)} m`);
+      h += tRow('inside deadband', f(m.posTightPct, 0), '', '% of samples with |err| &lt; 2 ticks');
+      if (m.posPeriod) h += tRow('limit cycle', f(m.posPeriod), '', `s · ${f(m.posAmp * TUNE_MM_PER_TICK, 0)} mm amplitude`);
+      h += `</table>`;
+
+      h += `<div class="tune-sec">Effort</div><table>`;
+      h += tRow('duty RMS', f(m.dutyRms, 3), '', 'of full scale');
+      h += tRow('left/right asymmetry', f(m.asym, 3), tVerdict(m.asym, TUNE_TH.asym), `duty · ok &lt;${TUNE_TH.asym.ok}`);
+      h += `</table>`;
+
+      h += `<div class="tune-sec">Health — is this run trustworthy?</div><table>`;
+      h += tRow('loop ticks below 95Hz', f(m.loopBelowPct, 1), tVerdict(m.loopBelowPct, TUNE_TH.loop), `% · ok &lt;${TUNE_TH.loop.ok}%`);
+      h += tRow('samples beyond 14 deg', String(m.falls), m.falls ? 'warn' : 'ok', 'fall-detection territory');
+      h += `</table>`;
+
+      h += tuneAdvice(m);
+      el.innerHTML = h;
+    }
+
+    function tuneAdvice(m) {
+      const todo = [];
+      if (m.loopBelowPct >= TUNE_TH.loop.bad)
+        todo.push('Loop rate is poor — fix that first, every number above is measured through it.');
+      if (Math.abs(m.drift) > TUNE_TH.drift.ok)
+        todo.push(`Creeping ${m.drift > 0 ? 'forward' : 'backward'}. Adjust balance trim by ` +
+                  `${m.drift > 0 ? '-0.3' : '+0.3'} deg and re-log before touching any gain — ` +
+                  `creep masquerades as every other fault.`);
+      if (m.satPct >= TUNE_TH.sat.bad)
+        todo.push(`Motors saturated on ${m.satPct.toFixed(0)}% of samples. The loop is out of ` +
+                  `authority; raising gains cannot help.`);
+      if (m.ringPeriod && m.ringAmp >= TUNE_TH.ringAmp.bad)
+        todo.push(`Strong ${m.ringPeriod.toFixed(2)}s oscillation at ${m.ringAmp.toFixed(1)} deg. ` +
+                  `Fast (&lt;0.5s) usually means kp or kd too high; slow (&gt;1s) usually means ` +
+                  `position hold fighting balance — look at vel_scale_stop and scale_d.`);
+      if (m.posRms >= TUNE_TH.posRms.bad)
+        todo.push(`Position error RMS ${m.posRms.toFixed(0)} ticks. Station-keeping is loose — ` +
+                  `scale_d, or back_to_spot is off.`);
+      if (m.asym >= TUNE_TH.asym.bad)
+        todo.push('Left/right duty differs persistently — drivetrain drag, or the steering ' +
+                  'setpoint is not centred.');
+      if (!todo.length)
+        return `<div class="tune-todo clean"><b>Nothing flagged.</b> This is a good tune — ` +
+               `run <code>make save-config</code> and commit config/machine/ before changing anything.</div>`;
+      return `<div class="tune-todo"><b>What to do next</b><ol style="margin:6px 0 0 16px;padding:0">` +
+             todo.map(t => `<li style="margin-bottom:4px">${t}</li>`).join('') + `</ol></div>`;
+    }
+
+    function tuneRenderRuns() {
+      const el = document.getElementById('tune-runs');
+      if (!el) return;
+      const runs = tuneLoadRuns();
+      if (!runs.length) { el.innerHTML = '<div style="opacity:.5;padding:6px 0">No saved runs yet.</div>'; return; }
+      el.innerHTML = runs.slice().reverse().map(r => {
+        const m = r.m;
+        const flags = [];
+        if (Math.abs(m.drift) > TUNE_TH.drift.ok) flags.push('creep');
+        if (m.satPct >= TUNE_TH.sat.bad) flags.push('saturated');
+        if (m.ringPeriod && m.ringAmp >= TUNE_TH.ringAmp.bad) flags.push('ringing');
+        const cls = flags.length ? 'warn' : 'ok';
+        return `<div class="tune-run">
+          <input type="checkbox" data-runid="${r.id}" onchange="tuneOnPick()">
+          <span class="nm">${r.label}</span>
+          <span class="mini">${m.dur.toFixed(0)}s · drift ${m.drift.toFixed(2)} ·
+                pitch ${m.thetaRms.toFixed(2)} · pos ${m.posRms.toFixed(0)}</span>
+          <span class="pill ${cls}">${flags.length ? flags.join('/') : 'clean'}</span>
+          <button class="g-btn" style="padding:1px 6px;font-size:10px"
+                  onclick="tuneShow(${r.id})">view</button>
+        </div>`;
+      }).join('');
+    }
+
+    function tuneShow(id) {
+      const r = tuneLoadRuns().find(x => x.id === id);
+      if (r) { tuneRenderReport(r.m); switchTab('tune'); window.scrollTo(0, 0); }
+    }
+
+    function tuneOnPick() {
+      const picked = [...document.querySelectorAll('#tune-runs input:checked')];
+      if (picked.length > 2) { picked[0].checked = false; return tuneOnPick(); }
+      const card = document.getElementById('tune-cmp-card');
+      if (picked.length !== 2) { card.style.display = 'none'; return; }
+      const runs = tuneLoadRuns();
+      const ids = picked.map(p => Number(p.dataset.runid));
+      const a = runs.find(r => r.id === Math.min(...ids));
+      const b = runs.find(r => r.id === Math.max(...ids));
+      if (!a || !b) return;
+      card.style.display = '';
+      tuneRenderCompare(a, b);
+    }
+
+    function tuneRenderCompare(a, b) {
+      const rows = [
+        ['drift',            'drift',            2, TUNE_TH.drift],
+        ['thetaRms',         'pitch RMS',        2, TUNE_TH.thetaRms],
+        ['thetaPeak',        'pitch peak',       2, TUNE_TH.thetaPeak],
+        ['satPct',           'saturation %',     1, TUNE_TH.sat],
+        ['ringAmp',          'ring amplitude',   2, TUNE_TH.ringAmp],
+        ['posRms',           'position RMS',     0, TUNE_TH.posRms],
+        ['asym',             'L/R asymmetry',    3, TUNE_TH.asym],
+        ['loopBelowPct',     'loop <95Hz %',     1, TUNE_TH.loop],
+      ];
+      let h = `<div style="opacity:.6;font-size:11px;margin-bottom:6px">` +
+              `${a.label} &nbsp;&rarr;&nbsp; ${b.label}</div>`;
+      h += `<table><tr><td></td><td class="lbl">metric</td>` +
+           `<td class="val">${a.label.split(',')[0]}</td>` +
+           `<td class="val">${b.label.split(',')[0]}</td>` +
+           `<td class="val">change</td></tr>`;
+      for (const [key, label, dp, th] of rows) {
+        const av = a.m[key], bv = b.m[key];
+        if (av === undefined || bv === undefined || av === null || bv === null) continue;
+        const d = bv - av;
+        const better = Math.abs(bv) < Math.abs(av);
+        const same = Math.abs(d) < 1e-9;
+        const cls = same ? '' : (better ? 'delta-better' : 'delta-worse');
+        h += `<tr><td style="width:44px"><span class="pill ${tVerdict(bv, th)}">${tVerdict(bv, th).toUpperCase()}</span></td>` +
+             `<td class="lbl">${label}</td><td class="val">${av.toFixed(dp)}</td>` +
+             `<td class="val">${bv.toFixed(dp)}</td>` +
+             `<td class="val ${cls}">${same ? '—' : (d > 0 ? '+' : '') + d.toFixed(dp)}</td></tr>`;
+      }
+      h += `</table>`;
+      // config diff, since "what did I actually change?" is the real question
+      const ca = a.m.cfg, cb = b.m.cfg;
+      if (ca && cb) {
+        const diffs = [];
+        for (const grp of ['pos', 'bal', 'str']) {
+          const ga = ca[grp] || {}, gb = cb[grp] || {};
+          for (const k of new Set([...Object.keys(ga), ...Object.keys(gb)])) {
+            if (Number(ga[k]) !== Number(gb[k])) diffs.push(`${grp}.${k}: ${ga[k]} → ${gb[k]}`);
+          }
+        }
+        h += `<div class="tune-sec">Config changed between these runs</div>`;
+        h += diffs.length
+          ? `<div style="font-family:ui-monospace,monospace;font-size:11px;line-height:1.7">` +
+            diffs.map(d => `<div>${d}</div>`).join('') + `</div>`
+          : `<div style="opacity:.5;font-size:11px">Nothing — same config both runs. ` +
+            `Any difference above is run-to-run variation, not a change you made.</div>`;
+      }
+      document.getElementById('tune-compare').innerHTML = h;
+    }
+
     function switchTab(name) {
       document.querySelectorAll('.tab').forEach(t =>
         t.classList.toggle('active', t.dataset.tab === name));
@@ -3266,6 +3661,8 @@
 
     document.querySelectorAll('.tab').forEach(t =>
       t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+    try { tuneRenderRuns(); } catch (e) { console.warn('tune: run list', e); }
 
 
     // ════════════════════════════════════════════════════════════════════════════
