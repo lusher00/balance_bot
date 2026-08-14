@@ -781,6 +781,37 @@ void robot_run(void)
             }
         }
 
+        // ── Pose: a commanded lean, ramped ───────────────────────────────
+        // Overrides whatever the hold loop or stick asked for. Ramped at
+        // max_angle_rate in BOTH directions so dialling it in eases the bot into
+        // the lean and zeroing it eases back out — stepping a balancing robot's
+        // angle reference is how you put it on its face.
+        //
+        // DISTINCT from theta_offset, which is the balance trim (where upright
+        // IS). This deliberately leans the bot AWAY from upright so you can watch
+        // it creep at a known angle; it WILL drive away.
+        {
+            static float pose_ramp = 0.0f;
+
+            /* Never resume a stale pose on re-arm. */
+            if (!state.armed)
+            {
+                pose_ramp = 0.0f;
+                state.pose_lean = 0.0f;
+            }
+
+            float d = state.pose_lean - pose_ramp;
+            float lim = g_pos_config.max_angle_rate;
+            if (d > lim) d = lim;
+            if (d < -lim) d = -lim;
+            pose_ramp += d;
+
+            /* Only take over once there is something to apply, so a zero pose
+             * leaves the hold loop completely untouched. */
+            if (fabsf(state.pose_lean) > 0.0005f || fabsf(pose_ramp) > 0.0005f)
+                state.theta_ref = pose_ramp;
+        }
+
         // Saturate references before the next ISR reads them
         rc_saturate_float(&state.theta_ref, -MAX_THETA_REF, MAX_THETA_REF);
         /* state.steering is now a HEADING TARGET in degrees of phi_diff, not a
