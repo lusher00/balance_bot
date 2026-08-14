@@ -55,9 +55,20 @@ $(BINDIR)/$(TARGET): $(OBJS)
 	@echo ""
 
 # Compile
+# -MMD -MP writes a .d file per object listing the headers it used, and the
+# -include below feeds those back to make. Without this, changing a header does
+# NOT rebuild anything: the rule only depends on the .c.
+#
+# That is not a slow-build annoyance, it is a correctness bug. Adding a field to
+# a struct in balance_bot.h changes the layout of everything containing it, so a
+# stale object reads the wrong offsets and you get silent garbage -- garbled
+# motor_config in telemetry, pol_l reading 0 and the motors going dead, and a
+# display.c type error that stayed hidden behind a stale obj/display.o.
 $(OBJDIR)/%.o: src/%.c
 	@mkdir -p $(OBJDIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+-include $(OBJS:.o=.d)
 
 # Clean
 clean:

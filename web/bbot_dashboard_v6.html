@@ -1569,6 +1569,12 @@
         <span style="font-size:10px;color:var(--txt3)">Last telemetry</span>
         <span id="debug-pkt" style="font-size:10px;color:var(--txt3)">0 packets</span>
       </div>
+      <div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <button class="g-btn" onclick="debugCopy()">Copy JSON</button>
+        <button class="g-btn" onclick="debugExport()">Export .json</button>
+        <button class="g-btn" id="debug-hold-btn" onclick="debugToggleHold()">Freeze</button>
+        <span id="debug-note" style="font-size:10px;color:var(--txt3);align-self:center"></span>
+      </div>
       <div id="debug-out">Waiting for data…</div>
     </div>
 
@@ -3545,6 +3551,78 @@
       document.getElementById('tune-compare').innerHTML = h;
     }
 
+
+    // ── Debug: copy / export / freeze ───────────────────────────────────────────
+    // Telemetry arrives at ~10 Hz, so reading a value off the screen is a race and
+    // selecting the text by hand is worse. Freeze holds one packet still; Copy and
+    // Export always hand over the exact object that arrived.
+    let lastTelemetry = null;
+    let debugHold = false;
+
+    function debugNote(msg) {
+      const el = document.getElementById('debug-note');
+      if (!el) return;
+      el.textContent = msg;
+      setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2500);
+    }
+
+    function debugJSON() {
+      if (!lastTelemetry) return null;
+      // Stamp it, so a pasted packet carries its own context. A JSON blob with no
+      // idea which robot or when is markedly less useful.
+      return JSON.stringify({
+        captured: new Date().toISOString(),
+        host: location.hostname,
+        packets: state.packetsReceived,
+        telemetry: lastTelemetry,
+      }, null, 2);
+    }
+
+    async function debugCopy() {
+      const txt = debugJSON();
+      if (!txt) return debugNote('no telemetry yet');
+      try {
+        await navigator.clipboard.writeText(txt);
+        debugNote(`copied ${(txt.length / 1024).toFixed(1)} kB`);
+      } catch (e) {
+        // The clipboard API needs a secure context. Over plain http to the bot it
+        // is unavailable, so fall back rather than failing silently.
+        const ta = document.createElement('textarea');
+        ta.value = txt;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+        document.body.removeChild(ta);
+        debugNote(ok ? 'copied' : 'copy blocked — use Export');
+      }
+    }
+
+    function debugExport() {
+      const txt = debugJSON();
+      if (!txt) return debugNote('no telemetry yet');
+      const blob = new Blob([txt], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      const t = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      a.download = `bbot_telemetry_${t}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      debugNote('exported');
+    }
+
+    function debugToggleHold() {
+      debugHold = !debugHold;
+      const b = document.getElementById('debug-hold-btn');
+      if (b) {
+        b.textContent = debugHold ? 'Live' : 'Freeze';
+        b.classList.toggle('rec-active', debugHold);
+      }
+      debugNote(debugHold ? 'frozen — Copy/Export still take the latest packet' : 'live');
+    }
+
     function switchTab(name) {
       document.querySelectorAll('.tab').forEach(t =>
         t.classList.toggle('active', t.dataset.tab === name));
@@ -3697,6 +3775,10 @@
     // ════════════════════════════════════════════════════════════════════════════
     function updateDebug(d) {
       document.getElementById('debug-pkt').textContent = `${state.packetsReceived} packets`;
+      // Keep the raw object so Copy/Export hand over exactly what arrived,
+      // rather than re-serialising whatever the DOM happens to be showing.
+      lastTelemetry = d;
+      if (debugHold) return;          // frozen: leave the displayed packet alone
       document.getElementById('debug-out').innerHTML = syntaxHL(JSON.stringify(d, null, 2));
     }
 
