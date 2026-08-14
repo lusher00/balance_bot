@@ -270,12 +270,12 @@ static int parse_json_command(const char *json_cmd)
         {
             if (strstr(json_cmd, "\"enabled\":true"))
             {
-                g_controllers.D1_balance = true;
+                g_controllers.balance = true;
                 LOG_INFO("D1_balance enabled");
             }
             else if (strstr(json_cmd, "\"enabled\":false"))
             {
-                g_controllers.D1_balance = false;
+                g_controllers.balance = false;
                 LOG_WARN("D1_balance disabled - robot will fall!");
             }
         }
@@ -283,12 +283,12 @@ static int parse_json_command(const char *json_cmd)
         {
             if (strstr(json_cmd, "\"enabled\":true"))
             {
-                g_controllers.D2_drive = true;
+                g_controllers.position = true;
                 LOG_INFO("D2_drive enabled");
             }
             else
             {
-                g_controllers.D2_drive = false;
+                g_controllers.position = false;
                 LOG_INFO("D2_drive disabled");
             }
         }
@@ -296,12 +296,12 @@ static int parse_json_command(const char *json_cmd)
         {
             if (strstr(json_cmd, "\"enabled\":true"))
             {
-                g_controllers.D3_steering = true;
+                g_controllers.steering = true;
                 LOG_INFO("D3_steering enabled");
             }
             else
             {
-                g_controllers.D3_steering = false;
+                g_controllers.steering = false;
                 LOG_INFO("D3_steering disabled");
             }
         }
@@ -410,8 +410,12 @@ static int parse_json_command(const char *json_cmd)
     // {"type":"zero_imu"} — zero pitch offset + encoders, save all config
     if (strstr(json_cmd, "\"type\":\"zero_imu\""))
     {
-        g_imu_offsets.pitch_offset -= state.theta;  // state.theta=-(pitch_deg-offset)  // state.theta is deg; pitch_offset is rad
-        imu_offsets_save(&g_imu_offsets);
+        // pitch_offset and state.theta are both DEGREES, despite the old comment
+        // here claiming radians — imu_config.c computes it with RAD_TO_DEG and
+        // subtracts it from pitch_deg. The code was right, the comment was not.
+        // The separate imu_offsets_save() is gone: robot_config_save_current()
+        // below writes g_imu_offsets as part of the one atomic config write.
+        g_imu_offsets.pitch_offset -= state.theta;
         state.theta_offset = 0.0f;
         // Also zero encoders so D2 starts from a clean position
         motor_hal_encoder_reset_all();
@@ -423,15 +427,7 @@ static int parse_json_command(const char *json_cmd)
         state.enc_pos_target = 0;
         state.enc_velocity = 0;
         state.enc_vel_reset = 1;
-        pid_config_file_t cfg;
-        pid_config_get_current(&cfg);
-        pid_config_save(NULL, &cfg);
-        pos_config_t pcfg;
-        pos_config_get_current(&pcfg);
-        pos_config_save(NULL, &pcfg);
-        motor_config_t mcfg;
-        motor_config_get_current(&mcfg);
-        motor_config_save(NULL, &mcfg);
+        robot_config_save_current(NULL);
         LOG_INFO("iPhone: IMU zeroed + encoders reset, saved");
         return 0;
     }
@@ -466,15 +462,7 @@ static int parse_json_command(const char *json_cmd)
         if (val < -30.0f)
             val = -30.0f;
         state.theta_offset = val;
-        pid_config_file_t cfg;
-        pid_config_get_current(&cfg);
-        pid_config_save(NULL, &cfg);
-        pos_config_t pcfg;
-        pos_config_get_current(&pcfg);
-        pos_config_save(NULL, &pcfg);
-        motor_config_t mcfg;
-        motor_config_get_current(&mcfg);
-        motor_config_save(NULL, &mcfg);
+        robot_config_save_current(NULL);
         LOG_INFO("iPhone: theta_offset = %.2f deg, saved", val);
         return 0;
     }
@@ -544,21 +532,16 @@ static int parse_json_command(const char *json_cmd)
     // {"type":"save_pid"}  -- write current PID gains + pos_config + motor_config to pidconfig.txt
     if (strstr(json_cmd, "\"type\":\"save_pid\""))
     {
-        pid_config_file_t cfg;
-        pid_config_get_current(&cfg);
-        if (pid_config_save(NULL, &cfg) == 0)
+        // One atomic write of every section, replacing three separate appends.
+        // The old pos_config_save() opened the file in "a" mode, so each slider
+        // move appended a duplicate [position] block.
+        if (robot_config_save_current(NULL) == 0)
         {
-            pos_config_t pcfg;
-            pos_config_get_current(&pcfg);
-            pos_config_save(NULL, &pcfg);
-            motor_config_t mcfg;
-            motor_config_get_current(&mcfg);
-            motor_config_save(NULL, &mcfg);
-            LOG_INFO("iPhone: PID + pos + motor config saved to pidconfig.txt");
+            LOG_INFO("iPhone: config saved to robot.conf");
         }
         else
         {
-            LOG_WARN("iPhone: failed to save PID config");
+            LOG_WARN("iPhone: failed to save robot.conf");
         }
         return 0;
     }
@@ -612,12 +595,8 @@ static int parse_json_command(const char *json_cmd)
         // to fire zero_imu / set_theta_offset / set_pid afterwards — each of which
         // saves the whole config as a side effect. Tune pos_config alone and
         // restart, and the entire session was silently lost.
-        {
-            pos_config_t pcfg;
-            pos_config_get_current(&pcfg);
-            if (pos_config_save(NULL, &pcfg) != 0)
-                LOG_WARN("pos_config updated but could not be saved to disk");
-        }
+        if (robot_config_save_current(NULL) != 0)
+            LOG_WARN("pos_config updated but could not be saved to disk");
         LOG_INFO("iPhone: pos_config updated + saved");
         return 0;
     }

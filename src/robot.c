@@ -62,9 +62,9 @@ rc_mpu_data_t mpu_data;
 pid_controller_t balance_pid, steering_pid;
 
 controller_enables_t g_controllers = {
-    .D1_balance = true,
-    .D2_drive = true,
-    .D3_steering = true,
+    .balance = true,
+    .position = true,
+    .steering = true,
 };
 
 // Runtime-tunable position controller parameters (initialised in robot_init)
@@ -121,14 +121,14 @@ static void imu_interrupt(void)
     float balance_output = 0.0f;
     float steering_output = 0.0f;
 
-    if (g_controllers.D1_balance)
+    if (g_controllers.balance)
     {
         balance_output = pid_update(&balance_pid,
                                     state.theta_ref + state.theta_offset,
                                     state.theta);
     }
 
-    if (g_controllers.D3_steering)
+    if (g_controllers.steering)
     {
         float phi_diff = (state.phi_right - state.phi_left) / 2.0f;
         steering_output = pid_update(&steering_pid, state.steering, phi_diff);
@@ -198,7 +198,8 @@ int robot_init(void)
     LOG_INFO("  D3_steering: Kp=%.3f Ki=%.3f Kd=%.3f", STEERING_KP, STEERING_KI, STEERING_KD);
 
     // IMU config
-    imu_offsets_load(&g_imu_offsets);
+    // IMU offsets arrive with everything else via robot_config_apply() in
+    // main(), immediately after this function returns.
 
     // IMU / DMP
     LOG_INFO("Initializing IMU...");
@@ -228,10 +229,10 @@ int robot_init(void)
     state.theta_ref = 0.0f;
     state.theta_offset = 0.0f;
     state.steering = 0.0f;
-    state.d2_pos_correction = 0.0f;
-    state.d2_vel_damp = 0.0f;
-    state.d2_correction_out = 0.0f;
-    state.d2_active_scale = 0.0f;
+    state.pos_correction = 0.0f;
+    state.pos_vel_damp = 0.0f;
+    state.pos_output = 0.0f;
+    state.pos_scale = 0.0f;
 
     rc_make_pid_file();
     rc_set_state(RUNNING);
@@ -465,7 +466,7 @@ void robot_run(void)
                 was_turning = false;
             }
 
-            if (state.steering_latched && g_controllers.D3_steering)
+            if (state.steering_latched && g_controllers.steering)
                 state.steering = state.steering_latch;
         }
 
@@ -540,7 +541,7 @@ void robot_run(void)
         {
             // Track armed transitions for D2 last_correction reset
             static int prev_armed_d2 = 0;
-            if (g_controllers.D2_drive && state.armed)
+            if (g_controllers.position && state.armed)
             {
                 static float last_correction = 0.0f;
 
@@ -567,7 +568,7 @@ void robot_run(void)
                                  "pos=%d tgt=%d err=%d vel=%.2f stopped_vel=%d "
                                  "last_corr=%.4f theta_ref=%.4f",
                                  state.armed,
-                                 g_controllers.D2_drive,
+                                 g_controllers.position,
                                  (int)stick_centered,
                                  raw_stick_ref,
                                  state.enc_pos,
@@ -595,39 +596,39 @@ void robot_run(void)
                         // rebuild from zero on the way back out. Damping is unaffected
                         // (it is applied after the limiter and is no longer gated).
                         correction = 0.0f;
-                        state.d2_active_scale = 0.0f;
+                        state.pos_scale = 0.0f;
                     }
                     else if (g_pos_config.back_to_spot)
                     {
                         // Full zone-based proportional hold
                         if (absErr > g_pos_config.zone_a)
-                            state.d2_active_scale = g_pos_config.scale_a;
+                            state.pos_scale = g_pos_config.scale_a;
                         else if (absErr > g_pos_config.zone_b)
-                            state.d2_active_scale = g_pos_config.scale_b;
+                            state.pos_scale = g_pos_config.scale_b;
                         else if (absErr > g_pos_config.zone_c)
-                            state.d2_active_scale = g_pos_config.scale_c;
+                            state.pos_scale = g_pos_config.scale_c;
                         else
-                            state.d2_active_scale = g_pos_config.scale_d;
+                            state.pos_scale = g_pos_config.scale_d;
 
-                        correction = (float)err / state.d2_active_scale;
+                        correction = (float)err / state.pos_scale;
                     }
                     else
                     {
                         if (absErr < g_pos_config.zone_c)
                         {
-                            state.d2_active_scale = g_pos_config.scale_d;
-                            correction = (float)err / state.d2_active_scale;
+                            state.pos_scale = g_pos_config.scale_d;
+                            correction = (float)err / state.pos_scale;
                         }
                         else
                         {
                             // Outside zone_c in loose-hold mode: abandon the old
                             // target rather than correcting toward it.
-                            state.d2_active_scale = 0.0f;
+                            state.pos_scale = 0.0f;
                             state.enc_pos_target = state.enc_pos;
                         }
                     }
 
-                    state.d2_pos_correction = correction;
+                    state.pos_correction = correction;
 
                     // Rate-limit the position correction — prevents slamming theta_ref
                     float delta = correction - last_correction;
@@ -654,7 +655,7 @@ void robot_run(void)
                     // deadband the output is now pure damping — brake at the target, no
                     // position push. That is the intent. Do not re-add a gate here.
                     correction -= vel_damp;
-                    state.d2_vel_damp = -vel_damp;
+                    state.pos_vel_damp = -vel_damp;
 
                     // Hard clamp
                     if (correction > g_pos_config.max_correction)
@@ -662,7 +663,7 @@ void robot_run(void)
                     if (correction < -g_pos_config.max_correction)
                         correction = -g_pos_config.max_correction;
 
-                    state.d2_correction_out = correction;
+                    state.pos_output = correction;
                     state.theta_ref = correction;
                 }
                 else
@@ -680,12 +681,12 @@ void robot_run(void)
                     // Position hold is not running while driving. Clear the hold
                     // telemetry so it does not sit at stale values from the last
                     // centred tick and get read as live position-hold activity.
-                    state.d2_pos_correction = 0.0f;
-                    state.d2_vel_damp = 0.0f;
-                    state.d2_active_scale = 0.0f;
-                    state.d2_correction_out = correction;
+                    state.pos_correction = 0.0f;
+                    state.pos_vel_damp = 0.0f;
+                    state.pos_scale = 0.0f;
+                    state.pos_output = correction;
                 }
-            } // end if (g_controllers.D2_drive && state.armed)
+            } // end if (g_controllers.position && state.armed)
             else
             {
                 // D2 disabled — keep target synced so it's ready when re-enabled
@@ -697,7 +698,7 @@ void robot_run(void)
                     {
                         d2_else_last_us = d2_now_us;
                         LOG_INFO("[D2-ELSE] D2_drive=%d armed=%d enc_pos_target synced to %d",
-                                 g_controllers.D2_drive,
+                                 g_controllers.position,
                                  state.armed,
                                  state.enc_pos);
                     }
@@ -719,13 +720,13 @@ void robot_run(void)
                 int32_t d2_err = state.enc_pos_target - state.enc_pos;
                 float phi_diff = (state.phi_left - state.phi_right) / 2.0f;
                 LOG_INFO("[D2] en=%d pos=%d tgt=%d err=%d vel=%.2f corr_out=%.3f theta_ref=%.3f",
-                         g_controllers.D2_drive,
+                         g_controllers.position,
                          state.enc_pos, state.enc_pos_target, d2_err,
                          state.enc_velocity,
-                         state.d2_correction_out,
+                         state.pos_output,
                          state.theta_ref);
                 LOG_INFO("[D3] en=%d psi=%.2f phi_diff=%.2f steering=%.3f",
-                         g_controllers.D3_steering,
+                         g_controllers.steering,
                          state.psi, phi_diff, state.steering);
             }
         }

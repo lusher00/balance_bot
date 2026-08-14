@@ -46,9 +46,9 @@
  * balance_bot self-balancing robot with iPhone app integration.
  *
  * Architecture:
- * - D1 (balance):  Angle controller — keeps robot upright
- * - D2 (drive):    Position controller — drives via lean angle (optional)
- * - D3 (steering): Yaw controller — turns left/right
+ * - balance:  Angle controller — keeps robot upright
+ * - position:    Position controller — drives via lean angle (optional)
+ * - steering: Yaw controller — turns left/right
  * - uart_input:    Generic packet-based UART input (external coprocessor, etc.)
  * - roboclaw:      Packet-serial motor driver over a dedicated UART
  * - ipc_server:    Unix-socket bridge to Node.js / iPhone app
@@ -73,7 +73,12 @@
 
 // Control limits
 #define MAX_THETA_REF 17.0f // Max lean angle command (deg)
-#define MAX_STEERING 1.0f   // Max steering command (normalized)
+#define MAX_STEERING 1.0f   // Legacy: normalised steering, still used by MODE_EXT_INPUT
+// How far the steering heading target may lead the actual heading, in degrees
+// of phi_diff. Anti-windup: without it, holding the turn stick while the wheels
+// are blocked (or the bot is lifted) winds the target up without limit and the
+// bot spins hard the instant it regains traction.
+#define MAX_STEER_LEAD 90.0f
 
 // PID default gains (tunable via iPhone app)
 #define BALANCE_KP 0.050f
@@ -85,7 +90,7 @@
 
 #define DRIVE_PHI_DEADZONE 2.0f
 
-// D2 position controller — encoder-tick-based hold/drive
+// position hold controller — encoder-tick-based hold/drive
 // These defaults initialise g_pos_config in robot.c.
 // Use set_pos_config IPC command or the iPhone app to tune at runtime.
 #define POS_ZONE_A_DEFAULT 8000
@@ -111,7 +116,7 @@
 //
 // Was 100, which held one sample for 10 control ticks. Measured against
 // d(enc_pos)/dt, reported velocity lagged true velocity by ~102 ms — 19 deg of
-// phase error on the D2 damping term at the observed ~1.9 s position limit
+// phase error on the position hold damping term at the observed ~1.9 s position limit
 // cycle. Damping that far out of antiphase stops opposing motion and starts
 // behaving like a position term, producing a ~100-150 mm rocking oscillation
 // that no value of vel_scale_stop or scale_d could remove.
@@ -120,7 +125,7 @@
 #define POS_VEL_PERIOD_MS 40
 
 /**
- * @brief Runtime-tunable parameters for the D2 position (hold/drive) controller.
+ * @brief Runtime-tunable parameters for the position hold (hold/drive) controller.
  *
  * All fields are readable and writable at runtime via the IPC set_pos_config
  * command and the iPhone app.  Initialised from the _DEFAULT macros above.
@@ -143,9 +148,9 @@ typedef struct
     float vel_scale_move;    // Back-EMF comp divisor when driving
     float vel_scale_turning; // Reduces turning authority at speed (position-hold-style)
     int32_t stopped_vel;     // Ticks/100ms threshold for "stopped" detection
-    float max_correction;    // Maximum lean-angle correction D2 may inject (deg)
+    float max_correction;    // Maximum lean-angle correction position hold may inject (deg)
     float max_angle_rate;    // Max correction change per main loop tick (deg/tick)
-                             // Rate-limits D2 output to prevent slamming theta_ref.
+                             // Rate-limits position hold output to prevent slamming theta_ref.
                              // reference implementation uses 1°/loop at 500Hz ≈ 5°/loop at 100Hz.
     int back_to_spot;        // 1 = full zone-based hold (A/B/C/D);
                              // 0 = only correct inside zone_c (loose hold, position hold mode)
@@ -308,7 +313,7 @@ typedef struct
     float phi_left;  // Left wheel angle  (deg)
     float phi_right; // Right wheel angle (deg)
 
-    // D2 position controller (encoder-tick based)
+    // position hold controller (encoder-tick based)
     int32_t enc_pos;        // Sum of left+right encoder ticks (position)
     int32_t enc_pos_target; // Target tick position (held when stick is centered)
     float enc_velocity;     // Tick velocity (ticks per 100 ms window)
@@ -317,14 +322,19 @@ typedef struct
 
     // Legacy degree-based position (kept for telemetry)
     float pos;          // avg wheel angle (deg)
-    float pos_setpoint; // D2 setpoint (deg) — unused when D2_drive enabled
+    float pos_setpoint; // position setpoint (deg) — unused when position enabled
 
     // Control references
     float theta_ref;    // Desired body angle  (deg)
+    float pose_lean;    // Commanded lean for observation (deg). DISTINCT from
+                        // theta_offset: theta_offset defines where upright IS,
+                        // pose_lean deliberately leans AWAY from upright so you
+                        // can watch the bot creep at a known angle. Ramped in and
+                        // out at max_angle_rate; cleared on disarm.
     float theta_offset; // Balance point trim  (deg) — tunable from iPhone
     float steering;     // Desired steering    (-1 to +1)
 
-    // D3 steering latch — when the drive stick returns to centre, D3 holds
+    // steering latch — when the drive stick returns to centre, steering holds
     // the phi_diff at that moment rather than fighting back to zero.
     float steering_latch; // phi_diff value latched at stick-centre transition
     int steering_latched; // 1 = latch is active (stick centred), 0 = driving
@@ -332,12 +342,12 @@ typedef struct
     // External UART input (used only in MODE_EXT_INPUT)
     input_packet_t ext_input;
 
-    // D2 position controller internal signals (for telemetry)
-    float d2_pos_correction; // lean angle from position error (deg)
-    float d2_vel_damp;       // lean angle from velocity damping (deg)
-    float d2_correction_out; // final rate-limited, clamped correction injected (deg)
-    float d2_active_scale;   // zone divisor used this tick (0 = deadband, no correction).
-                             // D2 is gain-scheduled, so "which zone am I in" is the
+    // position hold controller internal signals (for telemetry)
+    float pos_correction; // lean angle from position error (deg)
+    float pos_vel_damp;       // lean angle from velocity damping (deg)
+    float pos_output; // final rate-limited, clamped correction injected (deg)
+    float pos_scale;   // zone divisor used this tick (0 = deadband, no correction).
+                             // position hold is gain-scheduled, so "which zone am I in" is the
                              // closest thing it has to a gain — log it explicitly.
 
     robot_mode_t mode;
@@ -413,25 +423,7 @@ void telemetry_print_summary(void);
 // PID CONFIG FILE (pid_config.c)
 // ============================================================================
 
-typedef struct
-{
-    float balance_angle;
-    struct
-    {
-        float kp, ki, kd;
-    } D1_balance;
-    struct
-    {
-        float kp, ki, kd;
-    } D3_steering;
-} pid_config_file_t;
-
-int pid_config_load(const char *filename, pid_config_file_t *config);
-int pid_config_load_or_default(const char *filename, pid_config_file_t *config);
-void pid_config_print(const pid_config_file_t *config);
-int pid_config_save(const char *filename, const pid_config_file_t *config);
-void pid_config_apply(const pid_config_file_t *config);
-void pid_config_get_current(pid_config_file_t *config);
+/* robot_config_t is defined below, after imu_offsets_t. */
 
 // ============================================================================
 // POSITION CONTROLLER CONFIG (pid_config.c)
@@ -447,17 +439,14 @@ void pos_config_apply(const pos_config_t *cfg);
  * @brief Populate *cfg from the current g_pos_config values.
  * Used by save_pid to persist position params alongside PID gains.
  */
-void pos_config_get_current(pos_config_t *cfg);
 
 /**
  * @brief Save pos_config to file (appended section in pidconfig.txt).
  */
-int pos_config_save(const char *filename, const pos_config_t *cfg);
 
 /**
  * @brief Load pos_config from file, or fill defaults if section absent.
  */
-int pos_config_load_or_default(const char *filename, pos_config_t *cfg);
 
 // ============================================================================
 // MOTOR CONFIG (pid_config.c)
@@ -467,13 +456,10 @@ int pos_config_load_or_default(const char *filename, pos_config_t *cfg);
 void motor_config_apply(const motor_config_t *cfg);
 
 /** @brief Populate *cfg from the current g_motor_config values. */
-void motor_config_get_current(motor_config_t *cfg);
 
 /** @brief Save motor_config to file (appended section in pidconfig.txt). */
-int motor_config_save(const char *filename, const motor_config_t *cfg);
 
 /** @brief Load motor_config from file, or fill defaults if section absent. */
-int motor_config_load_or_default(const char *filename, motor_config_t *cfg);
 
 // ============================================================================
 // XBOX CONTROLLER (input_xbox.c)
@@ -500,6 +486,7 @@ int sbus_get_kill(void);
 int sbus_get_speed_mode(void);
 bool sbus_get_failsafe(void);
 bool sbus_is_connected(void);
+bool sbus_drive_armed(void);
 float sbus_get_aux1(void);
 float sbus_get_aux2(void);
 int sbus_get_sw_c(void);
@@ -528,6 +515,77 @@ typedef struct
     int pitch_axis;         // gravity axis for pitch: 0=X  1=Y(default)  2=Z
 } imu_offsets_t;
 
+/**
+ * @brief Which SBUS channels drive the robot, and how hard.
+ *
+ * Channel numbers are 1-based, matching what the transmitter displays.
+ *
+ * drive_scale exists because MAX_THETA_REF is 17 degrees: at full stick the
+ * bot commands a 17-degree lean, which on this chassis is enough to throw
+ * itself over before the balance loop can catch it. Scale it right down while
+ * learning the machine.
+ *
+ * require_center is the important one. A ratcheted throttle stick (CH3) rests
+ * at the BOTTOM of its travel, not the middle — read as a bipolar command that
+ * is full reverse. With this set, drive stays at zero until the channel has
+ * been seen near centre at least once since the link came up, so the bot
+ * cannot lurch the instant the receiver binds.
+ */
+typedef struct
+{
+    int drive_channel;   /* 1-based. CH2 (Ele) springs back; CH3 (Thr) stays put */
+    int turn_channel;    /* 1-based. Normally CH1 (Ail)                          */
+    float drive_scale;   /* multiplies the normalised stick, 0..1                */
+    float turn_scale;
+    int drive_invert;    /* 1 = stick forward gives positive drive               */
+    int turn_invert;
+    float turn_rate;     /* deg of wheel-differential per second at full stick.
+                          * The steering loop tracks phi_diff = (phi_R - phi_L)/2
+                          * in degrees, so this is a rate in those units, NOT a
+                          * chassis yaw rate. A full chassis spin is roughly
+                          * (wheelbase/wheel_circumference) * 360 of phi_diff. */
+    float deadband;      /* fraction of half-travel treated as centre            */
+    int require_center;  /* 1 = refuse drive until the stick has been centred    */
+} sbus_config_t;
+
+extern sbus_config_t g_sbus_config;
+
+typedef struct
+{
+    float kp, ki, kd;
+} pid_gains_t;
+
+/**
+ * @brief Everything tunable on the robot, in one struct backed by one file.
+ *
+ * Supersedes pid_config_file_t + pos_config_t + motor_config_t + imu_offsets_t
+ * being loaded and saved independently from two files in three formats. See
+ * robot_config.c for why that arrangement could not be made safe.
+ */
+typedef struct
+{
+    pid_gains_t balance;    /* was balance — pitch angle -> duty, real PID   */
+    pid_gains_t steering;   /* was steering — wheel diff -> duty, real PID   */
+    pos_config_t position;  /* was position — zone-scheduled hold, NOT a PID    */
+    motor_config_t motor;
+    imu_offsets_t imu;
+    sbus_config_t sbus;
+    float theta_trim;       /* was balance_angle; applied as state.theta_offset */
+} robot_config_t;
+
+void robot_config_defaults(robot_config_t *c);
+int robot_config_load(const char *path, robot_config_t *c);
+int robot_config_save(const char *path, const robot_config_t *c);
+void robot_config_get_current(robot_config_t *c);
+void robot_config_apply(const robot_config_t *c);
+
+/** Snapshot every live global and rewrite the whole file. The only way to save. */
+int robot_config_save_current(const char *path);
+
+/** Load robot.conf, or build it from the legacy pidconfig.txt + IMU file once. */
+int robot_config_load_or_migrate(const char *path, robot_config_t *c);
+
+
 typedef struct
 {
     float pitch, yaw, roll;
@@ -539,14 +597,12 @@ extern imu_offsets_t g_imu_offsets;
 
 typedef struct
 {
-    bool D1_balance;
-    bool D2_drive;
-    bool D3_steering;
+    bool balance;
+    bool position;
+    bool steering;
 } controller_enables_t;
 extern controller_enables_t g_controllers;
 
-int imu_offsets_load(imu_offsets_t *offsets);
-int imu_offsets_save(const imu_offsets_t *offsets);
 void imu_offsets_calibrate(const rc_mpu_data_t *raw, imu_offsets_t *offsets);
 void imu_apply_transform(const rc_mpu_data_t *raw, imu_transform_t *out,
                          const imu_offsets_t *offsets);

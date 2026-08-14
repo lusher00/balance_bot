@@ -156,7 +156,7 @@ static void update_pid_telemetry(void)
         return;
 
     // D1: Balance controller
-    g_telemetry_data.D1_balance.enabled = g_controllers.D1_balance;
+    g_telemetry_data.D1_balance.enabled = g_controllers.balance;
     g_telemetry_data.D1_balance.setpoint = state.theta_ref + state.theta_offset;
     g_telemetry_data.D1_balance.measurement = state.theta;
     g_telemetry_data.D1_balance.error = balance_pid.prev_error;
@@ -175,7 +175,7 @@ static void update_pid_telemetry(void)
     // D2: Drive (position-hold) controller — NOT a PID. See drive_telemetry_t.
     // Every field is named for the quantity it actually carries. Do not
     // reintroduce setpoint/measurement/p_term/i_term/d_term aliases here.
-    g_telemetry_data.D2_drive.enabled = g_controllers.D2_drive;
+    g_telemetry_data.D2_drive.enabled = g_controllers.position;
     g_telemetry_data.D2_drive.enc_pos_target = state.enc_pos_target;
     g_telemetry_data.D2_drive.enc_pos = state.enc_pos;
     // Sign matches robot.c: err = enc_pos_target - enc_pos, which is the error
@@ -185,14 +185,14 @@ static void update_pid_telemetry(void)
     // directions, which is exactly as misleading as the old p_term aliases.
     g_telemetry_data.D2_drive.enc_error = state.enc_pos_target - state.enc_pos;
     g_telemetry_data.D2_drive.enc_velocity = state.enc_velocity;
-    g_telemetry_data.D2_drive.pos_correction = state.d2_pos_correction;
-    g_telemetry_data.D2_drive.vel_damp = state.d2_vel_damp;
-    g_telemetry_data.D2_drive.theta_ref_adj = state.d2_correction_out;
-    g_telemetry_data.D2_drive.active_scale = state.d2_active_scale;
+    g_telemetry_data.D2_drive.pos_correction = state.pos_correction;
+    g_telemetry_data.D2_drive.vel_damp = state.pos_vel_damp;
+    g_telemetry_data.D2_drive.theta_ref_adj = state.pos_output;
+    g_telemetry_data.D2_drive.active_scale = state.pos_scale;
     g_telemetry_data.D2_drive.max_correction = g_pos_config.max_correction;
 
     // D3: Steering controller
-    g_telemetry_data.D3_steering.enabled = g_controllers.D3_steering;
+    g_telemetry_data.D3_steering.enabled = g_controllers.steering;
     g_telemetry_data.D3_steering.setpoint = state.steering;
     g_telemetry_data.D3_steering.measurement = (state.phi_left - state.phi_right) / 2.0f;  // deg diff
     g_telemetry_data.D3_steering.error = steering_pid.prev_error;

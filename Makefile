@@ -19,7 +19,7 @@ SRCS = src/main.c \
        src/robot.c \
        src/display.c \
        src/pid.c \
-       src/pid_config.c \
+       src/robot_config.c \
        src/uart_input.c \
        src/roboclaw.c \
        src/roboclaw_estop.c \

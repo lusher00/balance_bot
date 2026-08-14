@@ -112,7 +112,7 @@ static void print_usage(void)
     printf("  -B <baud>          RoboClaw baud rate   (default: 38400)\n");
     printf("\n");
     printf("Other options:\n");
-    printf("  -p <file>          PID config file (default: pidconfig.txt)\n");
+    printf("  -p <file>          config file (default: robot.conf)\n");
     printf("  -d <block>         Enable console display block (repeatable):\n");
     printf("                       sbus  pid  enc  imu  mot  sys  all  none\n");
     printf("  -q                 Quiet mode (warnings only)\n");
@@ -235,7 +235,7 @@ static int parse_args(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
-    pid_config_file_t pid_config;
+    robot_config_t robot_config;
 
     if (parse_args(argc, argv) < 0)
         return -1;
@@ -272,7 +272,7 @@ int main(int argc, char *argv[])
     printf("  Motors:     RoboClaw on %s at %d baud\n",
            roboclaw_device ? roboclaw_device : "/dev/ttyO1", roboclaw_baud);
 
-    printf("  PID config: %s\n", pid_config_file ? pid_config_file : "pidconfig.txt");
+    printf("  Config:     %s\n", pid_config_file ? pid_config_file : "robot.conf");
     printf("  Log level:  %s\n", quiet_mode ? "WARN" : "INFO");
     printf("\n");
 
@@ -285,14 +285,14 @@ int main(int argc, char *argv[])
     g_debug_config.display.motors = disp_motors;
     g_debug_config.display.system = disp_system;
 
-    /* PID config */
-    if (pid_config_load_or_default(pid_config_file, &pid_config) < 0)
+    /* One config file for everything: gains, position hold, motor, IMU.
+     * Migrates from the old pidconfig.txt + /etc/balance_bot_imu.conf pair on
+     * first run and writes robot.conf, after which the legacy files are dead. */
+    if (robot_config_load_or_migrate(pid_config_file, &robot_config) < 0)
     {
-        fprintf(stderr, "Error: Failed to load PID config\n");
+        fprintf(stderr, "Error: Failed to load robot config\n");
         return -1;
     }
-    if (!quiet_mode)
-        pid_config_print(&pid_config);
 
     /* Telemetry */
     LOG_INFO("Initialising telemetry...");
@@ -310,15 +310,12 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    /* Load motor config before HAL init so the saved baud is used */
-    motor_config_t motor_config;
-    motor_config_load_or_default(pid_config_file, &motor_config);
-    /* Command-line -B flag overrides saved baud if explicitly supplied */
+    /* Command-line -B overrides the saved baud if explicitly supplied */
     if (roboclaw_baud > 0)
-        motor_config.baud = roboclaw_baud;
+        robot_config.motor.baud = roboclaw_baud;
 
     LOG_INFO("Initialising motor HAL (RoboClaw)...");
-    if (motor_hal_init(roboclaw_device, motor_config.baud) < 0)
+    if (motor_hal_init(roboclaw_device, robot_config.motor.baud) < 0)
     {
         fprintf(stderr, "Error: motor HAL init failed\n");
         ipc_server_cleanup();
@@ -335,17 +332,13 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    pid_config_apply(&pid_config);
-    if (pos_config_load_or_default(pid_config_file, &g_pos_config) < 0)
-    {
-        fprintf(stderr, "Error: Failed to load position config\n");
-        return -1;
-    }
-
-    motor_config_apply(&motor_config);
-    motor_hal_set_claw_pid(motor_config.claw_kp,
-                           motor_config.claw_ki,
-                           motor_config.claw_kd);
+    /* After robot_init(), which seeds the globals with compile-time defaults —
+     * applying earlier would just be overwritten. */
+    robot_config_apply(&robot_config);
+    motor_config_apply(&robot_config.motor);
+    motor_hal_set_claw_pid(robot_config.motor.claw_kp,
+                           robot_config.motor.claw_ki,
+                           robot_config.motor.claw_kd);
 
     /* Input subsystem */
     switch (input_mode)
