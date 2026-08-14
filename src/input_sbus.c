@@ -81,6 +81,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -162,6 +163,7 @@ typedef enum {
 static struct {
     int         fd;
     bool        connected;
+    bool        drive_centered;  /* centre interlock satisfied this session */
 
     // Raw 16-channel values (SBUS_MIN_RAW – SBUS_MAX_RAW)
     uint16_t    raw[SBUS_NUM_CHANNELS];
@@ -196,6 +198,7 @@ static struct {
 } sbus = {
     .fd         = -1,
     .connected  = false,
+    .drive_centered = false,
     .drive      = 0.0f,
     .turn       = 0.0f,
     .arm        = 0,            // Default low (disarmed)
@@ -279,17 +282,51 @@ static void sbus_decode_frame(const uint8_t *frame) {
  */
 static void sbus_decode_channels(void) {
     // ── CH1  Ail  Right stick X  →  Yaw / turn ───────────────────────────
-    sbus.turn  = apply_deadband(sbus_raw_to_float(sbus.raw[0]),
-                                SBUS_STICK_DEADBAND);
+    // Which channels these are, how hard they push, and whether they are
+    // inverted all come from [sbus] in robot.conf. Defaults reproduce the old
+    // hardcoded CH1 turn / CH2 drive mapping.
+    const sbus_config_t *sc = &g_sbus_config;
+    float db = (sc->deadband > 0.0f) ? sc->deadband : SBUS_STICK_DEADBAND;
 
-    // ── CH2  Ele  Right stick Y  →  Drive forward/back ───────────────────
-    // Invert: stick forward (high raw) → positive drive
-    sbus.drive = apply_deadband(-sbus_raw_to_float(sbus.raw[1]),
-                                SBUS_STICK_DEADBAND);
+    int ti = sc->turn_channel - 1;   /* config is 1-based, as printed on the TX */
+    int di = sc->drive_channel - 1;
+    if (ti < 0 || ti >= SBUS_NUM_CHANNELS) ti = 0;
+    if (di < 0 || di >= SBUS_NUM_CHANNELS) di = 1;
 
-    // ── CH3  Thr  Left stick Y  →  (unused — raw available via getter) ───
+    float turn_raw  = sbus_raw_to_float(sbus.raw[ti]);
+    float drive_raw = sbus_raw_to_float(sbus.raw[di]);
+    if (sc->turn_invert)  turn_raw  = -turn_raw;
+    if (sc->drive_invert) drive_raw = -drive_raw;
 
-    // ── CH4  Rud  Left stick X  →  (unused — raw available via getter) ───
+    sbus.turn = apply_deadband(turn_raw, db) * sc->turn_scale;
+
+    // Centre interlock. A ratcheted throttle (CH3) rests at the BOTTOM of its
+    // travel, which read as a bipolar command is full reverse — so binding the
+    // receiver with the stick down would lurch the bot at once. Hold drive at
+    // zero until the channel has been seen near centre at least once since the
+    // link came up. Latches for the session; a failsafe re-arms it.
+    //
+    // The tolerance here is deliberately WIDER than the deadband. Requiring the
+    // stick to land inside +/-3% is unachievable on a transmitter that is out of
+    // trim, and the interlock then blocks drive forever with no indication of
+    // why. 10% of half-travel is ~82 raw counts — still nowhere near a throttle
+    // resting at the bottom, which reads 1.0.
+    float center_tol = db * 3.0f;
+    if (center_tol < 0.10f)
+        center_tol = 0.10f;
+
+    if (!sc->require_center)
+        sbus.drive_centered = true;
+    else if (!sbus.drive_centered && fabsf(drive_raw) <= center_tol)
+    {
+        sbus.drive_centered = true;
+        LOG_INFO("SBUS: drive channel CH%d centred (%.3f) — drive enabled",
+                 di + 1, drive_raw);
+    }
+
+    sbus.drive = sbus.drive_centered
+                     ? apply_deadband(drive_raw, db) * sc->drive_scale
+                     : 0.0f;
 
     // ── CH5  SA  3-pos  →  Arm / Disarm ──────────────────────────────────
     // Convention: 2=high = armed, 0=low or 1=mid = disarmed
@@ -447,6 +484,9 @@ int sbus_update(void) {
 
             if (sbus.failsafe) {
                 LOG_WARN("SBUS: FAILSAFE active — forcing kill");
+                /* Re-arm the interlock: after a link loss we cannot know where
+                 * the stick is, and the operator must re-centre it. */
+                sbus.drive_centered = false;
                 sbus.kill  = 0;
                 sbus.arm   = 0;
                 sbus.drive = 0.0f;
@@ -477,22 +517,6 @@ float sbus_get_drive(void) {
                   (sbus.speed_mode == SPEED_SPORT)  ? SPEED_SPORT_SCALE :
                                                        SPEED_NORMAL_SCALE;
     return sbus.drive * scale;
-}
-
-/**
- * @brief Will drive commands actually reach the motors?
- *
- * Reports the same condition sbus_get_drive() gates on, so the RC tab can show
- * why the sticks appear dead. This surfaces what was previously invisible: the
- * kill and arm switches silently zero drive inside this file, which is not
- * obvious from robot.c.
- *
- * The meaning widens when live RC mapping lands — it will also require the
- * stick to have been centred once (sbus.drive_centered), so a transmitter left
- * out of trim cannot command drive the instant it connects.
- */
-bool sbus_drive_armed(void) {
-    return sbus.connected && sbus.kill >= 2 && sbus.arm >= 2;
 }
 
 /**
@@ -616,6 +640,17 @@ bool sbus_get_sw_f(void) {
  */
 bool sbus_is_connected(void) {
     return sbus.connected;
+}
+
+/**
+ * @brief Has the centre interlock been satisfied?
+ *
+ * False means drive is being held at zero regardless of stick position. This
+ * has to be observable — an invisible gate that silently zeroes the sticks is
+ * indistinguishable from a broken receiver.
+ */
+bool sbus_drive_armed(void) {
+    return sbus.drive_centered;
 }
 
 /**
