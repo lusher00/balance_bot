@@ -69,10 +69,19 @@ def read_csv(path):
     return preamble, hdr, rows
 
 
+# Logs from before the controller rename use d1_/d2_/d3_ for bal_/pos_/str_.
+LEGACY_PREFIX = {"bal_": "d1_", "pos_": "d2_", "str_": "d3_"}
+
+
 def col(rows, idx, name):
-    if name not in idx:
+    n = idx.get(name)
+    if n is None:
+        for new, old in LEGACY_PREFIX.items():
+            if name.startswith(new):
+                n = idx.get(old + name[len(new):])
+                break
+    if n is None:
         return None
-    n = idx[name]
     return [r[n] for r in rows]
 
 
@@ -112,7 +121,8 @@ def main():
     pos = col(rows, idx, "pos_encPos")
     tcol = col(rows, idx, "t")
     if theta is None or vel is None:
-        print("need bal_measurement and pos_encVel columns; found:\n  " +
+        print("need a pitch and a velocity column (bal_measurement/pos_encVel,\n"
+              "or the older d1_measurement/d2_encVel). Found:\n  " +
               ", ".join(hdr), file=sys.stderr)
         return 1
 

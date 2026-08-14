@@ -108,20 +108,44 @@ def read_csv(path):
     return pre, hdr, rows
 
 
+# Logs recorded before the controller rename use d1_/d2_/d3_ prefixes for what
+# are now bal_/pos_/str_. There is a directory full of those and they are still
+# perfectly good data, so accept either spelling everywhere.
+LEGACY_PREFIX = {"bal_": "d1_", "pos_": "d2_", "str_": "d3_"}
+
+
+def alias(name):
+    for new, old in LEGACY_PREFIX.items():
+        if name.startswith(new):
+            return old + name[len(new):]
+    return None
+
+
 class Log:
     def __init__(self, path):
         self.path = path
         self.name = os.path.basename(path)
         self.pre, self.hdr, self.rows = read_csv(path)
         self.idx = {k: n for n, k in enumerate(self.hdr)} if self.hdr else {}
+        self.why = ""
 
     def ok(self):
-        return bool(self.rows) and "bal_measurement" in self.idx
+        if not self.rows:
+            self.why = "no data rows"
+            return False
+        if "bal_measurement" in self.idx or "d1_measurement" in self.idx:
+            return True
+        self.why = ("no pitch column (need bal_measurement or d1_measurement); "
+                    "found: " + ", ".join(self.hdr[:6]) + " ...")
+        return False
 
     def c(self, name, default=None):
-        if name not in self.idx:
+        n = self.idx.get(name)
+        if n is None:
+            legacy = alias(name)
+            n = self.idx.get(legacy) if legacy else None
+        if n is None:
             return default
-        n = self.idx[name]
         return [r[n] for r in self.rows]
 
     def preamble(self, key):
@@ -440,7 +464,8 @@ def main():
     for p in a.csv:
         log = Log(p)
         if not log.ok():
-            print(f"  {os.path.basename(p)}: not a usable telemetry CSV", file=sys.stderr)
+            print(f"  {os.path.basename(p)}: {getattr(log, 'why', 'unusable')}",
+                  file=sys.stderr)
             continue
         results.append(analyse(log, a.max_theta))
 
