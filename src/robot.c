@@ -70,6 +70,12 @@ controller_enables_t g_controllers = {
 // Runtime-tunable position controller parameters (initialised in robot_init)
 pos_config_t g_pos_config;
 
+// Transmitter mapping and gains (initialised from robot.conf via
+// robot_config_apply). Defined here rather than in input_sbus.c because
+// robot_config.c persists it and must link against it. Nothing reads it yet —
+// input_sbus.c starts honouring it when live RC mapping lands.
+sbus_config_t g_sbus_config;
+
 // Runtime-tunable motor/RoboClaw drive parameters (initialised in robot_init)
 motor_config_t g_motor_config;
 
