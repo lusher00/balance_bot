@@ -103,8 +103,8 @@ typedef struct
 /**
  * @brief PID controller state (for telemetry)
  *
- * Used by D1_balance and D3_steering ONLY. Both are genuine PID loops
- * running pid_update(). D2 is not — see drive_telemetry_t below.
+ * Used by balance and steering ONLY. Both are genuine PID loops
+ * running pid_update(). position hold is not — see drive_telemetry_t below.
  */
 typedef struct
 {
@@ -120,9 +120,9 @@ typedef struct
 } pid_telemetry_t;
 
 /**
- * @brief D2 drive (position-hold) controller state — NOT A PID
+ * @brief position hold drive (position-hold) controller state — NOT A PID
  *
- * D2 does not run pid_update() and has no gains. It is a zone-based
+ * position hold does not run pid_update() and has no gains. It is a zone-based
  * gain-scheduled position hold implemented inline in robot.c:
  *
  *   1. err = enc_pos_target - enc_pos                      (encoder ticks)
@@ -144,7 +144,7 @@ typedef struct
     int32_t enc_pos;        // Current tick position
     int32_t enc_error;      // enc_pos_target - enc_pos (+ve = behind target, must
                             // drive forward). Same sign as the err the zone logic
-                            // divides, and as D1/D3's (setpoint - measurement).
+                            // divides, and as balance/steering's (setpoint - measurement).
     float enc_velocity;     // Tick velocity (ticks per 100 ms window)
     float pos_correction;   // Zone-scheduled correction, pre-limit (deg)
     float vel_damp;         // Velocity damping applied (deg)
@@ -211,9 +211,9 @@ typedef struct
     encoder_telemetry_t encoders; // Encoder data
     imu_telemetry_t imu;          // IMU data
 
-    pid_telemetry_t D1_balance;  // Balance PID state
-    drive_telemetry_t D2_drive;  // Drive position-hold state (not a PID)
-    pid_telemetry_t D3_steering; // Steering PID state
+    pid_telemetry_t balance;  // Balance PID state
+    drive_telemetry_t position;  // Drive position-hold state (not a PID)
+    pid_telemetry_t steering; // Steering PID state
 
     motor_telemetry_t motors;        // Motor commands
     ext_input_telemetry_t ext_input; // External UART input
@@ -318,7 +318,7 @@ typedef struct
 {
     telemetry_enables_t telemetry; // What telemetry to send
     video_overlays_t overlays;     // Video overlay settings
-    bool debug_d2;                 // Verbose D2 position controller logging
+    bool debug_position;                 // Verbose position hold controller logging
     telemetry_rates_t rates;       // Update rates
     logging_config_t logging;      // Logging configuration
     display_config_t display;      // Console display blocks

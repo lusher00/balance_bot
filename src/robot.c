@@ -561,9 +561,9 @@ void robot_run(void)
                 // trick the hold logic into thinking the user is driving.
                 bool stick_centered = (fabsf(raw_stick_ref) < 0.5f); /* 0.5 deg ~3% of MAX_THETA_REF */
 
-                // ── D2 verbose debug (enable via IPC: {"type":"debug_d2","value":true}) ──
+                // ── D2 verbose debug (enable via IPC: {"type":"debug_position","value":true}) ──
                 static uint64_t d2_log_last_us = 0;
-                if (g_debug_config.debug_d2)
+                if (g_debug_config.debug_position)
                 {
                     uint64_t d2_now_us = rc_nanos_since_boot() / 1000;
                     if (d2_now_us - d2_log_last_us >= 500000) // 2 Hz
@@ -696,7 +696,7 @@ void robot_run(void)
             else
             {
                 // D2 disabled — keep target synced so it's ready when re-enabled
-                if (g_debug_config.debug_d2)
+                if (g_debug_config.debug_position)
                 {
                     static uint64_t d2_else_last_us = 0;
                     uint64_t d2_now_us = rc_nanos_since_boot() / 1000;

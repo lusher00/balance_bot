@@ -155,54 +155,54 @@ static void update_pid_telemetry(void)
     if (!g_debug_config.telemetry.pid_states)
         return;
 
-    // D1: Balance controller
-    g_telemetry_data.D1_balance.enabled = g_controllers.balance;
-    g_telemetry_data.D1_balance.setpoint = state.theta_ref + state.theta_offset;
-    g_telemetry_data.D1_balance.measurement = state.theta;
-    g_telemetry_data.D1_balance.error = balance_pid.prev_error;
+    // Balance controller
+    g_telemetry_data.balance.enabled = g_controllers.balance;
+    g_telemetry_data.balance.setpoint = state.theta_ref + state.theta_offset;
+    g_telemetry_data.balance.measurement = state.theta;
+    g_telemetry_data.balance.error = balance_pid.prev_error;
     // Read the terms recorded by pid_update() rather than recomputing them.
     // d_term cannot be reconstructed here (prev_error has already advanced),
     // and output must be the real controller output — a p+i reconstruction
     // silently hides the derivative contribution from every log and graph.
-    g_telemetry_data.D1_balance.p_term = balance_pid.last_p_term;
-    g_telemetry_data.D1_balance.i_term = balance_pid.last_i_term;
-    g_telemetry_data.D1_balance.d_term = balance_pid.last_d_term;
-    g_telemetry_data.D1_balance.output = balance_pid.last_output;
-    g_telemetry_data.D1_balance.kp = balance_pid.kp;
-    g_telemetry_data.D1_balance.ki = balance_pid.ki;
-    g_telemetry_data.D1_balance.kd = balance_pid.kd;
+    g_telemetry_data.balance.p_term = balance_pid.last_p_term;
+    g_telemetry_data.balance.i_term = balance_pid.last_i_term;
+    g_telemetry_data.balance.d_term = balance_pid.last_d_term;
+    g_telemetry_data.balance.output = balance_pid.last_output;
+    g_telemetry_data.balance.kp = balance_pid.kp;
+    g_telemetry_data.balance.ki = balance_pid.ki;
+    g_telemetry_data.balance.kd = balance_pid.kd;
 
-    // D2: Drive (position-hold) controller — NOT a PID. See drive_telemetry_t.
+    // Position hold (position-hold) controller — NOT a PID. See drive_telemetry_t.
     // Every field is named for the quantity it actually carries. Do not
     // reintroduce setpoint/measurement/p_term/i_term/d_term aliases here.
-    g_telemetry_data.D2_drive.enabled = g_controllers.position;
-    g_telemetry_data.D2_drive.enc_pos_target = state.enc_pos_target;
-    g_telemetry_data.D2_drive.enc_pos = state.enc_pos;
+    g_telemetry_data.position.enabled = g_controllers.position;
+    g_telemetry_data.position.enc_pos_target = state.enc_pos_target;
+    g_telemetry_data.position.enc_pos = state.enc_pos;
     // Sign matches robot.c: err = enc_pos_target - enc_pos, which is the error
-    // the zone logic actually divides by active_scale. It also matches D1/D3,
+    // the zone logic actually divides by active_scale. It also matches balance/steering,
     // which log (setpoint - measurement). Logging enc_pos - enc_pos_target here
     // made every trace show error and pos_correction moving in opposite
     // directions, which is exactly as misleading as the old p_term aliases.
-    g_telemetry_data.D2_drive.enc_error = state.enc_pos_target - state.enc_pos;
-    g_telemetry_data.D2_drive.enc_velocity = state.enc_velocity;
-    g_telemetry_data.D2_drive.pos_correction = state.pos_correction;
-    g_telemetry_data.D2_drive.vel_damp = state.pos_vel_damp;
-    g_telemetry_data.D2_drive.theta_ref_adj = state.pos_output;
-    g_telemetry_data.D2_drive.active_scale = state.pos_scale;
-    g_telemetry_data.D2_drive.max_correction = g_pos_config.max_correction;
+    g_telemetry_data.position.enc_error = state.enc_pos_target - state.enc_pos;
+    g_telemetry_data.position.enc_velocity = state.enc_velocity;
+    g_telemetry_data.position.pos_correction = state.pos_correction;
+    g_telemetry_data.position.vel_damp = state.pos_vel_damp;
+    g_telemetry_data.position.theta_ref_adj = state.pos_output;
+    g_telemetry_data.position.active_scale = state.pos_scale;
+    g_telemetry_data.position.max_correction = g_pos_config.max_correction;
 
-    // D3: Steering controller
-    g_telemetry_data.D3_steering.enabled = g_controllers.steering;
-    g_telemetry_data.D3_steering.setpoint = state.steering;
-    g_telemetry_data.D3_steering.measurement = (state.phi_left - state.phi_right) / 2.0f;  // deg diff
-    g_telemetry_data.D3_steering.error = steering_pid.prev_error;
-    g_telemetry_data.D3_steering.p_term = steering_pid.last_p_term;
-    g_telemetry_data.D3_steering.i_term = steering_pid.last_i_term;
-    g_telemetry_data.D3_steering.d_term = steering_pid.last_d_term;
-    g_telemetry_data.D3_steering.output = steering_pid.last_output;
-    g_telemetry_data.D3_steering.kp = steering_pid.kp;
-    g_telemetry_data.D3_steering.ki = steering_pid.ki;
-    g_telemetry_data.D3_steering.kd = steering_pid.kd;
+    // Steering controller
+    g_telemetry_data.steering.enabled = g_controllers.steering;
+    g_telemetry_data.steering.setpoint = state.steering;
+    g_telemetry_data.steering.measurement = (state.phi_left - state.phi_right) / 2.0f;  // deg diff
+    g_telemetry_data.steering.error = steering_pid.prev_error;
+    g_telemetry_data.steering.p_term = steering_pid.last_p_term;
+    g_telemetry_data.steering.i_term = steering_pid.last_i_term;
+    g_telemetry_data.steering.d_term = steering_pid.last_d_term;
+    g_telemetry_data.steering.output = steering_pid.last_output;
+    g_telemetry_data.steering.kp = steering_pid.kp;
+    g_telemetry_data.steering.ki = steering_pid.ki;
+    g_telemetry_data.steering.kd = steering_pid.kd;
 } /**
    * @brief Update motor command telemetry
    */
@@ -425,15 +425,15 @@ void telemetry_print_summary(void)
 
     if (g_debug_config.telemetry.pid_states)
     {
-        printf("D1_balance: err=%.3f out=%.3f %s\n",
-               g_telemetry_data.D1_balance.error,
-               g_telemetry_data.D1_balance.output,
-               g_telemetry_data.D1_balance.enabled ? "ON" : "OFF");
+        printf("balance: err=%.3f out=%.3f %s\n",
+               g_telemetry_data.balance.error,
+               g_telemetry_data.balance.output,
+               g_telemetry_data.balance.enabled ? "ON" : "OFF");
 
-        printf("D3_steering: err=%.3f out=%.3f %s\n",
-               g_telemetry_data.D3_steering.error,
-               g_telemetry_data.D3_steering.output,
-               g_telemetry_data.D3_steering.enabled ? "ON" : "OFF");
+        printf("steering: err=%.3f out=%.3f %s\n",
+               g_telemetry_data.steering.error,
+               g_telemetry_data.steering.output,
+               g_telemetry_data.steering.enabled ? "ON" : "OFF");
     }
 
     if (g_debug_config.telemetry.ext_input && g_telemetry_data.ext_input.valid)

@@ -229,10 +229,11 @@ static int handle_command(const char *json_cmd, char *response, size_t response_
  * @brief Parse JSON command and update configuration
  *
  * Supported commands:
- * - {"type":"set_controller","controller":"D1_balance","enabled":true}
- * - {"type":"set_pid","controller":"D1_balance","kp":40.0,"ki":0.0,"kd":5.0}
- *   (D1_balance and D3_steering only — D2_drive has no gains, use set_pos_config)
+ * - {"type":"set_controller","controller":"balance","enabled":true}
+ * - {"type":"set_pid","controller":"balance","kp":40.0,"ki":0.0,"kd":5.0}
+ *   (balance and steering only — position has no gains, use set_pos_config)
  * - {"type":"set_pos_config","scale_d":30.0,"max_correction":5.0,...}
+ * - {"type":"set_sbus_config","drive_channel":3,"drive_scale":0.10,...}
  * - {"type":"set_telemetry","encoders":true,"imu_full":false,...}
  * - {"type":"arm","value":true}
  * - {"type":"set_mode","value":1}
@@ -263,46 +264,46 @@ static int parse_json_command(const char *json_cmd)
     // Simple JSON parsing (in production, use json-c library)
     // For now, we'\''ll do basic string matching
 
-    // Example: {"type":"set_controller","controller":"D1_balance","enabled":true}
+    // Example: {"type":"set_controller","controller":"balance","enabled":true}
     if (strstr(json_cmd, "\"type\":\"set_controller\""))
     {
-        if (strstr(json_cmd, "\"controller\":\"D1_balance\""))
+        if (strstr(json_cmd, "\"controller\":\"balance\""))
         {
             if (strstr(json_cmd, "\"enabled\":true"))
             {
                 g_controllers.balance = true;
-                LOG_INFO("D1_balance enabled");
+                LOG_INFO("balance enabled");
             }
             else if (strstr(json_cmd, "\"enabled\":false"))
             {
                 g_controllers.balance = false;
-                LOG_WARN("D1_balance disabled - robot will fall!");
+                LOG_WARN("balance disabled - robot will fall!");
             }
         }
-        else if (strstr(json_cmd, "\"controller\":\"D2_drive\""))
+        else if (strstr(json_cmd, "\"controller\":\"position\""))
         {
             if (strstr(json_cmd, "\"enabled\":true"))
             {
                 g_controllers.position = true;
-                LOG_INFO("D2_drive enabled");
+                LOG_INFO("position enabled");
             }
             else
             {
                 g_controllers.position = false;
-                LOG_INFO("D2_drive disabled");
+                LOG_INFO("position disabled");
             }
         }
-        else if (strstr(json_cmd, "\"controller\":\"D3_steering\""))
+        else if (strstr(json_cmd, "\"controller\":\"steering\""))
         {
             if (strstr(json_cmd, "\"enabled\":true"))
             {
                 g_controllers.steering = true;
-                LOG_INFO("D3_steering enabled");
+                LOG_INFO("steering enabled");
             }
             else
             {
                 g_controllers.steering = false;
-                LOG_INFO("D3_steering disabled");
+                LOG_INFO("steering disabled");
             }
         }
         return 0;
@@ -399,25 +400,25 @@ static int parse_json_command(const char *json_cmd)
         return 0;
     }
 
-    // {"type":"debug_d2","value":true}  -- toggle verbose D2 position logging
-    if (strstr(json_cmd, "\"type\":\"debug_d2\""))
+    // {"type":"debug_position","value":true}  -- toggle verbose position hold logging
+    if (strstr(json_cmd, "\"type\":\"debug_position\""))
     {
-        g_debug_config.debug_d2 = strstr(json_cmd, "\"value\":true") != NULL;
-        LOG_INFO("D2 verbose debug: %s", g_debug_config.debug_d2 ? "ON" : "OFF");
+        g_debug_config.debug_position = strstr(json_cmd, "\"value\":true") != NULL;
+        LOG_INFO("position hold verbose debug: %s", g_debug_config.debug_position ? "ON" : "OFF");
         return 0;
     }
 
     // {"type":"zero_imu"} — zero pitch offset + encoders, save all config
     if (strstr(json_cmd, "\"type\":\"zero_imu\""))
     {
-        // pitch_offset and state.theta are both DEGREES, despite the old comment
-        // here claiming radians — imu_config.c computes it with RAD_TO_DEG and
-        // subtracts it from pitch_deg. The code was right, the comment was not.
-        // The separate imu_offsets_save() is gone: robot_config_save_current()
-        // below writes g_imu_offsets as part of the one atomic config write.
+        // pitch_offset and state.theta are both DEGREES, despite the old
+        // comment here claiming radians — imu_config.c computes it with
+        // RAD_TO_DEG and subtracts it from pitch_deg. The code was right, the
+        // comment was not, and it is now in robot.conf where the units are
+        // documented next to the value.
         g_imu_offsets.pitch_offset -= state.theta;
         state.theta_offset = 0.0f;
-        // Also zero encoders so D2 starts from a clean position
+        // Also zero encoders so position hold starts from a clean position
         motor_hal_encoder_reset_all();
         state.enc_left = 0;
         state.enc_right = 0;
@@ -483,9 +484,9 @@ static int parse_json_command(const char *json_cmd)
         return 0;
     }
 
-    // {"type":"set_pid","controller":"D1_balance","kp":40.0,"ki":0.5,"kd":5.0}
-    // {"type":"set_pid","controller":"D3_steering","kp":1.0,"ki":0.0,"kd":0.1}
-    // D1 and D3 only. D2_drive is not a PID — it is tuned via set_pos_config.
+    // {"type":"set_pid","controller":"balance","kp":40.0,"ki":0.5,"kd":5.0}
+    // {"type":"set_pid","controller":"steering","kp":1.0,"ki":0.0,"kd":0.1}
+    // balance and steering only. position is not a PID — it is tuned via set_pos_config.
     if (strstr(json_cmd, "\"type\":\"set_pid\""))
     {
         float kp = 0.0f, ki = 0.0f, kd = 0.0f;
@@ -501,52 +502,186 @@ static int parse_json_command(const char *json_cmd)
         if (p)
             sscanf(p, "\"kd\":%f", &kd);
 
-        if (strstr(json_cmd, "\"controller\":\"D1_balance\""))
+        if (strstr(json_cmd, "\"controller\":\"balance\""))
         {
             pid_set_gains(&balance_pid, kp, ki, kd);
             pid_reset(&balance_pid);
-            LOG_INFO("iPhone: D1_balance kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
+            LOG_INFO("iPhone: balance kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
             return 0;
         }
-        if (strstr(json_cmd, "\"controller\":\"D2_drive\""))
+        if (strstr(json_cmd, "\"controller\":\"position\""))
         {
-            // D2 has no PID gains — it is a zone-based position hold. Accepting
+            // position hold has no PID gains — it is a zone-based position hold. Accepting
             // this silently (as the previous revision did) made it look like the
             // gains were being applied. Reject it and point at the real knobs.
-            LOG_WARN("set_pid: D2_drive is not a PID and has no kp/ki/kd. "
+            LOG_WARN("set_pid: position is not a PID and has no kp/ki/kd. "
                      "Use set_pos_config (zone_a/b/c, scale_a/b/c/d, "
                      "max_correction, max_angle_rate) instead.");
             return -1;
         }
-        if (strstr(json_cmd, "\"controller\":\"D3_steering\""))
+        if (strstr(json_cmd, "\"controller\":\"steering\""))
         {
             pid_set_gains(&steering_pid, kp, ki, kd);
             pid_reset(&steering_pid);
-            LOG_INFO("iPhone: D3_steering kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
+            LOG_INFO("iPhone: steering kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
             return 0;
         }
         LOG_WARN("set_pid: unknown controller in: %s", json_cmd);
         return -1;
     }
 
-    // {"type":"save_pid"}  -- write current PID gains + pos_config + motor_config to pidconfig.txt
+    // {"type":"save_pid"}  -- snapshot every live setting into robot.conf
     if (strstr(json_cmd, "\"type\":\"save_pid\""))
     {
-        // One atomic write of every section, replacing three separate appends.
-        // The old pos_config_save() opened the file in "a" mode, so each slider
-        // move appended a duplicate [position] block.
         if (robot_config_save_current(NULL) == 0)
-        {
             LOG_INFO("iPhone: config saved to robot.conf");
-        }
         else
-        {
-            LOG_WARN("iPhone: failed to save robot.conf");
-        }
+            LOG_WARN("iPhone: failed to save config");
         return 0;
     }
 
     // {"type":"set_pos_config",...} -- update position controller params at runtime
+    // {"type":"nudge","axis":"pitch|yaw|fwd","delta":0.05}
+    //
+    // Bounded relative adjustments for the dashboard's arrow controls. Relative
+    // and bounded on purpose: a typed absolute value or a dragged slider can put
+    // a balancing robot somewhere violent in one action, and there is no undo.
+    if (strstr(json_cmd, "\"type\":\"nudge\""))
+    {
+        float d = 0.0f;
+        const char *dp = strstr(json_cmd, "\"delta\":");
+        if (dp)
+            sscanf(dp + strlen("\"delta\":"), "%f", &d);
+
+        /* Hard per-press ceiling, per axis. Whatever the UI believes its step
+         * size to be, one press can never move the robot further than this.
+         * pitch is degrees, yaw is degrees of phi_diff, fwd is encoder ticks —
+         * so they cannot share one limit. */
+        float lim = 2.0f;                                   /* pitch: 2 deg    */
+        if (strstr(json_cmd, "\"axis\":\"pose\"")) lim = 0.5f;     /* pose: fine only */
+        if (strstr(json_cmd, "\"axis\":\"yaw\"")) lim = 45.0f;  /* ~35 deg yaw     */
+        else if (strstr(json_cmd, "\"axis\":\"fwd\"")) lim = 200.0f; /* ~335 mm    */
+        if (d > lim) d = lim;
+        if (d < -lim) d = -lim;
+
+        if (strstr(json_cmd, "\"axis\":\"pitch\""))
+        {
+            float v = state.theta_offset + d;
+            if (v > 30.0f) v = 30.0f;
+            if (v < -30.0f) v = -30.0f;
+            state.theta_offset = v;
+            LOG_INFO("nudge pitch: theta_offset = %.3f deg", v);
+        }
+        else if (strstr(json_cmd, "\"axis\":\"pose\""))
+        {
+            /* Commanded lean, degrees. Small ceiling — this makes the robot
+             * drive away, and it is meant for observation at fractions of a
+             * degree, not for driving. */
+            float v = state.pose_lean + d;
+            if (v > 3.0f) v = 3.0f;
+            if (v < -3.0f) v = -3.0f;
+            state.pose_lean = v;
+            LOG_INFO("nudge pose: commanded lean = %.3f deg", v);
+            return 0; /* transient, not persisted */
+        }
+        else if (strstr(json_cmd, "\"axis\":\"pose_zero\""))
+        {
+            state.pose_lean = 0.0f;
+            LOG_INFO("pose cleared");
+            return 0;
+        }
+        else if (strstr(json_cmd, "\"axis\":\"yaw\""))
+        {
+            /* Degrees of phi_diff, same units as the steering setpoint. */
+            state.steering += d;
+            LOG_INFO("nudge yaw: steering target = %.2f", state.steering);
+            return 0; /* transient, not persisted */
+        }
+        else if (strstr(json_cmd, "\"axis\":\"fwd\""))
+        {
+            /* Encoder ticks. Moves the position hold's target, so the bot drives
+             * there under the hold loop rather than by a raw lean command. */
+            state.enc_pos_target += (int32_t)d;
+            LOG_INFO("nudge fwd: enc_pos_target = %d", state.enc_pos_target);
+            return 0; /* transient, not persisted */
+        }
+        else
+        {
+            LOG_WARN("nudge: unknown axis in %s", json_cmd);
+            return -1;
+        }
+
+        robot_config_save_current(NULL);
+        return 0;
+    }
+
+    // {"type":"set_sbus_config","drive_channel":3,"drive_scale":0.10,...}
+    //
+    // Transmitter mapping, live. Every field optional. Exists because working
+    // out which physical stick is on which channel, which way round it is, and
+    // how hard it should push is a two-second experiment with a slider and an
+    // hour of guesswork without one.
+    if (strstr(json_cmd, "\"type\":\"set_sbus_config\""))
+    {
+        sbus_config_t cfg = g_sbus_config;
+
+#define SCFG_F(key, field)                                         \
+    do                                                             \
+    {                                                              \
+        const char *_p = strstr(json_cmd, "\"" key "\":");         \
+        if (_p)                                                    \
+            sscanf(_p + strlen("\"" key "\":"), "%f", &cfg.field); \
+    } while (0)
+#define SCFG_I(key, field)                                         \
+    do                                                             \
+    {                                                              \
+        const char *_p = strstr(json_cmd, "\"" key "\":");         \
+        if (_p)                                                    \
+        {                                                          \
+            float _v = 0;                                          \
+            sscanf(_p + strlen("\"" key "\":"), "%f", &_v);        \
+            cfg.field = (int)_v;                                   \
+        }                                                          \
+    } while (0)
+
+        SCFG_I("drive_channel", drive_channel);
+        SCFG_I("turn_channel", turn_channel);
+        SCFG_F("drive_scale", drive_scale);
+        SCFG_F("turn_scale", turn_scale);
+        SCFG_F("turn_rate", turn_rate);
+        SCFG_I("drive_invert", drive_invert);
+        SCFG_I("turn_invert", turn_invert);
+        SCFG_F("deadband", deadband);
+        SCFG_I("require_center", require_center);
+
+#undef SCFG_F
+#undef SCFG_I
+
+        /* Clamp rather than reject: a bad channel number from a slider should
+         * not leave the robot with no drive input at all. */
+        if (cfg.drive_channel < 1 || cfg.drive_channel > 16) cfg.drive_channel = 2;
+        if (cfg.turn_channel < 1 || cfg.turn_channel > 16) cfg.turn_channel = 1;
+        if (cfg.drive_scale < 0.0f) cfg.drive_scale = 0.0f;
+        if (cfg.drive_scale > 1.0f) cfg.drive_scale = 1.0f;
+        if (cfg.turn_scale < 0.0f) cfg.turn_scale = 0.0f;
+        if (cfg.turn_scale > 1.0f) cfg.turn_scale = 1.0f;
+        if (cfg.turn_rate < 0.0f) cfg.turn_rate = 0.0f;
+        if (cfg.turn_rate > 1000.0f) cfg.turn_rate = 1000.0f;
+        if (cfg.deadband < 0.0f) cfg.deadband = 0.0f;
+        if (cfg.deadband > 0.5f) cfg.deadband = 0.5f;
+
+        g_sbus_config = cfg;
+        LOG_INFO("sbus_config: drive=CH%d x%.3f inv=%d  turn=CH%d x%.3f inv=%d  "
+                 "db=%.3f req_center=%d",
+                 cfg.drive_channel, cfg.drive_scale, cfg.drive_invert,
+                 cfg.turn_channel, cfg.turn_scale, cfg.turn_invert,
+                 cfg.deadband, cfg.require_center);
+
+        if (robot_config_save_current(NULL) != 0)
+            LOG_WARN("sbus_config applied but could not be saved to disk");
+        return 0;
+    }
+
     if (strstr(json_cmd, "\"type\":\"set_pos_config\""))
     {
         pos_config_t cfg = g_pos_config;
@@ -595,6 +730,9 @@ static int parse_json_command(const char *json_cmd)
         // to fire zero_imu / set_theta_offset / set_pid afterwards — each of which
         // saves the whole config as a side effect. Tune pos_config alone and
         // restart, and the entire session was silently lost.
+        // Whole-file atomic write. The old pos_config_save() opened the file
+        // in append mode, so calling it alone — as this handler does — tacked a
+        // duplicate [position] block on every single slider move.
         if (robot_config_save_current(NULL) != 0)
             LOG_WARN("pos_config updated but could not be saved to disk");
         LOG_INFO("iPhone: pos_config updated + saved");
@@ -771,13 +909,14 @@ static void build_telemetry_json(char *buffer, size_t size)
     if (g_debug_config.telemetry.system_status)
     {
         pos = json_append(buffer, pos, size,
-                        "\"system\":{\"battery\":%.2f,\"armed\":%s,\"mode\":%d,\"loop_hz\":%.1f,\"theta_offset\":%.4f,"
+                        "\"system\":{\"battery\":%.2f,\"armed\":%s,\"mode\":%d,\"loop_hz\":%.1f,\"theta_offset\":%.4f,\"pose_lean\":%.4f,"
                         "\"batt_voltage\":%.3f,\"batt_status\":%d,\"claw_voltage\":%.2f,\"claw_temp\":%.1f},",
                         g_telemetry_data.system.battery_voltage,
                         g_telemetry_data.system.armed ? "true" : "false",
                         g_telemetry_data.system.mode,
                         g_telemetry_data.system.loop_hz,
                         state.theta_offset,
+                        state.pose_lean,
                         g_telemetry_data.system.batt_voltage,
                         (int)g_telemetry_data.system.batt_status,
                         g_telemetry_data.system.claw_voltage,
@@ -855,58 +994,58 @@ static void build_telemetry_json(char *buffer, size_t size)
     if (g_debug_config.telemetry.pid_states)
     {
         pos = json_append(buffer, pos, size,
-                        "\"D1_balance\":{\"enabled\":%s,\"setpoint\":%.4f,"
+                        "\"balance\":{\"enabled\":%s,\"setpoint\":%.4f,"
                         "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
                         "\"p_term\":%.4f,\"i_term\":%.4f,\"d_term\":%.4f,"
                         "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},",
-                        g_telemetry_data.D1_balance.enabled ? "true" : "false",
-                        g_telemetry_data.D1_balance.setpoint,
-                        g_telemetry_data.D1_balance.measurement,
-                        g_telemetry_data.D1_balance.error,
-                        g_telemetry_data.D1_balance.output,
-                        g_telemetry_data.D1_balance.p_term,
-                        g_telemetry_data.D1_balance.i_term,
-                        g_telemetry_data.D1_balance.d_term,
-                        g_telemetry_data.D1_balance.kp,
-                        g_telemetry_data.D1_balance.ki,
-                        g_telemetry_data.D1_balance.kd);
+                        g_telemetry_data.balance.enabled ? "true" : "false",
+                        g_telemetry_data.balance.setpoint,
+                        g_telemetry_data.balance.measurement,
+                        g_telemetry_data.balance.error,
+                        g_telemetry_data.balance.output,
+                        g_telemetry_data.balance.p_term,
+                        g_telemetry_data.balance.i_term,
+                        g_telemetry_data.balance.d_term,
+                        g_telemetry_data.balance.kp,
+                        g_telemetry_data.balance.ki,
+                        g_telemetry_data.balance.kd);
 
-        // D2 is a zone-based position hold, not a PID. Its keys deliberately
-        // do not match D1/D3 — consumers must not treat them interchangeably.
+        // position hold is a zone-based position hold, not a PID. Its keys deliberately
+        // do not match balance/steering — consumers must not treat them interchangeably.
         // "kind" is emitted so a client can branch on it instead of assuming.
         pos = json_append(buffer, pos, size,
-                        "\"D2_drive\":{\"enabled\":%s,\"kind\":\"zone_position_hold\","
+                        "\"position\":{\"enabled\":%s,\"kind\":\"zone_position_hold\","
                         "\"enc_pos_target\":%d,\"enc_pos\":%d,\"enc_error\":%d,"
                         "\"enc_velocity\":%.3f,\"pos_correction\":%.4f,\"vel_damp\":%.4f,"
                         "\"theta_ref_adj\":%.4f,\"active_scale\":%.4f,"
                         "\"max_correction\":%.4f},",
-                        g_telemetry_data.D2_drive.enabled ? "true" : "false",
-                        (int)g_telemetry_data.D2_drive.enc_pos_target,
-                        (int)g_telemetry_data.D2_drive.enc_pos,
-                        (int)g_telemetry_data.D2_drive.enc_error,
-                        g_telemetry_data.D2_drive.enc_velocity,
-                        g_telemetry_data.D2_drive.pos_correction,
-                        g_telemetry_data.D2_drive.vel_damp,
-                        g_telemetry_data.D2_drive.theta_ref_adj,
-                        g_telemetry_data.D2_drive.active_scale,
-                        g_telemetry_data.D2_drive.max_correction);
+                        g_telemetry_data.position.enabled ? "true" : "false",
+                        (int)g_telemetry_data.position.enc_pos_target,
+                        (int)g_telemetry_data.position.enc_pos,
+                        (int)g_telemetry_data.position.enc_error,
+                        g_telemetry_data.position.enc_velocity,
+                        g_telemetry_data.position.pos_correction,
+                        g_telemetry_data.position.vel_damp,
+                        g_telemetry_data.position.theta_ref_adj,
+                        g_telemetry_data.position.active_scale,
+                        g_telemetry_data.position.max_correction);
 
         pos = json_append(buffer, pos, size,
-                        "\"D3_steering\":{\"enabled\":%s,\"setpoint\":%.4f,"
+                        "\"steering\":{\"enabled\":%s,\"setpoint\":%.4f,"
                         "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
                         "\"p_term\":%.4f,\"i_term\":%.4f,\"d_term\":%.4f,"
                         "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},",
-                        g_telemetry_data.D3_steering.enabled ? "true" : "false",
-                        g_telemetry_data.D3_steering.setpoint,
-                        g_telemetry_data.D3_steering.measurement,
-                        g_telemetry_data.D3_steering.error,
-                        g_telemetry_data.D3_steering.output,
-                        g_telemetry_data.D3_steering.p_term,
-                        g_telemetry_data.D3_steering.i_term,
-                        g_telemetry_data.D3_steering.d_term,
-                        g_telemetry_data.D3_steering.kp,
-                        g_telemetry_data.D3_steering.ki,
-                        g_telemetry_data.D3_steering.kd);
+                        g_telemetry_data.steering.enabled ? "true" : "false",
+                        g_telemetry_data.steering.setpoint,
+                        g_telemetry_data.steering.measurement,
+                        g_telemetry_data.steering.error,
+                        g_telemetry_data.steering.output,
+                        g_telemetry_data.steering.p_term,
+                        g_telemetry_data.steering.i_term,
+                        g_telemetry_data.steering.d_term,
+                        g_telemetry_data.steering.kp,
+                        g_telemetry_data.steering.ki,
+                        g_telemetry_data.steering.kd);
     }
 
     // Cat position
@@ -944,6 +1083,19 @@ static void build_telemetry_json(char *buffer, size_t size)
                     g_pos_config.stopped_vel, g_pos_config.max_correction,
                     g_pos_config.max_angle_rate, g_pos_config.back_to_spot);
 
+    // sbus_config -- the live mapping, so the dashboard can sync its controls
+    // to what the bot is actually running rather than to its own defaults.
+    pos = json_append(buffer, pos, size,
+                      "\"sbus_config\":{\"drive_channel\":%d,\"turn_channel\":%d,"
+                      "\"drive_scale\":%.4f,\"turn_scale\":%.4f,\"turn_rate\":%.2f,"
+                      "\"drive_invert\":%d,\"turn_invert\":%d,"
+                      "\"deadband\":%.4f,\"require_center\":%d},",
+                      g_sbus_config.drive_channel, g_sbus_config.turn_channel,
+                      g_sbus_config.drive_scale, g_sbus_config.turn_scale,
+                      g_sbus_config.turn_rate,
+                      g_sbus_config.drive_invert, g_sbus_config.turn_invert,
+                      g_sbus_config.deadband, g_sbus_config.require_center);
+
     // sbus -- raw transmitter state. input_sbus.c already decodes all 16
     // channels and both flags; this block is the only thing that was missing
     // to get it off the bot. Mirrors what draw_sbus() shows in the ncurses UI.
@@ -952,9 +1104,10 @@ static void build_telemetry_json(char *buffer, size_t size)
     // Decoded fields are what the firmware actually derived from them, so the
     // dashboard can show the mapping working rather than just the numbers.
     pos = json_append(buffer, pos, size,
-                    "\"sbus\":{\"connected\":%s,\"failsafe\":%s,\"ch\":[",
+                    "\"sbus\":{\"connected\":%s,\"failsafe\":%s,\"drive_armed\":%s,\"ch\":[",
                     sbus_is_connected() ? "true" : "false",
-                    sbus_get_failsafe() ? "true" : "false");
+                    sbus_get_failsafe() ? "true" : "false",
+                    sbus_drive_armed() ? "true" : "false");
     for (int i = 0; i < 16; i++)
         pos = json_append(buffer, pos, size,
                         "%s%u", i ? "," : "", (unsigned)sbus_get_channel_raw(i));

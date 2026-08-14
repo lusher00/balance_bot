@@ -480,6 +480,22 @@ float sbus_get_drive(void) {
 }
 
 /**
+ * @brief Will drive commands actually reach the motors?
+ *
+ * Reports the same condition sbus_get_drive() gates on, so the RC tab can show
+ * why the sticks appear dead. This surfaces what was previously invisible: the
+ * kill and arm switches silently zero drive inside this file, which is not
+ * obvious from robot.c.
+ *
+ * The meaning widens when live RC mapping lands — it will also require the
+ * stick to have been centred once (sbus.drive_centered), so a transmitter left
+ * out of trim cannot command drive the instant it connects.
+ */
+bool sbus_drive_armed(void) {
+    return sbus.connected && sbus.kill >= 2 && sbus.arm >= 2;
+}
+
+/**
  * @brief Get yaw/turn command
  * @return -1.0 (full left) to +1.0 (full right), scaled by speed mode
  */

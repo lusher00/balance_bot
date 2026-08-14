@@ -328,12 +328,12 @@ static void draw_pid(int r)
 {
     hdr(r, "PID"); r++;
 
-    /* D1 and D3 only. D2_drive is a drive_telemetry_t, not a pid_telemetry_t —
+    /* balance and steering only. position is a drive_telemetry_t, not a pid_telemetry_t —
      * it is a zone-scheduled position hold with no gains and no P/I/D terms, so
      * it cannot share this table and gets its own row set below. */
-    const char *names[2]     = { "D1 Balance", "D3 Steer  " };
-    pid_telemetry_t *pids[2] = { &g_telemetry_data.D1_balance,
-                                 &g_telemetry_data.D3_steering };
+    const char *names[2]     = { "balance Balance", "steering Steer  " };
+    pid_telemetry_t *pids[2] = { &g_telemetry_data.balance,
+                                 &g_telemetry_data.steering };
     attron(A_DIM);
     mvprintw(r, 1, "%-10s  %7s  %7s  %7s  %7s  %7s  %7s  %7s",
              "Controller", "setp", "meas", "err", "P", "I", "D", "out");
@@ -346,16 +346,11 @@ static void draw_pid(int r)
     }
     r += 2;
 
-    drive_telemetry_t *d = &g_telemetry_data.D2_drive;
+    drive_telemetry_t *d = &g_telemetry_data.position;
     attron(A_DIM);
     mvprintw(r, 1, "%-10s  %7s  %7s  %7s  %7s  %7s  %7s  %7s",
-             "D2 Drive", "target", "pos", "err", "vel", "poscorr", "veldamp", "th_adj");
+             "position hold Drive", "target", "pos", "err", "vel", "poscorr", "veldamp", "th_adj");
     attroff(A_DIM); r++;
-    // enc_velocity is a float, not an int32_t like the three before it. Printing
-    // it with %d is undefined behaviour, not a rounding bug: the double is passed
-    // in a different register class than %d reads, so the column shows garbage
-    // AND every argument after it is read from the wrong place. That is why the
-    // poscorr/veldamp/th_adj columns could never be trusted either.
     mvprintw(r, 1, "%-10s  %7d  %7d  %7d  %+7.2f  %+7.3f  %+7.3f  %+7.3f",
              "(zone)", d->enc_pos_target, d->enc_pos, d->enc_error,
              d->enc_velocity, d->pos_correction, d->vel_damp, d->theta_ref_adj);

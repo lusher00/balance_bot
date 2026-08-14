@@ -10,6 +10,32 @@
     href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap"
     rel="stylesheet">
   <style>
+    /* ── Steppers & pads ───────────────────────────────────────────────────
+       Sliders are wrong for anything where a stray drag has consequences: no
+       discrete steps, no way to make a small change reliably, and a fat finger
+       on a phone can send a value from one end to the other. Everything that
+       touches the robot uses discrete presses with an explicit step size. */
+    .stp { display:flex; align-items:center; gap:6px; margin:4px 0; }
+    .stp-label { width:120px; flex:none; font-size:10px; color:var(--txt2); }
+    .stp-btn { width:30px; height:26px; flex:none; background:var(--bg3);
+               border:1px solid var(--border2); border-radius:var(--r);
+               color:var(--txt); font-family:var(--mono); font-size:14px;
+               cursor:pointer; user-select:none; }
+    .stp-btn:active { background:var(--accent); color:#04121c; }
+    .stp-val { min-width:74px; text-align:center; font-family:var(--mono);
+               font-size:12px; color:var(--txt); background:var(--bg2);
+               border:1px solid var(--border); border-radius:var(--r);
+               padding:4px 6px; }
+    .stp-step { display:flex; gap:3px; margin-left:auto; }
+    .stp-step .mult-btn { padding:2px 6px; font-size:9px; }
+    .pad { display:grid; grid-template-columns:repeat(3,44px);
+           grid-template-rows:repeat(3,36px); gap:4px; justify-content:center; }
+    .pad button { background:var(--bg3); border:1px solid var(--border2);
+                  border-radius:var(--r); color:var(--txt); font-size:15px;
+                  cursor:pointer; }
+    .pad button:active { background:var(--accent); color:#04121c; }
+    .pad .spacer { visibility:hidden; }
+
     /* ── RC / SBUS tab ─────────────────────────────────────────────────── */
     .rc-row { display:flex; align-items:center; gap:8px; margin:3px 0; font-family:var(--mono); font-size:10px; }
     .rc-name { width:118px; flex:none; color:var(--txt2); white-space:nowrap; }
@@ -1102,9 +1128,9 @@
     <div class="panel" id="panel-pid">
       <div class="row spaced" style="margin-bottom:10px">
         <div class="g-picker" id="pid-ctrl-picker">
-          <button class="g-seg active" data-pidctrl="d1" onclick="selectPIDCtrl('d1')">D1 Balance</button>
-          <button class="g-seg" data-pidctrl="d2" onclick="selectPIDCtrl('d2')">D2 Position</button>
-          <button class="g-seg" data-pidctrl="d3" onclick="selectPIDCtrl('d3')">D3 Steering</button>
+          <button class="g-seg active" data-pidctrl="bal" onclick="selectPIDCtrl('bal')">Balance</button>
+          <button class="g-seg" data-pidctrl="pos" onclick="selectPIDCtrl('pos')">Position</button>
+          <button class="g-seg" data-pidctrl="str" onclick="selectPIDCtrl('str')">Steering</button>
         </div>
         <div class="row" style="gap:6px">
           <button class="g-btn" onclick="sendCmd({type:'get_config'})">↻ Refresh</button>
@@ -1113,149 +1139,149 @@
         </div>
       </div>
 
-      <!-- D1 / D3 card -->
-      <div id="pid-d1-card" class="card">
+      <!-- balance / steering card -->
+      <div id="pid-bal-card" class="card">
         <div class="row spaced" style="margin-bottom:10px">
           <div>
-            <div class="card-title" id="pid-d1-title">D1: Balance</div>
+            <div class="card-title" id="pid-bal-title">Balance</div>
             <div style="font-size:9px;color:var(--txt3)">Angle → Motor torque · Keeps robot upright</div>
           </div>
-          <button class="enable-btn off" id="pid-d1-en" onclick="toggleCtrl('D1_balance','d1')">OFF</button>
+          <button class="enable-btn off" id="pid-bal-en" onclick="toggleCtrl('balance','bal')">OFF</button>
         </div>
-        <div id="pid-d1-gains">
+        <div id="pid-bal-gains">
           <div class="pid-row">
             <span class="pid-label">Kp</span>
-            <input type="range" class="pid-slider" id="sl-d1-kp" min="-200" max="200" step="0.1"
-              oninput="onPIDSlider('d1','kp',this.value)">
+            <input type="range" class="pid-slider" id="sl-bal-kp" min="-200" max="200" step="0.1"
+              oninput="onPIDSlider('bal','kp',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('d1','kp',-1)">−</button>
-              <input class="val-box" id="vb-d1-kp" value="40" onchange="onPIDValBox('d1','kp',this.value)"
-                onblur="onPIDValBox('d1','kp',this.value)">
-              <button class="step-btn" onclick="stepPID('d1','kp',1)">+</button>
+              <button class="step-btn" onclick="stepPID('bal','kp',-1)">−</button>
+              <input class="val-box" id="vb-bal-kp" value="40" onchange="onPIDValBox('bal','kp',this.value)"
+                onblur="onPIDValBox('bal','kp',this.value)">
+              <button class="step-btn" onclick="stepPID('bal','kp',1)">+</button>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Ki</span>
-            <input type="range" class="pid-slider" id="sl-d1-ki" min="-10" max="10" step="0.01"
-              oninput="onPIDSlider('d1','ki',this.value)">
+            <input type="range" class="pid-slider" id="sl-bal-ki" min="-10" max="10" step="0.01"
+              oninput="onPIDSlider('bal','ki',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('d1','ki',-1)">−</button>
-              <input class="val-box" id="vb-d1-ki" value="0" onchange="onPIDValBox('d1','ki',this.value)"
-                onblur="onPIDValBox('d1','ki',this.value)">
-              <button class="step-btn" onclick="stepPID('d1','ki',1)">+</button>
+              <button class="step-btn" onclick="stepPID('bal','ki',-1)">−</button>
+              <input class="val-box" id="vb-bal-ki" value="0" onchange="onPIDValBox('bal','ki',this.value)"
+                onblur="onPIDValBox('bal','ki',this.value)">
+              <button class="step-btn" onclick="stepPID('bal','ki',1)">+</button>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Kd</span>
-            <input type="range" class="pid-slider" id="sl-d1-kd" min="-50" max="50" step="0.1"
-              oninput="onPIDSlider('d1','kd',this.value)">
+            <input type="range" class="pid-slider" id="sl-bal-kd" min="-50" max="50" step="0.1"
+              oninput="onPIDSlider('bal','kd',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('d1','kd',-1)">−</button>
-              <input class="val-box" id="vb-d1-kd" value="5" onchange="onPIDValBox('d1','kd',this.value)"
-                onblur="onPIDValBox('d1','kd',this.value)">
-              <button class="step-btn" onclick="stepPID('d1','kd',1)">+</button>
+              <button class="step-btn" onclick="stepPID('bal','kd',-1)">−</button>
+              <input class="val-box" id="vb-bal-kd" value="5" onchange="onPIDValBox('bal','kd',this.value)"
+                onblur="onPIDValBox('bal','kd',this.value)">
+              <button class="step-btn" onclick="stepPID('bal','kd',1)">+</button>
             </div>
           </div>
           <div class="row" style="margin-top:6px;gap:6px">
             <span style="font-size:9px;color:var(--txt3)">Step ×</span>
-            <div class="mult-sel" id="mult-d1">
-              <button class="mult-btn active" data-m="1" onclick="setMult('d1',1)">1</button>
-              <button class="mult-btn" data-m="10" onclick="setMult('d1',10)">10</button>
-              <button class="mult-btn" data-m="100" onclick="setMult('d1',100)">100</button>
+            <div class="mult-sel" id="mult-bal">
+              <button class="mult-btn active" data-m="1" onclick="setMult('bal',1)">1</button>
+              <button class="mult-btn" data-m="10" onclick="setMult('bal',10)">10</button>
+              <button class="mult-btn" data-m="100" onclick="setMult('bal',100)">100</button>
             </div>
           </div>
         </div>
         <div class="divider"></div>
-        <div id="pid-d1-live">
+        <div id="pid-bal-live">
           <span class="sub-label">Live Status</span>
           <div class="row" style="gap:16px;margin-bottom:4px">
-            <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="d1-err"
+            <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="bal-err"
                 style="font-size:13px;color:var(--orange)">0.000</span></div>
-            <div><span style="color:var(--txt3);font-size:9px">OUTPUT</span><br><span id="d1-out"
+            <div><span style="color:var(--txt3);font-size:9px">OUTPUT</span><br><span id="bal-out"
                 style="font-size:13px;color:var(--accent)">0.000</span></div>
           </div>
           <div class="err-bar-wrap">
-            <div id="d1-bar" class="err-bar" style="width:0%;background:var(--accent)"></div>
+            <div id="bal-bar" class="err-bar" style="width:0%;background:var(--accent)"></div>
           </div>
         </div>
       </div>
 
-      <!-- D3 (hidden when D2 selected) -->
-      <div id="pid-d3-card" class="card" style="display:none">
+      <!-- steering (hidden when position selected) -->
+      <div id="pid-str-card" class="card" style="display:none">
         <div class="row spaced" style="margin-bottom:10px">
           <div>
-            <div class="card-title">D3: Steering</div>
+            <div class="card-title">Steering</div>
             <div style="font-size:9px;color:var(--txt3)">Yaw → Motor differential · Turns left/right</div>
           </div>
-          <button class="enable-btn off" id="pid-d3-en" onclick="toggleCtrl('D3_steering','d3')">OFF</button>
+          <button class="enable-btn off" id="pid-str-en" onclick="toggleCtrl('steering','str')">OFF</button>
         </div>
-        <div id="pid-d3-gains">
+        <div id="pid-str-gains">
           <div class="pid-row">
             <span class="pid-label">Kp</span>
-            <input type="range" class="pid-slider" id="sl-d3-kp" min="-200" max="200" step="0.1"
-              oninput="onPIDSlider('d3','kp',this.value)">
+            <input type="range" class="pid-slider" id="sl-str-kp" min="-200" max="200" step="0.1"
+              oninput="onPIDSlider('str','kp',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('d3','kp',-1)">−</button>
-              <input class="val-box" id="vb-d3-kp" value="15" onchange="onPIDValBox('d3','kp',this.value)"
-                onblur="onPIDValBox('d3','kp',this.value)">
-              <button class="step-btn" onclick="stepPID('d3','kp',1)">+</button>
+              <button class="step-btn" onclick="stepPID('str','kp',-1)">−</button>
+              <input class="val-box" id="vb-str-kp" value="15" onchange="onPIDValBox('str','kp',this.value)"
+                onblur="onPIDValBox('str','kp',this.value)">
+              <button class="step-btn" onclick="stepPID('str','kp',1)">+</button>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Ki</span>
-            <input type="range" class="pid-slider" id="sl-d3-ki" min="-10" max="10" step="0.01"
-              oninput="onPIDSlider('d3','ki',this.value)">
+            <input type="range" class="pid-slider" id="sl-str-ki" min="-10" max="10" step="0.01"
+              oninput="onPIDSlider('str','ki',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('d3','ki',-1)">−</button>
-              <input class="val-box" id="vb-d3-ki" value="0" onchange="onPIDValBox('d3','ki',this.value)"
-                onblur="onPIDValBox('d3','ki',this.value)">
-              <button class="step-btn" onclick="stepPID('d3','ki',1)">+</button>
+              <button class="step-btn" onclick="stepPID('str','ki',-1)">−</button>
+              <input class="val-box" id="vb-str-ki" value="0" onchange="onPIDValBox('str','ki',this.value)"
+                onblur="onPIDValBox('str','ki',this.value)">
+              <button class="step-btn" onclick="stepPID('str','ki',1)">+</button>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Kd</span>
-            <input type="range" class="pid-slider" id="sl-d3-kd" min="-50" max="50" step="0.1"
-              oninput="onPIDSlider('d3','kd',this.value)">
+            <input type="range" class="pid-slider" id="sl-str-kd" min="-50" max="50" step="0.1"
+              oninput="onPIDSlider('str','kd',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('d3','kd',-1)">−</button>
-              <input class="val-box" id="vb-d3-kd" value="1.5" onchange="onPIDValBox('d3','kd',this.value)"
-                onblur="onPIDValBox('d3','kd',this.value)">
-              <button class="step-btn" onclick="stepPID('d3','kd',1)">+</button>
+              <button class="step-btn" onclick="stepPID('str','kd',-1)">−</button>
+              <input class="val-box" id="vb-str-kd" value="1.5" onchange="onPIDValBox('str','kd',this.value)"
+                onblur="onPIDValBox('str','kd',this.value)">
+              <button class="step-btn" onclick="stepPID('str','kd',1)">+</button>
             </div>
           </div>
           <div class="row" style="margin-top:6px;gap:6px">
             <span style="font-size:9px;color:var(--txt3)">Step ×</span>
-            <div class="mult-sel" id="mult-d3">
-              <button class="mult-btn active" data-m="1" onclick="setMult('d3',1)">1</button>
-              <button class="mult-btn" data-m="10" onclick="setMult('d3',10)">10</button>
-              <button class="mult-btn" data-m="100" onclick="setMult('d3',100)">100</button>
+            <div class="mult-sel" id="mult-str">
+              <button class="mult-btn active" data-m="1" onclick="setMult('str',1)">1</button>
+              <button class="mult-btn" data-m="10" onclick="setMult('str',10)">10</button>
+              <button class="mult-btn" data-m="100" onclick="setMult('str',100)">100</button>
             </div>
           </div>
         </div>
         <div class="divider"></div>
         <span class="sub-label">Live Status</span>
         <div class="row" style="gap:16px;margin-bottom:4px">
-          <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="d3-err"
+          <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="str-err"
               style="font-size:13px;color:var(--orange)">0.000</span></div>
-          <div><span style="color:var(--txt3);font-size:9px">OUTPUT</span><br><span id="d3-out"
+          <div><span style="color:var(--txt3);font-size:9px">OUTPUT</span><br><span id="str-out"
               style="font-size:13px;color:var(--accent)">0.000</span></div>
         </div>
         <div class="err-bar-wrap">
-          <div id="d3-bar" class="err-bar" style="width:0%;background:var(--accent)"></div>
+          <div id="str-bar" class="err-bar" style="width:0%;background:var(--accent)"></div>
         </div>
       </div>
 
-      <!-- D2 PosConfig card -->
-      <div id="pid-d2-card" class="card" style="display:none">
+      <!-- position PosConfig card -->
+      <div id="pid-pos-card" class="card" style="display:none">
         <div class="row spaced" style="margin-bottom:10px">
           <div>
-            <div class="card-title">D2: Position Hold</div>
+            <div class="card-title">Position Hold</div>
             <div style="font-size:9px;color:var(--txt3)">Encoder ticks → Lean angle bias · Keeps bot in place</div>
             <div style="font-size:9px;color:var(--txt3);margin-top:2px">Not a PID — zone-scheduled, no kp/ki/kd</div>
           </div>
-          <button class="enable-btn off" id="pid-d2-en" onclick="toggleCtrl('D2_drive','d2')">OFF</button>
+          <button class="enable-btn off" id="pid-pos-en" onclick="toggleCtrl('position','pos')">OFF</button>
         </div>
-        <div id="pid-d2-cfg">
+        <div id="pid-pos-cfg">
           <span class="sub-label">Hold Mode</span>
           <div class="seg-group" id="hold-mode-seg" style="margin-bottom:10px">
             <button class="seg-btn active" onclick="setPosField('back_to_spot',1)">Full hold (A/B/C/D)</button>
@@ -1268,15 +1294,15 @@
         <div class="divider"></div>
         <span class="sub-label">Live Status</span>
         <div class="row" style="gap:16px;margin-bottom:4px">
-          <div><span style="color:var(--txt3);font-size:9px">TARGET</span><br><span id="d2-sp"
+          <div><span style="color:var(--txt3);font-size:9px">TARGET</span><br><span id="pos-sp"
               style="font-size:12px">0</span></div>
-          <div><span style="color:var(--txt3);font-size:9px">POSITION</span><br><span id="d2-meas"
+          <div><span style="color:var(--txt3);font-size:9px">POSITION</span><br><span id="pos-meas"
               style="font-size:12px">0</span></div>
-          <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="d2-err"
+          <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="pos-err"
               style="font-size:12px;color:var(--orange)">0</span></div>
         </div>
         <div class="err-bar-wrap">
-          <div id="d2-bar" class="err-bar" style="width:0%;background:var(--green)"></div>
+          <div id="pos-bar" class="err-bar" style="width:0%;background:var(--green)"></div>
         </div>
       </div>
     </div>
@@ -1477,6 +1503,7 @@
           <div style="text-align:right">
             <div id="rc-link" style="font-size:11px;font-weight:600">NO LINK</div>
             <div id="rc-failsafe" style="font-size:9px;margin-top:3px">FAILSAFE —</div>
+            <div id="rc-armed" style="font-size:9px;margin-top:3px">DRIVE —</div>
           </div>
         </div>
         <div class="divider"></div>
@@ -1486,6 +1513,23 @@
         <div id="rc-switches"></div>
         <span class="sub-label" style="margin-top:10px">Unmapped</span>
         <div id="rc-unmapped"></div>
+        <div class="divider"></div>
+        <span class="sub-label">Pose &amp; Position</span>
+        <div id="pose-ctl"></div>
+
+        <div class="divider"></div>
+        <span class="sub-label">Mapping &amp; Scaling</span>
+        <div style="font-size:9px;color:var(--txt3);margin-bottom:6px">
+          Applied live and saved to robot.conf. Watch <b>drive</b> and <b>turn</b>
+          below while moving a stick — that is the ground truth for whether a
+          channel and its direction are right.
+        </div>
+        <div id="rc-map"></div>
+        <div class="row" style="gap:6px;margin-top:8px">
+          <button class="g-btn" onclick="rcSwapChannels()">Swap drive/turn</button>
+          <button class="g-btn" onclick="rcInvert('drive_invert')">Flip drive</button>
+          <button class="g-btn" onclick="rcInvert('turn_invert')">Flip turn</button>
+        </div>
         <div class="divider"></div>
         <span class="sub-label">Decoded by firmware</span>
         <div id="rc-decoded" class="stat-row" style="flex-wrap:wrap;gap:6px"></div>
@@ -1550,22 +1594,22 @@
       imu: { theta: 0, phi: 0, psi: 0 },
       encoders: null,
       cat: null,
-      d1: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
-      // D2 is a zone-based position hold, not a PID — different shape on purpose.
-      d2: { enabled: false, encTarget: 0, encPos: 0, encError: 0, encVel: 0, posCorr: 0, velDamp: 0, thetaAdj: 0, activeScale: 0, maxCorrection: 0 },
-      d3: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
+      bal: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
+      // position is a zone-based position hold, not a PID — different shape on purpose.
+      pos: { enabled: false, encTarget: 0, encPos: 0, encError: 0, encVel: 0, posCorr: 0, velDamp: 0, thetaAdj: 0, activeScale: 0, maxCorrection: 0 },
+      str: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
       // Commanded wheel duty as sent to the RoboClaw — not a controller.
       mot: { leftDuty: 0, rightDuty: 0 },
       sbus: null,
     };
 
-    // D1 and D3 only. D2 has no gains; see posCfg for its tuning parameters.
+    // balance and steering only. position has no gains; see posCfg for its tuning parameters.
     const pidCfg = {
-      d1: { kp: 40, ki: 0, kd: 5, received: false },
-      d3: { kp: 15, ki: 0, kd: 1.5, received: false },
+      bal: { kp: 40, ki: 0, kd: 5, received: false },
+      str: { kp: 15, ki: 0, kd: 1.5, received: false },
     };
 
-    const pidMult = { d1: 1, d3: 1, claw: 1 };
+    const pidMult = { bal: 1, str: 1, claw: 1 };
 
     // Claw motor controller config (mirrors motor_config_t)
     const clawCfg = {
@@ -1575,7 +1619,7 @@
       received: false,
     };
 
-    // D2 PosConfig defaults
+    // position PosConfig defaults
     const posCfg = {
       zone_a: 8000, zone_b: 4000, zone_c: 1000,
       scale_a: 600, scale_b: 800, scale_c: 1000, scale_d: 80,
@@ -1587,8 +1631,8 @@
     // Last pos_config the BOT reported, refreshed on every telemetry packet.
     // This — not posCfg — is ground truth for what the firmware is running.
     let posCfgBot = null;
-    // Same for D1/D3 gains: pidCfg is seeded once for the sliders and drifts.
-    let gainsBot = { d1: null, d3: null };
+    // Same for balance/steering gains: pidCfg is seeded once for the sliders and drifts.
+    let gainsBot = { bal: null, str: null };
 
     const POS_SLIDERS = [
       { key: 'zone_a', label: 'Zone A (outer)', min: 1000, max: 30000, step: 500, group: 'zones' },
@@ -1623,7 +1667,7 @@
     const TOP_PAD = 6;
 
     const SERIES_COLORS = {
-      // D1 / D3 — genuine PID loops
+      // balance / steering — genuine PID loops
       setpoint: '#4fc3f7',
       measurement: '#00e676',
       error: '#ff9500',
@@ -1631,7 +1675,7 @@
       iTerm: '#00e5ff',
       dTerm: '#64ffda',
       output: '#ff3d3d',
-      // D2 — zone-based position hold, distinct key namespace on purpose
+      // position — zone-based position hold, distinct key namespace on purpose
       encTarget: '#4fc3f7',
       encPos: '#00e676',
       encError: '#ff9500',
@@ -1646,7 +1690,7 @@
       dutyDiff: '#ff3d3d',
     };
 
-    // D1 and D3 run pid_update(). D2 does not — it is a zone-based position
+    // balance and steering run pid_update(). position does not — it is a zone-based position
     // hold with no gains, no integrator and no derivative. It gets its own key
     // set so that nothing (graphs, legends, CSV headers) can present its
     // signals as P/I/D terms. Do not collapse these back into one list.
@@ -1654,7 +1698,7 @@
     const DRIVE_KEYS = ['encTarget', 'encPos', 'encError', 'encVel', 'posCorr', 'velDamp', 'thetaAdj', 'activeScale'];
     // MOT is not a controller — it is what actually reached the RoboClaw. Kept
     // as its own group so a left/right asymmetry is visible rather than hidden
-    // behind D1's single scalar output.
+    // behind balance's single scalar output.
     const MOTOR_KEYS = ['leftDuty', 'rightDuty', 'dutyDiff'];
     const CTRL_KEYS = [PID_KEYS, DRIVE_KEYS, PID_KEYS, MOTOR_KEYS];
     const keysFor = ctrl => CTRL_KEYS[ctrl];
@@ -1683,7 +1727,7 @@
     function seriesLabel(ctrl, key) {
       return SERIES_LABELS[key] || key;
     }
-    const CTRL_NAMES = ['D1', 'D2', 'D3', 'MOT'];
+    const CTRL_NAMES = ['BAL', 'POS', 'STR', 'MOT'];
     const CTRL_DASH = [[], [8, 4], [2, 4], [4, 2, 1, 2]];
 
     function makeBuf(ctrlIdx) {
@@ -1716,7 +1760,7 @@
         add('rightDuty', s.rightDuty || 0);
         add('dutyDiff', (s.leftDuty || 0) - (s.rightDuty || 0));
       } else if (ctrlIdx === 1) {
-        // D2 — position hold. Keys are drive-specific by design.
+        // position — position hold. Keys are drive-specific by design.
         add('encTarget', s.encTarget || 0);
         add('encPos', s.encPos || 0);
         add('encError', s.encError || 0);
@@ -1941,9 +1985,9 @@
         started: new Date().toISOString(),
         haveBot: !!bot,
         pos: bot ? { ...posCfg, ...bot } : { ...posCfg },
-        d1: gainsBot.d1 || { ...pidCfg.d1 },
-        d3: gainsBot.d3 || { ...pidCfg.d3 },
-        gainsFromBot: !!(gainsBot.d1 && gainsBot.d3),
+        bal: gainsBot.bal || { ...pidCfg.bal },
+        str: gainsBot.str || { ...pidCfg.str },
+        gainsFromBot: !!(gainsBot.bal && gainsBot.str),
         drift,
       };
     }
@@ -1965,9 +2009,9 @@
       btn.textContent = recording ? '⏹ Stop' : '⏺ Rec';
     }
     function saveCSV() {
-      const ctrlNames = ['d1', 'd2', 'd3', 'mot'];
-      // Headers come from each controller's own key set, so d2 columns are
-      // named d2_encError / d2_posCorr / etc. An exported d2_pTerm column would
+      const ctrlNames = ['bal', 'pos', 'str', 'mot'];
+      // Headers come from each controller's own key set, so position columns are
+      // named pos_encError / pos_posCorr / etc. An exported pos_pTerm column would
       // be read as a PID trace by anyone opening the file later — it is not one.
       const cols = ['t'].concat(ctrlNames.flatMap((c, ci) => keysFor(ci).map(k => c + '_' + k)));
 
@@ -1997,11 +2041,11 @@
              + `samples=${loopStat.n} below_95Hz=${loopStat.below}`
              + `${loopStat.below ? '  <-- CONTROL LOOP MISSED RATE, treat this run with suspicion' : ''}\n`;
       }
-      csv += `# d1_gains: kp=${m.d1.kp} ki=${m.d1.ki} kd=${m.d1.kd}\n`;
-      csv += `# d3_gains: kp=${m.d3.kp} ki=${m.d3.ki} kd=${m.d3.kd}\n`;
-      csv += `# note: D2 is a zone-scheduled position hold, not a PID — it has no gains.\n`;
-      csv += `#   d2_encError is (enc_pos_target - enc_pos), same sign as the error the\n`;
-      csv += `#   controller acts on, so d2_posCorr == d2_encError / d2_activeScale.\n`;
+      csv += `# bal_gains: kp=${m.bal.kp} ki=${m.bal.ki} kd=${m.bal.kd}\n`;
+      csv += `# str_gains: kp=${m.str.kp} ki=${m.str.ki} kd=${m.str.kd}\n`;
+      csv += `# note: position is a zone-scheduled position hold, not a PID — it has no gains.\n`;
+      csv += `#   pos_encError is (enc_pos_target - enc_pos), same sign as the error the\n`;
+      csv += `#   controller acts on, so pos_posCorr == pos_encError / pos_activeScale.\n`;
 
       csv += cols.join(',') + '\n';
       const maxLen = Math.max(...recordBuf.map(b => b.length));
@@ -2102,7 +2146,7 @@
     // ════════════════════════════════════════════════════════════════════════════
     // Telemetry
     // ════════════════════════════════════════════════════════════════════════════
-    // D1 / D3 only. These are real PID loops; p_term/i_term/d_term/output are
+    // balance / steering only. These are real PID loops; p_term/i_term/d_term/output are
     // the actual terms recorded inside pid_update().
     function normPID(raw) {
       if (!raw) return null;
@@ -2119,7 +2163,7 @@
       };
     }
 
-    // D2 only. Separate function from normPID because D2 is a zone-based
+    // position only. Separate function from normPID because position is a zone-based
     // position hold, not a PID — it has no gains and nothing here maps onto
     // P, I or D. Firmware emits kind:"zone_position_hold" on this block.
     // ════════════════════════════════════════════════════════════════════════════
@@ -2154,6 +2198,7 @@
       return {
         connected: !!raw.connected,
         failsafe: !!raw.failsafe,
+        driveArmed: !!raw.drive_armed,
         ch: Array.from({ length: 16 }, (_, i) => ch[i] ?? 0),
         drive: raw.drive ?? 0, turn: raw.turn ?? 0,
         arm: raw.arm ?? 0, kill: raw.kill ?? 0, speed: raw.speed ?? 0,
@@ -2172,6 +2217,201 @@
       if (v < SBUS_SW_LOW) return 0;
       if (v > SBUS_SW_HIGH) return 2;
       return 1;
+    }
+
+
+    // ── RC mapping (live) ─────────────────────────────────────────────────────
+    // Mirrors the firmware's sbus_config. Seeded once from telemetry, then owned
+    // by the UI so a slider drag is not fought by the next incoming packet.
+    const sbusCfg = {
+      drive_channel: 2, turn_channel: 1,
+      drive_scale: 0.25, turn_scale: 1.0, turn_rate: 60,
+      drive_invert: 1, turn_invert: 0,
+      deadband: 0.03, require_center: 1,
+    };
+    let sbusCfgReceived = false;
+
+    const RC_MAP_ROWS = [
+      { k: 'drive_channel', label: 'Drive channel', min: 1, max: 16, step: 1 },
+      { k: 'turn_channel',  label: 'Turn channel',  min: 1, max: 16, step: 1 },
+      { k: 'drive_scale',   label: 'Drive scale',   min: 0, max: 1, step: 0.01 },
+      { k: 'turn_scale',    label: 'Turn scale',    min: 0, max: 1, step: 0.01 },
+      { k: 'deadband',      label: 'Deadband',      min: 0, max: 0.3, step: 0.005 },
+    ];
+
+    function buildRCMap() {
+      document.getElementById('rc-map').innerHTML =
+        stepper('dch',   'Drive channel',  [1], v => '1') +
+        stepper('tch',   'Turn channel',   [1], v => '1') +
+        stepper('drvsc', 'Drive scale',    [0.01, 0.05, 0.1], v => v.toFixed(2)) +
+        stepper('trnrt', 'Turn rate',      [5, 20, 50], v => String(v)) +
+        stepper('dband', 'Deadband',       [0.005, 0.01, 0.05], v => v.toFixed(3)) + `
+        <div class="stp">
+          <span class="stp-label">Require centre</span>
+          <div style="flex:1;display:flex;gap:4px">
+            <span class="rc-chip" id="rcm-rc-0" onclick="onRCMap('require_center',0)">OFF</span>
+            <span class="rc-chip" id="rcm-rc-1" onclick="onRCMap('require_center',1)">ON</span>
+          </div>
+        </div>`;
+      syncRCMap();
+    }
+
+    function syncRCMap() {
+      stepShow('dch',   'CH' + sbusCfg.drive_channel);
+      stepShow('tch',   'CH' + sbusCfg.turn_channel);
+      stepShow('drvsc', Number(sbusCfg.drive_scale).toFixed(3));
+      stepShow('trnrt', Number(sbusCfg.turn_rate ?? 60).toFixed(0) + '/s');
+      stepShow('dband', Number(sbusCfg.deadband).toFixed(3));
+      for (const v of [0, 1]) {
+        const c = document.getElementById(`rcm-rc-${v}`);
+        if (c) c.className = 'rc-chip' + (sbusCfg.require_center === v ? ' on' : '');
+      }
+      const di = document.getElementById('rc-inv-drive');
+      const ti = document.getElementById('rc-inv-turn');
+      if (di) di.textContent = sbusCfg.drive_invert ? 'inverted' : 'normal';
+      if (ti) ti.textContent = sbusCfg.turn_invert ? 'inverted' : 'normal';
+    }
+
+    function sendSbusCfg() { sendCmd({ type: 'set_sbus_config', ...sbusCfg }); }
+
+    function onRCMap(key, val) {
+      const v = parseFloat(val);
+      if (isNaN(v)) return;
+      sbusCfg[key] = (key.endsWith('_channel') || key === 'require_center') ? Math.round(v) : v;
+      syncRCMap();
+      sendSbusCfg();
+    }
+
+    function rcInvert(key) { sbusCfg[key] = sbusCfg[key] ? 0 : 1; syncRCMap(); sendSbusCfg(); }
+
+    // Wrong stick? One click rather than two slider drags.
+    function rcSwapChannels() {
+      const d = sbusCfg.drive_channel;
+      sbusCfg.drive_channel = sbusCfg.turn_channel;
+      sbusCfg.turn_channel = d;
+      syncRCMap();
+      sendSbusCfg();
+    }
+
+
+    // ── Stepper: discrete presses, explicit step size, no free text ───────────
+    // Deliberately not a slider and not a text box. Every press is a bounded,
+    // repeatable change, and the step size is chosen explicitly rather than
+    // implied by pixels-per-unit.
+    const stepState = {};   // id -> chosen step
+
+    function stepper(id, label, steps, fmt) {
+      stepState[id] = stepState[id] ?? steps[Math.floor(steps.length / 2)];
+      return `
+        <div class="stp">
+          <span class="stp-label">${label}</span>
+          <button class="stp-btn" onclick="stepBump('${id}',-1)">&minus;</button>
+          <span class="stp-val" id="stp-${id}">—</span>
+          <button class="stp-btn" onclick="stepBump('${id}',1)">+</button>
+          <span class="stp-step" id="stpS-${id}">
+            ${steps.map(v => `<button class="mult-btn${v === stepState[id] ? ' active' : ''}"
+                 onclick="stepPick('${id}',${v})">${fmt ? fmt(v) : v}</button>`).join('')}
+          </span>
+        </div>`;
+    }
+
+    function stepPick(id, v) {
+      stepState[id] = v;
+      document.querySelectorAll(`#stpS-${id} .mult-btn`).forEach(b =>
+        b.classList.toggle('active', parseFloat(b.textContent) === v));
+    }
+
+    const STEP_HANDLERS = {};
+    function stepBump(id, dir) {
+      const h = STEP_HANDLERS[id];
+      if (h) h(dir * stepState[id]);
+    }
+    function stepShow(id, text) {
+      const e = document.getElementById(`stp-${id}`);
+      if (e) e.textContent = text;
+    }
+
+    // ── Pose & position ───────────────────────────────────────────────────────
+    // All relative. The firmware clamps each press again on its side, so a UI
+    // bug cannot produce a large movement.
+    function nudge(axis, delta) { sendCmd({ type: 'nudge', axis, delta }); }
+
+    STEP_HANDLERS['pitch'] = d => nudge('pitch', d);
+    STEP_HANDLERS['pose']  = d => nudge('pose', d);
+    STEP_HANDLERS['drvsc'] = d => {
+      sbusCfg.drive_scale = Math.min(1, Math.max(0, +(sbusCfg.drive_scale + d).toFixed(3)));
+      syncRCMap(); sendSbusCfg();
+    };
+    STEP_HANDLERS['trnrt'] = d => {
+      sbusCfg.turn_rate = Math.min(1000, Math.max(0, +(sbusCfg.turn_rate + d).toFixed(1)));
+      syncRCMap(); sendSbusCfg();
+    };
+    STEP_HANDLERS['dch'] = d => {
+      sbusCfg.drive_channel = Math.min(16, Math.max(1, sbusCfg.drive_channel + Math.sign(d)));
+      syncRCMap(); sendSbusCfg();
+    };
+    STEP_HANDLERS['tch'] = d => {
+      sbusCfg.turn_channel = Math.min(16, Math.max(1, sbusCfg.turn_channel + Math.sign(d)));
+      syncRCMap(); sendSbusCfg();
+    };
+    STEP_HANDLERS['dband'] = d => {
+      sbusCfg.deadband = Math.min(0.3, Math.max(0, +(sbusCfg.deadband + d).toFixed(3)));
+      syncRCMap(); sendSbusCfg();
+    };
+
+    // Position pad step, in millimetres. enc_pos is L+R, so ticks = 2*mm/MM_PER_TICK.
+    const MM_PER_TICK = 155 * Math.PI / 145.1;
+    let padStepMm = 20;
+    function padStep(mm) {
+      padStepMm = mm;
+      document.querySelectorAll('#pad-step .mult-btn').forEach(b =>
+        b.classList.toggle('active', parseInt(b.textContent) === mm));
+    }
+    function padMove(dir) {
+      // dir: +1 forward, -1 back. Ticks, because that is what the hold loop uses.
+      nudge('fwd', dir * Math.round(2 * padStepMm / MM_PER_TICK));
+    }
+    function padTurn(dir) { nudge('yaw', dir * 15); }   // 15 deg of phi_diff per press
+
+    function buildPose() {
+      document.getElementById('pose-ctl').innerHTML = `
+        <div style="font-size:9px;color:var(--txt3);margin-bottom:6px">
+          <b style="color:var(--yellow)">Commanded lean</b> — deliberately leans the
+          bot off upright so you can watch it creep at a known angle. It WILL drive
+          away. Ramped in and out at max_angle_rate, cleared on disarm.
+        </div>` +
+        stepper('pose', 'Lean (°)', [0.05, 0.1, 0.5], v => v.toFixed(2)) + `
+        <div class="row" style="gap:6px;margin:4px 0 10px">
+          <button class="g-btn" onclick="nudge('pose_zero',0)">Zero lean</button>
+          <span id="pose-live" style="font-size:10px;align-self:center;color:var(--txt3)"></span>
+        </div>
+
+        <div class="divider"></div>
+        <div style="font-size:9px;color:var(--txt3);margin-bottom:6px">
+          <b>Balance trim</b> — where upright <i>is</i>. Different thing entirely:
+          this is the calibration that makes the bot sit still, not a command to move.
+          Persisted to robot.conf.
+        </div>` +
+        stepper('pitch', 'Trim (°)', [0.01, 0.05, 0.2], v => v.toFixed(2)) + `
+
+        <div class="divider"></div>
+        <span class="sub-label">Position</span>
+        <div class="pad" style="margin-top:6px">
+          <span class="spacer"></span>
+          <button onclick="padMove(1)" title="forward">&#9650;</button>
+          <span class="spacer"></span>
+          <button onclick="padTurn(-1)" title="yaw left">&#9664;</button>
+          <button onclick="sendCmd({type:'zero_encoders'})" title="zero here">&#9679;</button>
+          <button onclick="padTurn(1)" title="yaw right">&#9654;</button>
+          <span class="spacer"></span>
+          <button onclick="padMove(-1)" title="back">&#9660;</button>
+          <span class="spacer"></span>
+        </div>
+        <div class="row" style="justify-content:center;gap:4px;margin-top:6px" id="pad-step">
+          ${[5, 20, 100].map(v => `<button class="mult-btn${v === padStepMm ? ' active' : ''}"
+              onclick="padStep(${v})">${v}</button>`).join('')}
+          <span style="font-size:9px;color:var(--txt3);align-self:center">mm / press</span>
+        </div>`;
     }
 
     let rcBuilt = false;
@@ -2202,7 +2442,7 @@
     }
 
     function updateRC() {
-      if (!rcBuilt) buildRC();
+      if (!rcBuilt) { buildRC(); buildRCMap(); buildPose(); }
       const s = state.sbus;
       const link = document.getElementById('rc-link');
       const fs = document.getElementById('rc-failsafe');
@@ -2212,6 +2452,17 @@
       const failed = s && s.failsafe;
       fs.textContent = failed ? 'FAILSAFE ACTIVE' : 'FAILSAFE no';
       fs.style.color = failed ? 'var(--red)' : 'var(--txt3)';
+      // The centre interlock zeroes drive regardless of stick position. Without
+      // this readout a blocked interlock is indistinguishable from a dead
+      // receiver — you see the channel moving and the robot doing nothing.
+      const armed = document.getElementById('rc-armed');
+      if (s && !s.driveArmed) {
+        armed.textContent = 'DRIVE BLOCKED — centre the stick';
+        armed.style.color = 'var(--yellow)';
+      } else {
+        armed.textContent = s ? 'DRIVE armed' : 'DRIVE —';
+        armed.style.color = s ? 'var(--green)' : 'var(--txt3)';
+      }
       // Stale link: dim everything rather than showing frozen values as current.
       document.getElementById('panel-rc').classList.toggle('rc-stale', !live);
       if (!s) return;
@@ -2245,6 +2496,8 @@
         ['arm', p3(s.arm)], ['kill', p3(s.kill)], ['speed', p3(s.speed)],
         ['sw_c', p3(s.sw_c)], ['sw_e', p3(s.sw_e)], ['sw_f', s.sw_f ? 'ON' : 'OFF'],
         ['aux1', s.aux1.toFixed(3)], ['aux2', s.aux2.toFixed(3)],
+        ['drive ch', `CH${sbusCfg.drive_channel} <span id="rc-inv-drive">${sbusCfg.drive_invert ? 'inverted' : 'normal'}</span>`],
+        ['turn ch', `CH${sbusCfg.turn_channel} <span id="rc-inv-turn">${sbusCfg.turn_invert ? 'inverted' : 'normal'}</span>`],
       ].map(([k, v]) =>
         `<span class="stat-box"><span style="color:var(--txt3)">${k}</span> ${v}</span>`).join('');
     }
@@ -2282,6 +2535,21 @@
         state.armed = !!d.system.armed;
         state.mode = d.system.mode;
         state.loopHz = d.system.loop_hz ?? 0;
+        if (d.system.theta_offset !== undefined)
+          stepShow('pitch', Number(d.system.theta_offset).toFixed(3));
+        if (d.system.pose_lean !== undefined) {
+          const pl = Number(d.system.pose_lean);
+          stepShow('pose', pl.toFixed(3));
+          const live = document.getElementById('pose-live');
+          if (live) {
+            // theta_ref is what the balance loop is actually tracking, so it
+            // shows the ramp arriving rather than the target you asked for.
+            const tr = state.bal ? Number(state.bal.setpoint).toFixed(2) : '—';
+            live.textContent = Math.abs(pl) > 0.0005
+              ? `ACTIVE — θ_ref ${tr}°` : `off — θ_ref ${tr}°`;
+            live.style.color = Math.abs(pl) > 0.0005 ? 'var(--yellow)' : 'var(--txt3)';
+          }
+        }
         if (recording && loopStat && state.loopHz > 0) {
           loopStat.n++; loopStat.sum += state.loopHz;
           if (state.loopHz < loopStat.min) loopStat.min = state.loopHz;
@@ -2301,40 +2569,45 @@
       if (d.encoders) state.encoders = d.encoders;
       if (d.cat) state.cat = d.cat;
 
-      const d1r = normPID(d.D1_balance);
-      const d2r = normDrive(d.D2_drive);
-      const d3r = normPID(d.D3_steering);
+      const d1r = normPID(d.balance);
+      const d2r = normDrive(d.position);
+      const d3r = normPID(d.steering);
       const motr = normMotors(d.motors);
 
       if (d1r) {
-        Object.assign(state.d1, d1r);
+        Object.assign(state.bal, d1r);
         appendGraphPoint(0, d1r);
-        if (d1r.kp != null) gainsBot.d1 = { kp: d1r.kp, ki: d1r.ki ?? 0, kd: d1r.kd ?? 0 };
-        if (!pidCfg.d1.received && d1r.kp != null) {
-          pidCfg.d1.kp = d1r.kp; pidCfg.d1.ki = d1r.ki ?? 0; pidCfg.d1.kd = d1r.kd ?? 0;
-          pidCfg.d1.received = true;
-          syncPIDUI('d1');
+        if (d1r.kp != null) gainsBot.bal = { kp: d1r.kp, ki: d1r.ki ?? 0, kd: d1r.kd ?? 0 };
+        if (!pidCfg.bal.received && d1r.kp != null) {
+          pidCfg.bal.kp = d1r.kp; pidCfg.bal.ki = d1r.ki ?? 0; pidCfg.bal.kd = d1r.kd ?? 0;
+          pidCfg.bal.received = true;
+          syncPIDUI('bal');
         }
       }
       if (d2r) {
-        // No gain sync here — D2 has no gains. Its tuning arrives in
+        // No gain sync here — position has no gains. Its tuning arrives in
         // d.pos_config (zones, scales, max_correction, max_angle_rate).
-        Object.assign(state.d2, d2r);
+        Object.assign(state.pos, d2r);
         appendGraphPoint(1, d2r);
       }
       if (d3r) {
-        Object.assign(state.d3, d3r);
+        Object.assign(state.str, d3r);
         appendGraphPoint(2, d3r);
-        if (d3r.kp != null) gainsBot.d3 = { kp: d3r.kp, ki: d3r.ki ?? 0, kd: d3r.kd ?? 0 };
-        if (!pidCfg.d3.received && d3r.kp != null) {
-          pidCfg.d3.kp = d3r.kp; pidCfg.d3.ki = d3r.ki ?? 0; pidCfg.d3.kd = d3r.kd ?? 0;
-          pidCfg.d3.received = true;
-          syncPIDUI('d3');
+        if (d3r.kp != null) gainsBot.str = { kp: d3r.kp, ki: d3r.ki ?? 0, kd: d3r.kd ?? 0 };
+        if (!pidCfg.str.received && d3r.kp != null) {
+          pidCfg.str.kp = d3r.kp; pidCfg.str.ki = d3r.ki ?? 0; pidCfg.str.kd = d3r.kd ?? 0;
+          pidCfg.str.received = true;
+          syncPIDUI('str');
         }
       }
       if (motr) {
         Object.assign(state.mot, motr);
         appendGraphPoint(3, motr);
+      }
+      if (d.sbus_config && !sbusCfgReceived) {
+        Object.assign(sbusCfg, d.sbus_config);
+        sbusCfgReceived = true;
+        if (rcBuilt) syncRCMap();
       }
       state.sbus = normSbus(d.sbus) || state.sbus;
       updateRC();
@@ -2466,14 +2739,14 @@
       }
 
       // PID live status
-      updatePIDLive('d1', state.d1);
-      updatePIDLive('d2', state.d2);
-      updatePIDLive('d3', state.d3);
+      updatePIDLive('bal', state.bal);
+      updatePIDLive('pos', state.pos);
+      updatePIDLive('str', state.str);
 
       // Controller enable buttons
-      setEnableBtn('pid-d1-en', state.d1.enabled);
-      setEnableBtn('pid-d2-en', state.d2.enabled);
-      setEnableBtn('pid-d3-en', state.d3.enabled);
+      setEnableBtn('pid-bal-en', state.bal.enabled);
+      setEnableBtn('pid-pos-en', state.pos.enabled);
+      setEnableBtn('pid-str-en', state.str.enabled);
     }
 
     function setTxt(id, val, color) {
@@ -2494,17 +2767,17 @@
       const errEl = document.getElementById(`${ctrl}-err`);
       const outEl = document.getElementById(`${ctrl}-out`);
       const barEl = document.getElementById(`${ctrl}-bar`);
-      if (ctrl === 'd2') {
-        // D2 reads from drive fields, not setpoint/measurement/error/output.
+      if (ctrl === 'pos') {
+        // position reads from drive fields, not setpoint/measurement/error/output.
         if (errEl) errEl.textContent = s.encError.toFixed(0);
         const maxErr = posCfg.zone_a || 8000;
         const frac = Math.min(Math.abs(s.encError) / maxErr, 1.0) * 100;
         const col = Math.abs(s.encError) < posCfg.zone_c ? 'var(--green)' :
           Math.abs(s.encError) < posCfg.zone_b ? 'var(--yellow)' : 'var(--orange)';
         if (barEl) { barEl.style.width = frac + '%'; barEl.style.background = col; }
-        setTxt(`d2-sp`, s.encTarget.toFixed(0));
-        setTxt(`d2-meas`, s.encPos.toFixed(0));
-        setTxt(`d2-err`, s.encError.toFixed(0), 'var(--orange)');
+        setTxt(`pos-sp`, s.encTarget.toFixed(0));
+        setTxt(`pos-meas`, s.encPos.toFixed(0));
+        setTxt(`pos-err`, s.encError.toFixed(0), 'var(--orange)');
       } else {
         if (errEl) errEl.textContent = s.error.toFixed(3);
         if (outEl) outEl.textContent = s.output.toFixed(3);
@@ -2580,15 +2853,15 @@
     // ════════════════════════════════════════════════════════════════════════════
     // PID tab
     // ════════════════════════════════════════════════════════════════════════════
-    let currentPIDCtrl = 'd1';
+    let currentPIDCtrl = 'bal';
 
     function selectPIDCtrl(ctrl) {
       currentPIDCtrl = ctrl;
       document.querySelectorAll('#pid-ctrl-picker .g-seg').forEach(b =>
         b.classList.toggle('active', b.dataset.pidctrl === ctrl));
-      document.getElementById('pid-d1-card').style.display = ctrl === 'd1' ? '' : 'none';
-      document.getElementById('pid-d3-card').style.display = ctrl === 'd3' ? '' : 'none';
-      document.getElementById('pid-d2-card').style.display = ctrl === 'd2' ? '' : 'none';
+      document.getElementById('pid-bal-card').style.display = ctrl === 'bal' ? '' : 'none';
+      document.getElementById('pid-str-card').style.display = ctrl === 'str' ? '' : 'none';
+      document.getElementById('pid-pos-card').style.display = ctrl === 'pos' ? '' : 'none';
     }
 
     function toggleCtrl(name, short) {
@@ -2645,9 +2918,9 @@
     }
 
     function sendPIDUpdate(ctrl) {
-      // d2 is deliberately absent: D2_drive is not a PID and the firmware
-      // rejects set_pid for it. D2 is tuned through sendPosConfig().
-      const names = { d1: 'D1_balance', d3: 'D3_steering' };
+      // position is deliberately absent: it is not a PID and the firmware
+      // rejects set_pid for it. position is tuned through sendPosConfig().
+      const names = { bal: 'balance', str: 'steering' };
       if (!names[ctrl]) {
         console.warn(`sendPIDUpdate: ${ctrl} has no PID gains — ignoring`);
         return;
@@ -2701,7 +2974,7 @@
       // back_to_spot seg
       document.querySelectorAll('#hold-mode-seg .seg-btn').forEach((b, i) =>
         b.classList.toggle('active', i === 0 ? posCfg.back_to_spot === 1 : posCfg.back_to_spot === 0));
-      document.getElementById('pid-d2-cfg').classList.toggle('dimmed', !posCfgReceived);
+      document.getElementById('pid-pos-cfg').classList.toggle('dimmed', !posCfgReceived);
     }
 
     function onPosSlider(key, raw) {
