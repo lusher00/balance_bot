@@ -72,8 +72,8 @@ pos_config_t g_pos_config;
 
 // Transmitter mapping and gains (initialised from robot.conf via
 // robot_config_apply). Defined here rather than in input_sbus.c because
-// robot_config.c persists it and must link against it. Nothing reads it yet —
-// input_sbus.c starts honouring it when live RC mapping lands.
+// robot_config.c persists it and must link against it. Read by input_sbus.c for
+// channel mapping/scaling and by the steering integrator below for turn_rate.
 sbus_config_t g_sbus_config;
 
 // Runtime-tunable motor/RoboClaw drive parameters (initialised in robot_init)
@@ -414,17 +414,39 @@ void robot_run(void)
         // asked of the STICK, not of the lean angle it happens to produce --
         // see the stick_centered test below.
         static float stick_norm = 0.0f;
+
+        /* Heading target, in the same units as phi_diff: degrees of differential
+         * wheel rotation. The steering loop is a POSITION loop on heading, so the
+         * stick must command a RATE that we integrate. Assigning the stick
+         * straight to the setpoint (as this did) asks for a fixed heading offset
+         * of at most MAX_STEERING = 1 degree of wheel differential -- roughly
+         * 1.3 mm of differential travel, and completely invisible. That is why
+         * the bot would not turn no matter how the channels were mapped. */
+        static float steering_target = 0.0f;
+
         if (sbus_is_connected() && state.armed && state.mode == MODE_BALANCE)
         {
             stick_norm = sbus_get_drive();
             stick_input = stick_norm * MAX_THETA_REF;
             state.theta_ref = stick_input;
-            state.steering = sbus_get_turn() * MAX_STEERING;
+
+            /* Hold the stick over and the bot keeps turning; release and it
+             * holds the heading it reached. */
+            steering_target += sbus_get_turn() * g_sbus_config.turn_rate * DT;
+            state.steering = steering_target;
         }
         else if (!sbus_is_connected())
         {
             stick_input = 0.0f;
             stick_norm = 0.0f;
+        }
+
+        /* Disarmed or unlinked: forget the accumulated heading so re-arming does
+         * not immediately spin toward a target set minutes ago. */
+        if (!state.armed || !sbus_is_connected())
+        {
+            steering_target = (state.phi_right - state.phi_left) / 2.0f;
+            state.steering = steering_target;
         }
 
         // Capture stick input before D2 adds its correction.
@@ -591,7 +613,7 @@ void robot_run(void)
                     if (d2_now_us - d2_log_last_us >= 500000) // 2 Hz
                     {
                         d2_log_last_us = d2_now_us;
-                        int32_t d2_err = state.enc_pos_target - state.enc_pos;
+                        int32_t pos_err = state.enc_pos_target - state.enc_pos;
                         LOG_INFO("[D2] armed=%d D2_en=%d stick_cen=%d raw_stick=%.3f "
                                  "pos=%d tgt=%d err=%d vel=%.2f stopped_vel=%d "
                                  "last_corr=%.4f theta_ref=%.4f",
@@ -601,7 +623,7 @@ void robot_run(void)
                                  raw_stick_ref,
                                  state.enc_pos,
                                  state.enc_pos_target,
-                                 d2_err,
+                                 pos_err,
                                  state.enc_velocity,
                                  g_pos_config.stopped_vel,
                                  last_correction,
@@ -745,15 +767,15 @@ void robot_run(void)
             if (diag_now_us - diag_last_us >= 500000)
             {
                 diag_last_us = diag_now_us;
-                int32_t d2_err = state.enc_pos_target - state.enc_pos;
+                int32_t pos_err = state.enc_pos_target - state.enc_pos;
                 float phi_diff = (state.phi_left - state.phi_right) / 2.0f;
-                LOG_INFO("[D2] en=%d pos=%d tgt=%d err=%d vel=%.2f corr_out=%.3f theta_ref=%.3f",
+                LOG_INFO("[POS] en=%d pos=%d tgt=%d err=%d vel=%.2f corr_out=%.3f theta_ref=%.3f",
                          g_controllers.position,
-                         state.enc_pos, state.enc_pos_target, d2_err,
+                         state.enc_pos, state.enc_pos_target, pos_err,
                          state.enc_velocity,
                          state.pos_output,
                          state.theta_ref);
-                LOG_INFO("[D3] en=%d psi=%.2f phi_diff=%.2f steering=%.3f",
+                LOG_INFO("[steering] en=%d psi=%.2f phi_diff=%.2f steering=%.3f",
                          g_controllers.steering,
                          state.psi, phi_diff, state.steering);
             }
@@ -761,7 +783,22 @@ void robot_run(void)
 
         // Saturate references before the next ISR reads them
         rc_saturate_float(&state.theta_ref, -MAX_THETA_REF, MAX_THETA_REF);
-        rc_saturate_float(&state.steering, -MAX_STEERING, MAX_STEERING);
+        /* state.steering is now a HEADING TARGET in degrees of phi_diff, not a
+         * normalised -1..1 command, so the old +/-MAX_STEERING clamp would have
+         * pinned it at 1 degree and undone the rate integration entirely.
+         *
+         * Clamp it near the CURRENT heading instead. That still allows unlimited
+         * continuous turning (the target moves with the bot) while stopping the
+         * target running away if the wheels are blocked or the bot is picked up --
+         * which would otherwise spin it up the moment it regained traction. */
+        {
+            float phi_now = (state.phi_right - state.phi_left) / 2.0f;
+            float lead = state.steering - phi_now;
+            if (lead > MAX_STEER_LEAD)
+                state.steering = phi_now + MAX_STEER_LEAD;
+            else if (lead < -MAX_STEER_LEAD)
+                state.steering = phi_now - MAX_STEER_LEAD;
+        }
 
         // ── Telemetry & display ───────────────────────────────────────────
         telemetry_update();
