@@ -557,7 +557,22 @@ int robot_config_load_or_migrate(const char *path, robot_config_t *c)
     }
 
     if (robot_config_save(path, c) == 0)
-        LOG_WARN("robot_config: wrote %s — the legacy files are now unused", path);
+    {
+        char cwd[512];
+        LOG_WARN("robot_config: wrote %s (cwd %s) — the legacy files are now unused",
+                 path, getcwd(cwd, sizeof cwd) ? cwd : "?");
+    }
+    else
+    {
+        /* Silence here was a trap: the migration would report success, the robot
+         * would fly on values held only in memory, and the next restart would
+         * migrate from scratch again. If the path is relative it resolves against
+         * the service's WorkingDirectory, which is a common reason this fails. */
+        char cwd[512];
+        LOG_ERROR("robot_config: FAILED to write %s (cwd %s): %s — "
+                  "config is in memory only and will NOT survive a restart",
+                  path, getcwd(cwd, sizeof cwd) ? cwd : "?", strerror(errno));
+    }
 
     return 0;
 }
