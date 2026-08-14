@@ -23,6 +23,7 @@
 #   -m /dev/ttyS1     RoboClaw motor controller UART
 #   -B 460800         RoboClaw baud (must match the RoboClaw's own setting)
 #
-# Other useful flags: -p <pidconfig path>, -b/-t for the ext-input UART.
+# Other useful flags: -p <config path> (default robot.conf), -b/-t for the
+# ext-input UART.
 
 BOT_ARGS="-q -i sbus -u /dev/ttyS5 -m /dev/ttyS1 -B 460800"
