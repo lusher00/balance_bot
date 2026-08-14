@@ -61,7 +61,7 @@ telemetry_data_t g_telemetry_data = {0};
 // External references to robot state
 extern robot_state_t state;
 extern rc_mpu_data_t mpu_data;
-extern pid_controller_t balance_pid, steering_pid;
+extern pid_controller_t pitch_pid, yaw_pid;
 
 // Encoder tracking for velocity calculation
 static int32_t prev_left_ticks = 0;
@@ -156,21 +156,21 @@ static void update_pid_telemetry(void)
         return;
 
     // Balance controller
-    g_telemetry_data.balance.enabled = g_controllers.balance;
-    g_telemetry_data.balance.setpoint = state.theta_ref + state.theta_offset;
-    g_telemetry_data.balance.measurement = state.theta;
-    g_telemetry_data.balance.error = balance_pid.prev_error;
+    g_telemetry_data.pitch.enabled = g_controllers.pitch;
+    g_telemetry_data.pitch.setpoint = state.theta_ref + state.theta_offset;
+    g_telemetry_data.pitch.measurement = state.theta;
+    g_telemetry_data.pitch.error = pitch_pid.prev_error;
     // Read the terms recorded by pid_update() rather than recomputing them.
     // d_term cannot be reconstructed here (prev_error has already advanced),
     // and output must be the real controller output — a p+i reconstruction
     // silently hides the derivative contribution from every log and graph.
-    g_telemetry_data.balance.p_term = balance_pid.last_p_term;
-    g_telemetry_data.balance.i_term = balance_pid.last_i_term;
-    g_telemetry_data.balance.d_term = balance_pid.last_d_term;
-    g_telemetry_data.balance.output = balance_pid.last_output;
-    g_telemetry_data.balance.kp = balance_pid.kp;
-    g_telemetry_data.balance.ki = balance_pid.ki;
-    g_telemetry_data.balance.kd = balance_pid.kd;
+    g_telemetry_data.pitch.p_term = pitch_pid.last_p_term;
+    g_telemetry_data.pitch.i_term = pitch_pid.last_i_term;
+    g_telemetry_data.pitch.d_term = pitch_pid.last_d_term;
+    g_telemetry_data.pitch.output = pitch_pid.last_output;
+    g_telemetry_data.pitch.kp = pitch_pid.kp;
+    g_telemetry_data.pitch.ki = pitch_pid.ki;
+    g_telemetry_data.pitch.kd = pitch_pid.kd;
 
     // Position hold (position-hold) controller — NOT a PID. See drive_telemetry_t.
     // Every field is named for the quantity it actually carries. Do not
@@ -192,17 +192,17 @@ static void update_pid_telemetry(void)
     g_telemetry_data.position.max_correction = g_pos_config.max_correction;
 
     // Steering controller
-    g_telemetry_data.steering.enabled = g_controllers.steering;
-    g_telemetry_data.steering.setpoint = state.steering;
-    g_telemetry_data.steering.measurement = (state.phi_left - state.phi_right) / 2.0f;  // deg diff
-    g_telemetry_data.steering.error = steering_pid.prev_error;
-    g_telemetry_data.steering.p_term = steering_pid.last_p_term;
-    g_telemetry_data.steering.i_term = steering_pid.last_i_term;
-    g_telemetry_data.steering.d_term = steering_pid.last_d_term;
-    g_telemetry_data.steering.output = steering_pid.last_output;
-    g_telemetry_data.steering.kp = steering_pid.kp;
-    g_telemetry_data.steering.ki = steering_pid.ki;
-    g_telemetry_data.steering.kd = steering_pid.kd;
+    g_telemetry_data.yaw.enabled = g_controllers.yaw;
+    g_telemetry_data.yaw.setpoint = state.yaw;
+    g_telemetry_data.yaw.measurement = (state.phi_left - state.phi_right) / 2.0f;  // deg diff
+    g_telemetry_data.yaw.error = yaw_pid.prev_error;
+    g_telemetry_data.yaw.p_term = yaw_pid.last_p_term;
+    g_telemetry_data.yaw.i_term = yaw_pid.last_i_term;
+    g_telemetry_data.yaw.d_term = yaw_pid.last_d_term;
+    g_telemetry_data.yaw.output = yaw_pid.last_output;
+    g_telemetry_data.yaw.kp = yaw_pid.kp;
+    g_telemetry_data.yaw.ki = yaw_pid.ki;
+    g_telemetry_data.yaw.kd = yaw_pid.kd;
 } /**
    * @brief Update motor command telemetry
    */
@@ -426,14 +426,14 @@ void telemetry_print_summary(void)
     if (g_debug_config.telemetry.pid_states)
     {
         printf("balance: err=%.3f out=%.3f %s\n",
-               g_telemetry_data.balance.error,
-               g_telemetry_data.balance.output,
-               g_telemetry_data.balance.enabled ? "ON" : "OFF");
+               g_telemetry_data.pitch.error,
+               g_telemetry_data.pitch.output,
+               g_telemetry_data.pitch.enabled ? "ON" : "OFF");
 
         printf("steering: err=%.3f out=%.3f %s\n",
-               g_telemetry_data.steering.error,
-               g_telemetry_data.steering.output,
-               g_telemetry_data.steering.enabled ? "ON" : "OFF");
+               g_telemetry_data.yaw.error,
+               g_telemetry_data.yaw.output,
+               g_telemetry_data.yaw.enabled ? "ON" : "OFF");
     }
 
     if (g_debug_config.telemetry.ext_input && g_telemetry_data.ext_input.valid)

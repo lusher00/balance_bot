@@ -108,17 +108,22 @@ def read_csv(path):
     return pre, hdr, rows
 
 
-# Logs recorded before the controller rename use d1_/d2_/d3_ prefixes for what
-# are now bal_/pos_/str_. There is a directory full of those and they are still
-# perfectly good data, so accept either spelling everywhere.
-LEGACY_PREFIX = {"bal_": "d1_", "pos_": "d2_", "str_": "d3_"}
+# Column prefixes have been through three generations. All three are still
+# readable, because there is a directory of logs in each and they are all
+# perfectly good data:
+#
+#   D1 -> balance -> pitch      d1_  ->  bal_  ->  pit_
+#   D2 -> position              d2_  ->  pos_
+#   D3 -> steering -> yaw       d3_  ->  str_  ->  yaw_
+LEGACY_PREFIX = {"pit_": ["bal_", "d1_"], "pos_": ["d2_"], "yaw_": ["str_", "d3_"]}
 
 
-def alias(name):
-    for new, old in LEGACY_PREFIX.items():
+def aliases(name):
+    """Every older spelling of a column name, newest first."""
+    for new, olds in LEGACY_PREFIX.items():
         if name.startswith(new):
-            return old + name[len(new):]
-    return None
+            return [old + name[len(new):] for old in olds]
+    return []
 
 
 class Log:
@@ -133,17 +138,21 @@ class Log:
         if not self.rows:
             self.why = "no data rows"
             return False
-        if "bal_measurement" in self.idx or "d1_measurement" in self.idx:
+        if any(k in self.idx for k in
+               ("pit_measurement", "bal_measurement", "d1_measurement")):
             return True
-        self.why = ("no pitch column (need bal_measurement or d1_measurement); "
-                    "found: " + ", ".join(self.hdr[:6]) + " ...")
+        self.why = ("no pitch column (need pit_measurement, or the older "
+                    "bal_measurement / d1_measurement); found: "
+                    + ", ".join(self.hdr[:6]) + " ...")
         return False
 
     def c(self, name, default=None):
         n = self.idx.get(name)
         if n is None:
-            legacy = alias(name)
-            n = self.idx.get(legacy) if legacy else None
+            for legacy in aliases(name):
+                n = self.idx.get(legacy)
+                if n is not None:
+                    break
         if n is None:
             return default
         return [r[n] for r in self.rows]
@@ -208,8 +217,8 @@ def analyse(log, max_theta=8.0):
     r = {"name": log.name, "n": len(log.rows)}
 
     t = log.c("t") or []
-    th = log.c("bal_measurement") or []
-    sp = log.c("bal_setpoint") or []
+    th = log.c("pit_measurement") or []
+    sp = log.c("pit_setpoint") or []
     ev = log.c("pos_encVel") or []
     ep = log.c("pos_encPos") or []
     ee = log.c("pos_encError") or []

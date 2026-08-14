@@ -59,12 +59,12 @@ volatile rc_state_t g_rc_state = UNINITIALIZED;
 // Global state
 robot_state_t state = {0};
 rc_mpu_data_t mpu_data;
-pid_controller_t balance_pid, steering_pid;
+pid_controller_t pitch_pid, yaw_pid;
 
 controller_enables_t g_controllers = {
-    .balance = true,
+    .pitch = true,
     .position = true,
-    .steering = true,
+    .yaw = true,
 };
 
 // Runtime-tunable position controller parameters (initialised in robot_init)
@@ -125,27 +125,27 @@ static void imu_interrupt(void)
 
     // PID — setpoints and encoder positions are maintained by the main loop.
     float balance_output = 0.0f;
-    float steering_output = 0.0f;
+    float yaw_output = 0.0f;
 
-    if (g_controllers.balance)
+    if (g_controllers.pitch)
     {
-        balance_output = pid_update(&balance_pid,
+        balance_output = pid_update(&pitch_pid,
                                     state.theta_ref + state.theta_offset,
                                     state.theta);
     }
 
-    if (g_controllers.steering)
+    if (g_controllers.yaw)
     {
         float phi_diff = (state.phi_right - state.phi_left) / 2.0f;
-        steering_output = pid_update(&steering_pid, state.steering, phi_diff);
+        yaw_output = pid_update(&yaw_pid, state.yaw, phi_diff);
     }
     else
     {
-        steering_output = state.steering;
+        yaw_output = state.yaw;
     }
 
-    float left_duty = balance_output - steering_output;
-    float right_duty = balance_output + steering_output;
+    float left_duty = balance_output - yaw_output;
+    float right_duty = balance_output + yaw_output;
     rc_saturate_float(&left_duty, -1.0f, 1.0f);
     rc_saturate_float(&right_duty, -1.0f, 1.0f);
 
@@ -172,9 +172,9 @@ int robot_init(void)
     rc_adc_init(); /* stub — battery reading handled by telemetry */
 
     // PIDs
-    pid_init(&balance_pid, BALANCE_KP, BALANCE_KI, BALANCE_KD, DT);
-    pid_init(&steering_pid, STEERING_KP, STEERING_KI, STEERING_KD, DT);
-    // balance_pid.integrator_max = 4.0f;
+    pid_init(&pitch_pid, PITCH_KP, PITCH_KI, PITCH_KD, DT);
+    pid_init(&yaw_pid, YAW_KP, YAW_KI, YAW_KD, DT);
+    // pitch_pid.integrator_max = 4.0f;
 
     // Initialise position controller config from compile-time defaults.
     // These are overwritten by pid_config_load_or_default() in main(),
@@ -203,8 +203,8 @@ int robot_init(void)
     g_motor_config.pol_l = 1.0f;
     g_motor_config.pol_r = 1.0f;
     LOG_INFO("PID Controllers:");
-    LOG_INFO("  D1_balance:  Kp=%.3f Ki=%.3f Kd=%.3f", BALANCE_KP, BALANCE_KI, BALANCE_KD);
-    LOG_INFO("  D3_steering: Kp=%.3f Ki=%.3f Kd=%.3f", STEERING_KP, STEERING_KI, STEERING_KD);
+    LOG_INFO("  D1_balance:  Kp=%.3f Ki=%.3f Kd=%.3f", PITCH_KP, PITCH_KI, PITCH_KD);
+    LOG_INFO("  D3_steering: Kp=%.3f Ki=%.3f Kd=%.3f", YAW_KP, YAW_KI, YAW_KD);
 
     // IMU config
     // IMU offsets arrive with everything else via robot_config_apply() in
@@ -237,7 +237,7 @@ int robot_init(void)
     state.armed = 0;
     state.theta_ref = 0.0f;
     state.theta_offset = 0.0f;
-    state.steering = 0.0f;
+    state.yaw = 0.0f;
     state.pos_correction = 0.0f;
     state.pos_vel_damp = 0.0f;
     state.pos_output = 0.0f;
@@ -315,8 +315,8 @@ void robot_run(void)
             pending_right_duty = 0.0f;
             motor_output_ready = 0;
             motor_hal_set_both(0.0f, 0.0f);
-            pid_reset(&balance_pid);
-            pid_reset(&steering_pid);
+            pid_reset(&pitch_pid);
+            pid_reset(&yaw_pid);
             last_left_duty = 0.0f;
             last_right_duty = 0.0f;
             state.enc_pos_target = state.enc_pos;
@@ -395,12 +395,12 @@ void robot_run(void)
             {
                 state.ext_input = pkt;
                 state.theta_ref = -pkt.y * MAX_THETA_REF;
-                state.steering = pkt.x * MAX_STEERING;
+                state.yaw = pkt.x * MAX_YAW_CMD;
             }
             else
             {
                 state.theta_ref = 0.0f;
-                state.steering = 0.0f;
+                state.yaw = 0.0f;
             }
         }
 
@@ -422,10 +422,10 @@ void robot_run(void)
          * wheel rotation. The steering loop is a POSITION loop on heading, so the
          * stick must command a RATE that we integrate. Assigning the stick
          * straight to the setpoint (as this did) asks for a fixed heading offset
-         * of at most MAX_STEERING = 1 degree of wheel differential -- roughly
+         * of at most MAX_YAW_CMD = 1 degree of wheel differential -- roughly
          * 1.3 mm of differential travel, and completely invisible. That is why
          * the bot would not turn no matter how the channels were mapped. */
-        static float steering_target = 0.0f;
+        static float yaw_target = 0.0f;
 
         /* Fractional carry for target-mode drive: at 100 Hz a full-stick
          * advance is only a few ticks per loop, so truncating every tick would
@@ -462,8 +462,8 @@ void robot_run(void)
 
             /* Hold the stick over and the bot keeps turning; release and it
              * holds the heading it reached. */
-            steering_target += sbus_get_turn() * g_sbus_config.turn_rate * DT;
-            state.steering = steering_target;
+            yaw_target += sbus_get_turn() * g_sbus_config.turn_rate * DT;
+            state.yaw = yaw_target;
         }
         else
         {
@@ -496,8 +496,8 @@ void robot_run(void)
          * not immediately spin toward a target set minutes ago. */
         if (!state.armed || !sbus_is_connected())
         {
-            steering_target = (state.phi_right - state.phi_left) / 2.0f;
-            state.steering = steering_target;
+            yaw_target = (state.phi_right - state.phi_left) / 2.0f;
+            state.yaw = yaw_target;
         }
 
         // Capture stick input before D2 adds its correction.
@@ -516,14 +516,14 @@ void robot_run(void)
         // latch never fires, so D3 always targets phi_diff=0 (go straight).
         {
             float phi_diff = (state.phi_left - state.phi_right) / 2.0f;
-            bool turn_centered = (fabsf(state.steering) < 0.05f);
+            bool turn_centered = (fabsf(state.yaw) < 0.05f);
             static bool was_turning = false;
 
             if (!turn_centered)
             {
                 // Active turn input — mark that we were turning and clear latch
                 was_turning = true;
-                state.steering_latched = 0;
+                state.yaw_latched = 0;
                 state.steering_latch = 0.0f;
 
                 // Velocity-based turning authority reduction
@@ -531,30 +531,30 @@ void robot_run(void)
                 {
                     float vel_turndown = fabsf((float)state.enc_velocity /
                                                g_pos_config.vel_scale_turning);
-                    if (state.steering < 0.0f)
+                    if (state.yaw < 0.0f)
                     {
-                        state.steering += vel_turndown;
-                        if (state.steering > 0.0f)
-                            state.steering = 0.0f;
+                        state.yaw += vel_turndown;
+                        if (state.yaw > 0.0f)
+                            state.yaw = 0.0f;
                     }
-                    else if (state.steering > 0.0f)
+                    else if (state.yaw > 0.0f)
                     {
-                        state.steering -= vel_turndown;
-                        if (state.steering < 0.0f)
-                            state.steering = 0.0f;
+                        state.yaw -= vel_turndown;
+                        if (state.yaw < 0.0f)
+                            state.yaw = 0.0f;
                     }
                 }
             }
-            else if (was_turning && !state.steering_latched)
+            else if (was_turning && !state.yaw_latched)
             {
                 // Stick just returned to centre after an active turn — latch now
                 state.steering_latch = phi_diff;
-                state.steering_latched = 1;
+                state.yaw_latched = 1;
                 was_turning = false;
             }
 
-            if (state.steering_latched && g_controllers.steering)
-                state.steering = state.steering_latch;
+            if (state.yaw_latched && g_controllers.yaw)
+                state.yaw = state.steering_latch;
         }
 
         // ── Fall detection / auto-recovery ────────────────────────────────
@@ -834,8 +834,8 @@ void robot_run(void)
                          state.pos_output,
                          state.theta_ref);
                 LOG_INFO("[steering] en=%d psi=%.2f phi_diff=%.2f steering=%.3f",
-                         g_controllers.steering,
-                         state.psi, phi_diff, state.steering);
+                         g_controllers.yaw,
+                         state.psi, phi_diff, state.yaw);
             }
         }
 
@@ -872,8 +872,8 @@ void robot_run(void)
 
         // Saturate references before the next ISR reads them
         rc_saturate_float(&state.theta_ref, -MAX_THETA_REF, MAX_THETA_REF);
-        /* state.steering is now a HEADING TARGET in degrees of phi_diff, not a
-         * normalised -1..1 command, so the old +/-MAX_STEERING clamp would have
+        /* state.yaw is now a HEADING TARGET in degrees of phi_diff, not a
+         * normalised -1..1 command, so the old +/-MAX_YAW_CMD clamp would have
          * pinned it at 1 degree and undone the rate integration entirely.
          *
          * Clamp it near the CURRENT heading instead. That still allows unlimited
@@ -882,11 +882,11 @@ void robot_run(void)
          * which would otherwise spin it up the moment it regained traction. */
         {
             float phi_now = (state.phi_right - state.phi_left) / 2.0f;
-            float lead = state.steering - phi_now;
-            if (lead > MAX_STEER_LEAD)
-                state.steering = phi_now + MAX_STEER_LEAD;
-            else if (lead < -MAX_STEER_LEAD)
-                state.steering = phi_now - MAX_STEER_LEAD;
+            float lead = state.yaw - phi_now;
+            if (lead > MAX_YAW_LEAD)
+                state.yaw = phi_now + MAX_YAW_LEAD;
+            else if (lead < -MAX_YAW_LEAD)
+                state.yaw = phi_now - MAX_YAW_LEAD;
         }
 
         // ── Telemetry & display ───────────────────────────────────────────

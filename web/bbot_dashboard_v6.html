@@ -1120,7 +1120,7 @@
       <div class="card">
         <span class="sub-label">Robot Mode</span>
         <div class="seg-group" id="mode-seg">
-          <button class="seg-btn active" data-mode="1" onclick="setMode(1)">Balance</button>
+          <button class="seg-btn active" data-mode="1" onclick="setMode(1)">Pitch</button>
           <button class="seg-btn" data-mode="2" onclick="setMode(2)">Ext Ctrl</button>
           <button class="seg-btn" data-mode="3" onclick="setMode(3)">Manual</button>
         </div>
@@ -1154,9 +1154,9 @@
     <div class="panel" id="panel-pid">
       <div class="row spaced" style="margin-bottom:10px">
         <div class="g-picker" id="pid-ctrl-picker">
-          <button class="g-seg active" data-pidctrl="bal" onclick="selectPIDCtrl('bal')">Balance</button>
+          <button class="g-seg active" data-pidctrl="pit" onclick="selectPIDCtrl('pit')">Pitch</button>
           <button class="g-seg" data-pidctrl="pos" onclick="selectPIDCtrl('pos')">Position</button>
-          <button class="g-seg" data-pidctrl="str" onclick="selectPIDCtrl('str')">Steering</button>
+          <button class="g-seg" data-pidctrl="yaw" onclick="selectPIDCtrl('yaw')">Yaw</button>
         </div>
         <div class="row" style="gap:6px">
           <button class="g-btn" onclick="sendCmd({type:'get_config'})">↻ Refresh</button>
@@ -1166,60 +1166,60 @@
       </div>
 
       <!-- balance / steering card -->
-      <div id="pid-bal-card" class="card">
+      <div id="pid-pit-card" class="card">
         <div class="row spaced" style="margin-bottom:10px">
           <div>
-            <div class="card-title" id="pid-bal-title">Balance</div>
+            <div class="card-title" id="pid-pit-title">Pitch</div>
             <div style="font-size:9px;color:var(--txt3)">Angle → Motor torque · Keeps robot upright</div>
           </div>
-          <button class="enable-btn off" id="pid-bal-en" onclick="toggleCtrl('balance','bal')">OFF</button>
+          <button class="enable-btn off" id="pid-pit-en" onclick="toggleCtrl('pitch','pit')">OFF</button>
         </div>
-        <div id="bal-trim-ctl"></div>
-        <div id="pid-bal-gains">
+        <div id="pit-trim-ctl"></div>
+        <div id="pid-pit-gains">
           <div class="pid-row">
             <span class="pid-label">Kp</span>
-            <input type="range" class="pid-slider" id="sl-bal-kp" min="-200" max="200" step="0.1"
-              oninput="onPIDSlider('bal','kp',this.value)">
+            <input type="range" class="pid-slider" id="sl-pit-kp" min="-200" max="200" step="0.1"
+              oninput="onPIDSlider('pit','kp',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('bal','kp',-1)">−</button>
-              <input class="val-box" id="vb-bal-kp" value="40" onchange="onPIDValBox('bal','kp',this.value)"
-                onblur="onPIDValBox('bal','kp',this.value)">
-              <button class="step-btn" onclick="stepPID('bal','kp',1)">+</button>
+              <button class="step-btn" onclick="stepPID('pit','kp',-1)">−</button>
+              <input class="val-box" id="vb-pit-kp" value="40" onchange="onPIDValBox('pit','kp',this.value)"
+                onblur="onPIDValBox('pit','kp',this.value)">
+              <button class="step-btn" onclick="stepPID('pit','kp',1)">+</button>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Ki</span>
-            <input type="range" class="pid-slider" id="sl-bal-ki" min="-10" max="10" step="0.01"
-              oninput="onPIDSlider('bal','ki',this.value)">
+            <input type="range" class="pid-slider" id="sl-pit-ki" min="-10" max="10" step="0.01"
+              oninput="onPIDSlider('pit','ki',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('bal','ki',-1)">−</button>
-              <input class="val-box" id="vb-bal-ki" value="0" onchange="onPIDValBox('bal','ki',this.value)"
-                onblur="onPIDValBox('bal','ki',this.value)">
-              <button class="step-btn" onclick="stepPID('bal','ki',1)">+</button>
+              <button class="step-btn" onclick="stepPID('pit','ki',-1)">−</button>
+              <input class="val-box" id="vb-pit-ki" value="0" onchange="onPIDValBox('pit','ki',this.value)"
+                onblur="onPIDValBox('pit','ki',this.value)">
+              <button class="step-btn" onclick="stepPID('pit','ki',1)">+</button>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Kd</span>
-            <input type="range" class="pid-slider" id="sl-bal-kd" min="-50" max="50" step="0.1"
-              oninput="onPIDSlider('bal','kd',this.value)">
+            <input type="range" class="pid-slider" id="sl-pit-kd" min="-50" max="50" step="0.1"
+              oninput="onPIDSlider('pit','kd',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('bal','kd',-1)">−</button>
-              <input class="val-box" id="vb-bal-kd" value="5" onchange="onPIDValBox('bal','kd',this.value)"
-                onblur="onPIDValBox('bal','kd',this.value)">
-              <button class="step-btn" onclick="stepPID('bal','kd',1)">+</button>
+              <button class="step-btn" onclick="stepPID('pit','kd',-1)">−</button>
+              <input class="val-box" id="vb-pit-kd" value="5" onchange="onPIDValBox('pit','kd',this.value)"
+                onblur="onPIDValBox('pit','kd',this.value)">
+              <button class="step-btn" onclick="stepPID('pit','kd',1)">+</button>
             </div>
           </div>
           <div class="row" style="margin-top:6px;gap:6px">
             <span style="font-size:9px;color:var(--txt3)">Step ×</span>
             <div class="mult-sel" id="mult-bal">
-              <button class="mult-btn active" data-m="1" onclick="setMult('bal',1)">1</button>
-              <button class="mult-btn" data-m="10" onclick="setMult('bal',10)">10</button>
-              <button class="mult-btn" data-m="100" onclick="setMult('bal',100)">100</button>
+              <button class="mult-btn active" data-m="1" onclick="setMult('pit',1)">1</button>
+              <button class="mult-btn" data-m="10" onclick="setMult('pit',10)">10</button>
+              <button class="mult-btn" data-m="100" onclick="setMult('pit',100)">100</button>
             </div>
           </div>
         </div>
         <div class="divider"></div>
-        <div id="pid-bal-live">
+        <div id="pid-pit-live">
           <span class="sub-label">Live Status</span>
           <div class="row" style="gap:16px;margin-bottom:4px">
             <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="bal-err"
@@ -1234,54 +1234,54 @@
       </div>
 
       <!-- steering (hidden when position selected) -->
-      <div id="pid-str-card" class="card" style="display:none">
+      <div id="pid-yaw-card" class="card" style="display:none">
         <div class="row spaced" style="margin-bottom:10px">
           <div>
-            <div class="card-title">Steering</div>
+            <div class="card-title">Yaw</div>
             <div style="font-size:9px;color:var(--txt3)">Yaw → Motor differential · Turns left/right</div>
           </div>
-          <button class="enable-btn off" id="pid-str-en" onclick="toggleCtrl('steering','str')">OFF</button>
+          <button class="enable-btn off" id="pid-yaw-en" onclick="toggleCtrl('yaw','yaw')">OFF</button>
         </div>
-        <div id="pid-str-gains">
+        <div id="pid-yaw-gains">
           <div class="pid-row">
             <span class="pid-label">Kp</span>
-            <input type="range" class="pid-slider" id="sl-str-kp" min="-200" max="200" step="0.1"
-              oninput="onPIDSlider('str','kp',this.value)">
+            <input type="range" class="pid-slider" id="sl-yaw-kp" min="-200" max="200" step="0.1"
+              oninput="onPIDSlider('yaw','kp',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('str','kp',-1)">−</button>
-              <input class="val-box" id="vb-str-kp" value="15" onchange="onPIDValBox('str','kp',this.value)"
-                onblur="onPIDValBox('str','kp',this.value)">
-              <button class="step-btn" onclick="stepPID('str','kp',1)">+</button>
+              <button class="step-btn" onclick="stepPID('yaw','kp',-1)">−</button>
+              <input class="val-box" id="vb-yaw-kp" value="15" onchange="onPIDValBox('yaw','kp',this.value)"
+                onblur="onPIDValBox('yaw','kp',this.value)">
+              <button class="step-btn" onclick="stepPID('yaw','kp',1)">+</button>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Ki</span>
-            <input type="range" class="pid-slider" id="sl-str-ki" min="-10" max="10" step="0.01"
-              oninput="onPIDSlider('str','ki',this.value)">
+            <input type="range" class="pid-slider" id="sl-yaw-ki" min="-10" max="10" step="0.01"
+              oninput="onPIDSlider('yaw','ki',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('str','ki',-1)">−</button>
-              <input class="val-box" id="vb-str-ki" value="0" onchange="onPIDValBox('str','ki',this.value)"
-                onblur="onPIDValBox('str','ki',this.value)">
-              <button class="step-btn" onclick="stepPID('str','ki',1)">+</button>
+              <button class="step-btn" onclick="stepPID('yaw','ki',-1)">−</button>
+              <input class="val-box" id="vb-yaw-ki" value="0" onchange="onPIDValBox('yaw','ki',this.value)"
+                onblur="onPIDValBox('yaw','ki',this.value)">
+              <button class="step-btn" onclick="stepPID('yaw','ki',1)">+</button>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Kd</span>
-            <input type="range" class="pid-slider" id="sl-str-kd" min="-50" max="50" step="0.1"
-              oninput="onPIDSlider('str','kd',this.value)">
+            <input type="range" class="pid-slider" id="sl-yaw-kd" min="-50" max="50" step="0.1"
+              oninput="onPIDSlider('yaw','kd',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('str','kd',-1)">−</button>
-              <input class="val-box" id="vb-str-kd" value="1.5" onchange="onPIDValBox('str','kd',this.value)"
-                onblur="onPIDValBox('str','kd',this.value)">
-              <button class="step-btn" onclick="stepPID('str','kd',1)">+</button>
+              <button class="step-btn" onclick="stepPID('yaw','kd',-1)">−</button>
+              <input class="val-box" id="vb-yaw-kd" value="1.5" onchange="onPIDValBox('yaw','kd',this.value)"
+                onblur="onPIDValBox('yaw','kd',this.value)">
+              <button class="step-btn" onclick="stepPID('yaw','kd',1)">+</button>
             </div>
           </div>
           <div class="row" style="margin-top:6px;gap:6px">
             <span style="font-size:9px;color:var(--txt3)">Step ×</span>
             <div class="mult-sel" id="mult-str">
-              <button class="mult-btn active" data-m="1" onclick="setMult('str',1)">1</button>
-              <button class="mult-btn" data-m="10" onclick="setMult('str',10)">10</button>
-              <button class="mult-btn" data-m="100" onclick="setMult('str',100)">100</button>
+              <button class="mult-btn active" data-m="1" onclick="setMult('yaw',1)">1</button>
+              <button class="mult-btn" data-m="10" onclick="setMult('yaw',10)">10</button>
+              <button class="mult-btn" data-m="100" onclick="setMult('yaw',100)">100</button>
             </div>
           </div>
         </div>
@@ -1648,10 +1648,10 @@
       imu: { theta: 0, phi: 0, psi: 0 },
       encoders: null,
       cat: null,
-      bal: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
+      pit: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
       // position is a zone-based position hold, not a PID — different shape on purpose.
       pos: { enabled: false, encTarget: 0, encPos: 0, encError: 0, encVel: 0, posCorr: 0, velDamp: 0, thetaAdj: 0, activeScale: 0, maxCorrection: 0 },
-      str: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
+      yaw: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
       // Commanded wheel duty as sent to the RoboClaw — not a controller.
       mot: { leftDuty: 0, rightDuty: 0 },
       sbus: null,
@@ -1659,11 +1659,11 @@
 
     // balance and steering only. position has no gains; see posCfg for its tuning parameters.
     const pidCfg = {
-      bal: { kp: 40, ki: 0, kd: 5, received: false },
-      str: { kp: 15, ki: 0, kd: 1.5, received: false },
+      pit: { kp: 40, ki: 0, kd: 5, received: false },
+      yaw: { kp: 15, ki: 0, kd: 1.5, received: false },
     };
 
-    const pidMult = { bal: 1, str: 1, claw: 1 };
+    const pidMult = { pit: 1, yaw: 1, claw: 1 };
 
     // Claw motor controller config (mirrors motor_config_t)
     const clawCfg = {
@@ -1686,7 +1686,7 @@
     // This — not posCfg — is ground truth for what the firmware is running.
     let posCfgBot = null;
     // Same for balance/steering gains: pidCfg is seeded once for the sliders and drifts.
-    let gainsBot = { bal: null, str: null };
+    let gainsBot = { pit: null, yaw: null };
 
     const POS_SLIDERS = [
       { key: 'zone_a', label: 'Zone A (outer)', min: 1000, max: 30000, step: 500, group: 'zones' },
@@ -1781,7 +1781,7 @@
     function seriesLabel(ctrl, key) {
       return SERIES_LABELS[key] || key;
     }
-    const CTRL_NAMES = ['BAL', 'POS', 'STR', 'MOT'];
+    const CTRL_NAMES = ['PIT', 'POS', 'YAW', 'MOT'];
     const CTRL_DASH = [[], [8, 4], [2, 4], [4, 2, 1, 2]];
 
     function makeBuf(ctrlIdx) {
@@ -2039,9 +2039,9 @@
         started: new Date().toISOString(),
         haveBot: !!bot,
         pos: bot ? { ...posCfg, ...bot } : { ...posCfg },
-        bal: gainsBot.bal || { ...pidCfg.bal },
-        str: gainsBot.str || { ...pidCfg.str },
-        gainsFromBot: !!(gainsBot.bal && gainsBot.str),
+        pit: gainsBot.pit || { ...pidCfg.pit },
+        yaw: gainsBot.yaw || { ...pidCfg.yaw },
+        gainsFromBot: !!(gainsBot.pit && gainsBot.yaw),
         drift,
       };
     }
@@ -2075,7 +2075,7 @@
       btn.textContent = recording ? '⏹ Stop' : '⏺ Rec';
     }
     function saveCSV() {
-      const ctrlNames = ['bal', 'pos', 'str', 'mot'];
+      const ctrlNames = ['pit', 'pos', 'yaw', 'mot'];
       // Headers come from each controller's own key set, so position columns are
       // named pos_encError / pos_posCorr / etc. An exported pos_pTerm column would
       // be read as a PID trace by anyone opening the file later — it is not one.
@@ -2107,8 +2107,8 @@
              + `samples=${loopStat.n} below_95Hz=${loopStat.below}`
              + `${loopStat.below ? '  <-- CONTROL LOOP MISSED RATE, treat this run with suspicion' : ''}\n`;
       }
-      csv += `# bal_gains: kp=${m.bal.kp} ki=${m.bal.ki} kd=${m.bal.kd}\n`;
-      csv += `# str_gains: kp=${m.str.kp} ki=${m.str.ki} kd=${m.str.kd}\n`;
+      csv += `# pit_gains: kp=${m.pit.kp} ki=${m.pit.ki} kd=${m.pit.kd}\n`;
+      csv += `# yaw_gains: kp=${m.yaw.kp} ki=${m.yaw.ki} kd=${m.yaw.kd}\n`;
       csv += `# note: position is a zone-scheduled position hold, not a PID — it has no gains.\n`;
       csv += `#   pos_encError is (enc_pos_target - enc_pos), same sign as the error the\n`;
       csv += `#   controller acts on, so pos_posCorr == pos_encError / pos_activeScale.\n`;
@@ -2493,7 +2493,7 @@
 
     // Balance trim: the calibration that decides where upright IS.
     function buildBalTrim() {
-      const el = document.getElementById('bal-trim-ctl');
+      const el = document.getElementById('pit-trim-ctl');
       if (!el) return;
       el.innerHTML = `
         <div class="divider"></div>
@@ -2636,7 +2636,7 @@
           if (live) {
             // theta_ref is what the balance loop is actually tracking, so it
             // shows the ramp arriving rather than the target you asked for.
-            const tr = state.bal ? Number(state.bal.setpoint).toFixed(2) : '—';
+            const tr = state.pit ? Number(state.pit.setpoint).toFixed(2) : '—';
             live.textContent = Math.abs(pl) > 0.0005
               ? `ACTIVE — θ_ref ${tr}°` : `off — θ_ref ${tr}°`;
             live.style.color = Math.abs(pl) > 0.0005 ? 'var(--yellow)' : 'var(--txt3)';
@@ -2667,13 +2667,13 @@
       const motr = normMotors(d.motors);
 
       if (d1r) {
-        Object.assign(state.bal, d1r);
+        Object.assign(state.pit, d1r);
         appendGraphPoint(0, d1r);
-        if (d1r.kp != null) gainsBot.bal = { kp: d1r.kp, ki: d1r.ki ?? 0, kd: d1r.kd ?? 0 };
-        if (!pidCfg.bal.received && d1r.kp != null) {
-          pidCfg.bal.kp = d1r.kp; pidCfg.bal.ki = d1r.ki ?? 0; pidCfg.bal.kd = d1r.kd ?? 0;
-          pidCfg.bal.received = true;
-          syncPIDUI('bal');
+        if (d1r.kp != null) gainsBot.pit = { kp: d1r.kp, ki: d1r.ki ?? 0, kd: d1r.kd ?? 0 };
+        if (!pidCfg.pit.received && d1r.kp != null) {
+          pidCfg.pit.kp = d1r.kp; pidCfg.pit.ki = d1r.ki ?? 0; pidCfg.pit.kd = d1r.kd ?? 0;
+          pidCfg.pit.received = true;
+          syncPIDUI('pit');
         }
       }
       if (d2r) {
@@ -2683,13 +2683,13 @@
         appendGraphPoint(1, d2r);
       }
       if (d3r) {
-        Object.assign(state.str, d3r);
+        Object.assign(state.yaw, d3r);
         appendGraphPoint(2, d3r);
-        if (d3r.kp != null) gainsBot.str = { kp: d3r.kp, ki: d3r.ki ?? 0, kd: d3r.kd ?? 0 };
-        if (!pidCfg.str.received && d3r.kp != null) {
-          pidCfg.str.kp = d3r.kp; pidCfg.str.ki = d3r.ki ?? 0; pidCfg.str.kd = d3r.kd ?? 0;
-          pidCfg.str.received = true;
-          syncPIDUI('str');
+        if (d3r.kp != null) gainsBot.yaw = { kp: d3r.kp, ki: d3r.ki ?? 0, kd: d3r.kd ?? 0 };
+        if (!pidCfg.yaw.received && d3r.kp != null) {
+          pidCfg.yaw.kp = d3r.kp; pidCfg.yaw.ki = d3r.ki ?? 0; pidCfg.yaw.kd = d3r.kd ?? 0;
+          pidCfg.yaw.received = true;
+          syncPIDUI('yaw');
         }
       }
       if (motr) {
@@ -2831,14 +2831,14 @@
       }
 
       // PID live status
-      updatePIDLive('bal', state.bal);
+      updatePIDLive('pit', state.pit);
       updatePIDLive('pos', state.pos);
-      updatePIDLive('str', state.str);
+      updatePIDLive('yaw', state.yaw);
 
       // Controller enable buttons
-      setEnableBtn('pid-bal-en', state.bal.enabled);
+      setEnableBtn('pid-pit-en', state.pit.enabled);
       setEnableBtn('pid-pos-en', state.pos.enabled);
-      setEnableBtn('pid-str-en', state.str.enabled);
+      setEnableBtn('pid-yaw-en', state.yaw.enabled);
     }
 
     function setTxt(id, val, color) {
@@ -2945,14 +2945,14 @@
     // ════════════════════════════════════════════════════════════════════════════
     // PID tab
     // ════════════════════════════════════════════════════════════════════════════
-    let currentPIDCtrl = 'bal';
+    let currentPIDCtrl = 'pit';
 
     function selectPIDCtrl(ctrl) {
       currentPIDCtrl = ctrl;
       document.querySelectorAll('#pid-ctrl-picker .g-seg').forEach(b =>
         b.classList.toggle('active', b.dataset.pidctrl === ctrl));
-      document.getElementById('pid-bal-card').style.display = ctrl === 'bal' ? '' : 'none';
-      document.getElementById('pid-str-card').style.display = ctrl === 'str' ? '' : 'none';
+      document.getElementById('pid-pit-card').style.display = ctrl === 'pit' ? '' : 'none';
+      document.getElementById('pid-yaw-card').style.display = ctrl === 'yaw' ? '' : 'none';
       document.getElementById('pid-pos-card').style.display = ctrl === 'pos' ? '' : 'none';
     }
 
@@ -3012,7 +3012,7 @@
     function sendPIDUpdate(ctrl) {
       // position is deliberately absent: it is not a PID and the firmware
       // rejects set_pid for it. position is tuned through sendPosConfig().
-      const names = { bal: 'balance', str: 'steering' };
+      const names = { pit: 'balance', yaw: 'steering' };
       if (!names[ctrl]) {
         console.warn(`sendPIDUpdate: ${ctrl} has no PID gains — ignoring`);
         return;
@@ -3529,7 +3529,7 @@
       const ca = a.m.cfg, cb = b.m.cfg;
       if (ca && cb) {
         const diffs = [];
-        for (const grp of ['pos', 'bal', 'str']) {
+        for (const grp of ['pos', 'pit', 'yaw']) {
           const ga = ca[grp] || {}, gb = cb[grp] || {};
           for (const k of new Set([...Object.keys(ga), ...Object.keys(gb)])) {
             if (Number(ga[k]) !== Number(gb[k])) diffs.push(`${grp}.${k}: ${ga[k]} → ${gb[k]}`);

@@ -48,7 +48,7 @@
  * Architecture:
  * - balance:  Angle controller — keeps robot upright
  * - position:    Position controller — drives via lean angle (optional)
- * - steering: Yaw controller — turns left/right
+ * - yaw:      Yaw controller — turns left/right
  * - uart_input:    Generic packet-based UART input (external coprocessor, etc.)
  * - roboclaw:      Packet-serial motor driver over a dedicated UART
  * - ipc_server:    Unix-socket bridge to Node.js / iPhone app
@@ -73,20 +73,20 @@
 
 // Control limits
 #define MAX_THETA_REF 17.0f // Max lean angle command (deg)
-#define MAX_STEERING 1.0f   // Legacy: normalised steering, still used by MODE_EXT_INPUT
+#define MAX_YAW_CMD 1.0f   // Legacy: normalised steering, still used by MODE_EXT_INPUT
 // How far the steering heading target may lead the actual heading, in degrees
 // of phi_diff. Anti-windup: without it, holding the turn stick while the wheels
 // are blocked (or the bot is lifted) winds the target up without limit and the
 // bot spins hard the instant it regains traction.
-#define MAX_STEER_LEAD 90.0f
+#define MAX_YAW_LEAD 90.0f
 
 // PID default gains (tunable via iPhone app)
-#define BALANCE_KP 0.050f
-#define BALANCE_KI 0.015f
-#define BALANCE_KD 0.005f
-#define STEERING_KP 0.010f
-#define STEERING_KI 0.000f
-#define STEERING_KD 0.002f
+#define PITCH_KP 0.050f
+#define PITCH_KI 0.015f
+#define PITCH_KD 0.005f
+#define YAW_KP 0.010f
+#define YAW_KI 0.000f
+#define YAW_KD 0.002f
 
 #define DRIVE_PHI_DEADZONE 2.0f
 
@@ -363,12 +363,12 @@ typedef struct
                         // can watch the bot creep at a known angle. Ramped in and
                         // out at max_angle_rate; cleared on disarm.
     float theta_offset; // Balance point trim  (deg) — tunable from iPhone
-    float steering;     // Desired steering    (-1 to +1)
+    float yaw;          // Heading target, degrees of phi_diff (was 'steering')
 
     // steering latch — when the drive stick returns to centre, steering holds
     // the phi_diff at that moment rather than fighting back to zero.
     float steering_latch; // phi_diff value latched at stick-centre transition
-    int steering_latched; // 1 = latch is active (stick centred), 0 = driving
+    int yaw_latched; // 1 = latch is active (stick centred), 0 = driving
 
     // External UART input (used only in MODE_EXT_INPUT)
     input_packet_t ext_input;
@@ -393,8 +393,8 @@ typedef struct
 
 extern robot_state_t state;
 extern rc_mpu_data_t mpu_data;
-extern pid_controller_t balance_pid;
-extern pid_controller_t steering_pid;
+extern pid_controller_t pitch_pid;
+extern pid_controller_t yaw_pid;
 extern debug_config_t g_debug_config;
 extern telemetry_data_t g_telemetry_data;
 extern pos_config_t g_pos_config;
@@ -595,8 +595,8 @@ typedef struct
  */
 typedef struct
 {
-    pid_gains_t balance;    /* was balance — pitch angle -> duty, real PID   */
-    pid_gains_t steering;   /* was steering — wheel diff -> duty, real PID   */
+    pid_gains_t pitch;    /* was balance — pitch angle -> duty, real PID   */
+    pid_gains_t yaw;        /* was steering — wheel diff -> duty, real PID   */
     pos_config_t position;  /* was position — zone-scheduled hold, NOT a PID    */
     motor_config_t motor;
     imu_offsets_t imu;
@@ -628,9 +628,9 @@ extern imu_offsets_t g_imu_offsets;
 
 typedef struct
 {
-    bool balance;
+    bool pitch;
     bool position;
-    bool steering;
+    bool yaw;
 } controller_enables_t;
 extern controller_enables_t g_controllers;
 

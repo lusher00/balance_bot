@@ -69,16 +69,25 @@ def read_csv(path):
     return preamble, hdr, rows
 
 
-# Logs from before the controller rename use d1_/d2_/d3_ for bal_/pos_/str_.
-LEGACY_PREFIX = {"bal_": "d1_", "pos_": "d2_", "str_": "d3_"}
+# Column prefixes have been through three generations. All three are still
+# readable, because there is a directory of logs in each and they are all
+# perfectly good data:
+#
+#   D1 -> balance -> pitch      d1_  ->  bal_  ->  pit_
+#   D2 -> position              d2_  ->  pos_
+#   D3 -> steering -> yaw       d3_  ->  str_  ->  yaw_
+LEGACY_PREFIX = {"pit_": ["bal_", "d1_"], "pos_": ["d2_"], "yaw_": ["str_", "d3_"]}
 
 
 def col(rows, idx, name):
     n = idx.get(name)
     if n is None:
-        for new, old in LEGACY_PREFIX.items():
+        for new, olds in LEGACY_PREFIX.items():
             if name.startswith(new):
-                n = idx.get(old + name[len(new):])
+                for old in olds:
+                    n = idx.get(old + name[len(new):])
+                    if n is not None:
+                        break
                 break
     if n is None:
         return None
@@ -116,18 +125,18 @@ def main():
         return 1
     idx = {k: n for n, k in enumerate(hdr)}
 
-    theta = col(rows, idx, "bal_measurement")
+    theta = col(rows, idx, "pit_measurement")
     vel = col(rows, idx, "pos_encVel")
     pos = col(rows, idx, "pos_encPos")
     tcol = col(rows, idx, "t")
     if theta is None or vel is None:
-        print("need a pitch and a velocity column (bal_measurement/pos_encVel,\n"
-              "or the older d1_measurement/d2_encVel). Found:\n  " +
+        print("need a pitch and a velocity column: pit_measurement/pos_encVel,\n"
+              "or the older bal_measurement / d1_measurement. Found:\n  " +
               ", ".join(hdr), file=sys.stderr)
         return 1
 
     for line in preamble:
-        if "bal_gains" in line or "max_correction" in line or "loop_hz" in line:
+        if "pit_gains" in line or "bal_gains" in line or "max_correction" in line or "loop_hz" in line:
             print("  " + line)
     print()
 

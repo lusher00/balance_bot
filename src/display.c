@@ -332,8 +332,8 @@ static void draw_pid(int r)
      * it is a zone-scheduled position hold with no gains and no P/I/D terms, so
      * it cannot share this table and gets its own row set below. */
     const char *names[2]     = { "balance Balance", "steering Steer  " };
-    pid_telemetry_t *pids[2] = { &g_telemetry_data.balance,
-                                 &g_telemetry_data.steering };
+    pid_telemetry_t *pids[2] = { &g_telemetry_data.pitch,
+                                 &g_telemetry_data.yaw };
     attron(A_DIM);
     mvprintw(r, 1, "%-10s  %7s  %7s  %7s  %7s  %7s  %7s  %7s",
              "Controller", "setp", "meas", "err", "P", "I", "D", "out");

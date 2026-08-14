@@ -211,9 +211,9 @@ typedef struct
     encoder_telemetry_t encoders; // Encoder data
     imu_telemetry_t imu;          // IMU data
 
-    pid_telemetry_t balance;  // Balance PID state
+    pid_telemetry_t pitch;  // Balance PID state
     drive_telemetry_t position;  // Drive position-hold state (not a PID)
-    pid_telemetry_t steering; // Steering PID state
+    pid_telemetry_t yaw; // Steering PID state
 
     motor_telemetry_t motors;        // Motor commands
     ext_input_telemetry_t ext_input; // External UART input

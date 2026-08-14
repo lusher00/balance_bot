@@ -69,7 +69,7 @@ static char *trim(char *s)
     return s;
 }
 
-/** Case-insensitive compare, so [Balance] and [balance] both work. */
+/** Case-insensitive compare, so [Pitch] and [pitch] both work. */
 static int ieq(const char *a, const char *b)
 {
     for (; *a && *b; a++, b++)
@@ -86,12 +86,12 @@ void robot_config_defaults(robot_config_t *c)
 {
     memset(c, 0, sizeof(*c));
 
-    c->balance.kp = BALANCE_KP;
-    c->balance.ki = BALANCE_KI;
-    c->balance.kd = BALANCE_KD;
-    c->steering.kp = STEERING_KP;
-    c->steering.ki = STEERING_KI;
-    c->steering.kd = STEERING_KD;
+    c->pitch.kp = PITCH_KP;
+    c->pitch.ki = PITCH_KI;
+    c->pitch.kd = PITCH_KD;
+    c->yaw.kp = YAW_KP;
+    c->yaw.ki = YAW_KI;
+    c->yaw.kd = YAW_KD;
 
     c->imu.pitch_offset = 0.0f;
     c->imu.yaw_offset = 0.0f;
@@ -185,17 +185,21 @@ int robot_config_load(const char *path, robot_config_t *c)
         n++;
 
 #define KEY(k) (ieq(key, k))
-        if (ieq(section, "balance"))
+        /* Section names changed with the controller rename. Old files are still
+         * read, because refusing them would silently drop a hand-tuned gain set
+         * back to compiled defaults -- the exact failure this file exists to
+         * prevent. New files are written with the new names. */
+        if (ieq(section, "pitch") || ieq(section, "balance"))
         {
-            if (KEY("kp")) c->balance.kp = fv;
-            else if (KEY("ki")) c->balance.ki = fv;
-            else if (KEY("kd")) c->balance.kd = fv;
+            if (KEY("kp")) c->pitch.kp = fv;
+            else if (KEY("ki")) c->pitch.ki = fv;
+            else if (KEY("kd")) c->pitch.kd = fv;
         }
-        else if (ieq(section, "steering"))
+        else if (ieq(section, "yaw") || ieq(section, "steering"))
         {
-            if (KEY("kp")) c->steering.kp = fv;
-            else if (KEY("ki")) c->steering.ki = fv;
-            else if (KEY("kd")) c->steering.kd = fv;
+            if (KEY("kp")) c->yaw.kp = fv;
+            else if (KEY("ki")) c->yaw.ki = fv;
+            else if (KEY("kd")) c->yaw.kd = fv;
         }
         else if (ieq(section, "imu"))
         {
@@ -287,17 +291,17 @@ int robot_config_save(const char *path, const robot_config_t *c)
     fprintf(f, "\n");
 
     fprintf(f, "# Balance loop: pitch angle -> motor duty. A real PID.\n");
-    fprintf(f, "[balance]\n");
-    fprintf(f, "kp = %.4f\n", c->balance.kp);
-    fprintf(f, "ki = %.4f\n", c->balance.ki);
-    fprintf(f, "kd = %.4f\n", c->balance.kd);
+    fprintf(f, "[pitch]\n");
+    fprintf(f, "kp = %.4f\n", c->pitch.kp);
+    fprintf(f, "ki = %.4f\n", c->pitch.ki);
+    fprintf(f, "kd = %.4f\n", c->pitch.kd);
     fprintf(f, "\n");
 
     fprintf(f, "# Steering loop: wheel-rotation difference -> differential duty. A real PID.\n");
-    fprintf(f, "[steering]\n");
-    fprintf(f, "kp = %.4f\n", c->steering.kp);
-    fprintf(f, "ki = %.4f\n", c->steering.ki);
-    fprintf(f, "kd = %.4f\n", c->steering.kd);
+    fprintf(f, "[yaw]\n");
+    fprintf(f, "kp = %.4f\n", c->yaw.kp);
+    fprintf(f, "ki = %.4f\n", c->yaw.ki);
+    fprintf(f, "kd = %.4f\n", c->yaw.kd);
     fprintf(f, "\n");
 
     fprintf(f, "# Position hold: encoder error -> lean-angle bias.\n");
@@ -391,12 +395,12 @@ int robot_config_save(const char *path, const robot_config_t *c)
 void robot_config_get_current(robot_config_t *c)
 {
     robot_config_defaults(c);
-    c->balance.kp = balance_pid.kp;
-    c->balance.ki = balance_pid.ki;
-    c->balance.kd = balance_pid.kd;
-    c->steering.kp = steering_pid.kp;
-    c->steering.ki = steering_pid.ki;
-    c->steering.kd = steering_pid.kd;
+    c->pitch.kp = pitch_pid.kp;
+    c->pitch.ki = pitch_pid.ki;
+    c->pitch.kd = pitch_pid.kd;
+    c->yaw.kp = yaw_pid.kp;
+    c->yaw.ki = yaw_pid.ki;
+    c->yaw.kd = yaw_pid.kd;
     c->position = g_pos_config;
     c->motor = g_motor_config;
     c->imu = g_imu_offsets;
@@ -406,8 +410,8 @@ void robot_config_get_current(robot_config_t *c)
 
 void robot_config_apply(const robot_config_t *c)
 {
-    pid_set_gains(&balance_pid, c->balance.kp, c->balance.ki, c->balance.kd);
-    pid_set_gains(&steering_pid, c->steering.kp, c->steering.ki, c->steering.kd);
+    pid_set_gains(&pitch_pid, c->pitch.kp, c->pitch.ki, c->pitch.kd);
+    pid_set_gains(&yaw_pid, c->yaw.kp, c->yaw.ki, c->yaw.kd);
     g_pos_config = c->position;
     g_motor_config = c->motor;
     g_imu_offsets = c->imu;
@@ -465,9 +469,9 @@ static int load_legacy_pid(const char *path, robot_config_t *c)
     int dummy;
     if (fscanf(f, "%d", &dummy) != 1) { fclose(f); return -1; }
     if (fscanf(f, "%f", &c->theta_trim) != 1) { fclose(f); return -1; }
-    if (fscanf(f, "%f %f %f", &c->balance.kp, &c->balance.ki, &c->balance.kd) != 3)
+    if (fscanf(f, "%f %f %f", &c->pitch.kp, &c->pitch.ki, &c->pitch.kd) != 3)
     { fclose(f); return -1; }
-    if (fscanf(f, "%f %f %f", &c->steering.kp, &c->steering.ki, &c->steering.kd) != 3)
+    if (fscanf(f, "%f %f %f", &c->yaw.kp, &c->yaw.ki, &c->yaw.kd) != 3)
     { fclose(f); return -1; }
 
     /* The trailing key=value sections are section-agnostic in the old format —

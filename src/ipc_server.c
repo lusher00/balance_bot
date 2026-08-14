@@ -267,16 +267,16 @@ static int parse_json_command(const char *json_cmd)
     // Example: {"type":"set_controller","controller":"balance","enabled":true}
     if (strstr(json_cmd, "\"type\":\"set_controller\""))
     {
-        if (strstr(json_cmd, "\"controller\":\"balance\""))
+        if ((strstr(json_cmd, "\"controller\":\"pitch\"") || strstr(json_cmd, "\"controller\":\"balance\"")))
         {
             if (strstr(json_cmd, "\"enabled\":true"))
             {
-                g_controllers.balance = true;
+                g_controllers.pitch = true;
                 LOG_INFO("balance enabled");
             }
             else if (strstr(json_cmd, "\"enabled\":false"))
             {
-                g_controllers.balance = false;
+                g_controllers.pitch = false;
                 LOG_WARN("balance disabled - robot will fall!");
             }
         }
@@ -293,16 +293,16 @@ static int parse_json_command(const char *json_cmd)
                 LOG_INFO("position disabled");
             }
         }
-        else if (strstr(json_cmd, "\"controller\":\"steering\""))
+        else if ((strstr(json_cmd, "\"controller\":\"yaw\"") || strstr(json_cmd, "\"controller\":\"steering\"")))
         {
             if (strstr(json_cmd, "\"enabled\":true"))
             {
-                g_controllers.steering = true;
+                g_controllers.yaw = true;
                 LOG_INFO("steering enabled");
             }
             else
             {
-                g_controllers.steering = false;
+                g_controllers.yaw = false;
                 LOG_INFO("steering disabled");
             }
         }
@@ -502,10 +502,10 @@ static int parse_json_command(const char *json_cmd)
         if (p)
             sscanf(p, "\"kd\":%f", &kd);
 
-        if (strstr(json_cmd, "\"controller\":\"balance\""))
+        if ((strstr(json_cmd, "\"controller\":\"pitch\"") || strstr(json_cmd, "\"controller\":\"balance\"")))
         {
-            pid_set_gains(&balance_pid, kp, ki, kd);
-            pid_reset(&balance_pid);
+            pid_set_gains(&pitch_pid, kp, ki, kd);
+            pid_reset(&pitch_pid);
             LOG_INFO("iPhone: balance kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
             return 0;
         }
@@ -519,10 +519,10 @@ static int parse_json_command(const char *json_cmd)
                      "max_correction, max_angle_rate) instead.");
             return -1;
         }
-        if (strstr(json_cmd, "\"controller\":\"steering\""))
+        if ((strstr(json_cmd, "\"controller\":\"yaw\"") || strstr(json_cmd, "\"controller\":\"steering\"")))
         {
-            pid_set_gains(&steering_pid, kp, ki, kd);
-            pid_reset(&steering_pid);
+            pid_set_gains(&yaw_pid, kp, ki, kd);
+            pid_reset(&yaw_pid);
             LOG_INFO("iPhone: steering kp=%.3f ki=%.3f kd=%.3f", kp, ki, kd);
             return 0;
         }
@@ -593,8 +593,8 @@ static int parse_json_command(const char *json_cmd)
         else if (strstr(json_cmd, "\"axis\":\"yaw\""))
         {
             /* Degrees of phi_diff, same units as the steering setpoint. */
-            state.steering += d;
-            LOG_INFO("nudge yaw: steering target = %.2f", state.steering);
+            state.yaw += d;
+            LOG_INFO("nudge yaw: steering target = %.2f", state.yaw);
             return 0; /* transient, not persisted */
         }
         else if (strstr(json_cmd, "\"axis\":\"fwd\""))
@@ -1001,17 +1001,17 @@ static void build_telemetry_json(char *buffer, size_t size)
                         "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
                         "\"p_term\":%.4f,\"i_term\":%.4f,\"d_term\":%.4f,"
                         "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},",
-                        g_telemetry_data.balance.enabled ? "true" : "false",
-                        g_telemetry_data.balance.setpoint,
-                        g_telemetry_data.balance.measurement,
-                        g_telemetry_data.balance.error,
-                        g_telemetry_data.balance.output,
-                        g_telemetry_data.balance.p_term,
-                        g_telemetry_data.balance.i_term,
-                        g_telemetry_data.balance.d_term,
-                        g_telemetry_data.balance.kp,
-                        g_telemetry_data.balance.ki,
-                        g_telemetry_data.balance.kd);
+                        g_telemetry_data.pitch.enabled ? "true" : "false",
+                        g_telemetry_data.pitch.setpoint,
+                        g_telemetry_data.pitch.measurement,
+                        g_telemetry_data.pitch.error,
+                        g_telemetry_data.pitch.output,
+                        g_telemetry_data.pitch.p_term,
+                        g_telemetry_data.pitch.i_term,
+                        g_telemetry_data.pitch.d_term,
+                        g_telemetry_data.pitch.kp,
+                        g_telemetry_data.pitch.ki,
+                        g_telemetry_data.pitch.kd);
 
         // position hold is a zone-based position hold, not a PID. Its keys deliberately
         // do not match balance/steering — consumers must not treat them interchangeably.
@@ -1038,17 +1038,17 @@ static void build_telemetry_json(char *buffer, size_t size)
                         "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
                         "\"p_term\":%.4f,\"i_term\":%.4f,\"d_term\":%.4f,"
                         "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},",
-                        g_telemetry_data.steering.enabled ? "true" : "false",
-                        g_telemetry_data.steering.setpoint,
-                        g_telemetry_data.steering.measurement,
-                        g_telemetry_data.steering.error,
-                        g_telemetry_data.steering.output,
-                        g_telemetry_data.steering.p_term,
-                        g_telemetry_data.steering.i_term,
-                        g_telemetry_data.steering.d_term,
-                        g_telemetry_data.steering.kp,
-                        g_telemetry_data.steering.ki,
-                        g_telemetry_data.steering.kd);
+                        g_telemetry_data.yaw.enabled ? "true" : "false",
+                        g_telemetry_data.yaw.setpoint,
+                        g_telemetry_data.yaw.measurement,
+                        g_telemetry_data.yaw.error,
+                        g_telemetry_data.yaw.output,
+                        g_telemetry_data.yaw.p_term,
+                        g_telemetry_data.yaw.i_term,
+                        g_telemetry_data.yaw.d_term,
+                        g_telemetry_data.yaw.kp,
+                        g_telemetry_data.yaw.ki,
+                        g_telemetry_data.yaw.kd);
     }
 
     // Cat position
