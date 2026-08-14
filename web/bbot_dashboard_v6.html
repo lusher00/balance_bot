@@ -1120,9 +1120,28 @@
       <div class="card">
         <span class="sub-label">Robot Mode</span>
         <div class="seg-group" id="mode-seg">
-          <button class="seg-btn active" data-mode="1" onclick="setMode(1)">Pitch</button>
-          <button class="seg-btn" data-mode="2" onclick="setMode(2)">Ext Ctrl</button>
-          <button class="seg-btn" data-mode="3" onclick="setMode(3)">Manual</button>
+            <button class="seg-btn active" data-mode="1" onclick="setMode(1)">Balance</button>
+            <button class="seg-btn" data-mode="2" onclick="setMode(2)">Ext Ctrl</button>
+          </div>
+          <div style="font-size:9px;color:var(--txt3);margin-top:6px">
+            Balance is the normal mode and the only one that reads the RC sticks.
+            Ext Ctrl takes drive commands from the UART instead. Manual was removed:
+            robot.c has no handler for it, so selecting it silently disabled the RC.
+          </div>
+        </div>
+
+        <div class="card">
+          <span class="sub-label">Drive</span>
+          <div class="seg-group" id="drive-seg">
+            <button class="seg-btn active" data-drive="0" onclick="setDriveMode(0)">Lean</button>
+            <button class="seg-btn" data-drive="1" onclick="setDriveMode(1)">Target</button>
+          </div>
+          <div style="font-size:9px;color:var(--txt3);margin-top:6px">
+            <b>Lean</b> &mdash; the stick sets a tilt angle, so it commands acceleration.
+            Centring it means &ldquo;stand up straight&rdquo;, not &ldquo;stop&rdquo;, so you brake
+            with reverse stick.<br>
+            <b>Target</b> &mdash; the stick moves the hold point, so it commands speed.
+            Release and the bot coasts to a halt by itself.
         </div>
       </div>
 
@@ -2717,6 +2736,9 @@
         // pidconfig.txt edit plus restart, anything not this dashboard.
         // CSV preambles must be stamped from posCfgBot, never from posCfg.
         posCfgBot = { ...d.pos_config };
+        // Keep the Drive picker showing what the BOT is doing, not what the UI
+        // last sent -- they diverge if it is changed from the CLI or a restart.
+        if (posCfgBot && posCfgBot.drive_mode !== undefined) syncDriveSeg(posCfgBot.drive_mode);
       }
       if (d.pos_config && !posCfgReceived) {
         const pc = d.pos_config;
@@ -3621,6 +3643,19 @@
         b.classList.toggle('rec-active', debugHold);
       }
       debugNote(debugHold ? 'frozen — Copy/Export still take the latest packet' : 'live');
+    }
+
+
+    // Drive algorithm. Lives in pos_config, so it persists to robot.conf with
+    // everything else and survives a restart.
+    function setDriveMode(m) {
+      posCfg.drive_mode = m;
+      sendCmd({ type: 'set_pos_config', drive_mode: m });
+      syncDriveSeg(m);
+    }
+    function syncDriveSeg(m) {
+      document.querySelectorAll('#drive-seg .seg-btn').forEach(b =>
+        b.classList.toggle('active', Number(b.dataset.drive) === Number(m)));
     }
 
     function switchTab(name) {

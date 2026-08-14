@@ -416,7 +416,10 @@ static inline debug_config_t get_default_debug_config(void)
 {
     debug_config_t config = {
         .telemetry = {
-            .encoders = false,
+            /* On. The Control tab has a live encoder card, and with this off it
+             * sat there showing stale zeros -- a readout that looks live and is
+             * not is worse than no readout. It is four ints per packet. */
+            .encoders = true,
             .imu_attitude = true, // For 3D visualization
             .imu_full = false,    // Disable high-bandwidth data
             .pid_states = true,
