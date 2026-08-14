@@ -1,6 +1,8 @@
 # balance_bot
 
-A self-balancing two-wheeled robot running on a BeagleBone Blue. Controlled via FrSky SBUS RC receiver or Xbox controller, with real-time telemetry and PID tuning streamed to an iPhone companion app or web dashboard over WebSocket.
+A self-balancing two-wheeled robot on a BeagleBone Blue. Flown from an FrSky SBUS
+transmitter, with live telemetry, tuning and tune analysis in a browser-based
+dashboard over WebSocket.
 
 ![Platform](https://img.shields.io/badge/platform-BeagleBone%20Blue-blue)
 ![Language](https://img.shields.io/badge/language-C-lightgrey)
@@ -10,15 +12,15 @@ A self-balancing two-wheeled robot running on a BeagleBone Blue. Controlled via 
 
 ## Features
 
-- **Cascade control** — D1 balance (angle, PID), D3 steering (yaw, PID), D2 position hold (encoder-based, zone-scheduled — not a PID)
+- **Cascade control** — pitch (angle, PID), yaw (heading, PID), position hold (encoder-based, zone-scheduled — not a PID)
 - **SBUS input** — FrSky R-XSR receiver via BeagleBone UART with custom 115200 baud driver and signal inverter circuit
 - **Xbox controller input** — hot-plug via `/dev/input/js0`
 - **Cat following mode** — vision input from Raspberry Pi 5 running a Hailo-8L NPU, received over UART
-- **iPhone companion app** — real-time telemetry, live PID tuning, dual-axis graphs, arm/disarm, D2 pos config
-- **Web dashboard** — same feature set as the iPhone app, served from the BBB, accessible from any browser on the network
+- **Web dashboard** — telemetry, live tuning, graphs, RC channel mapping, pose/position controls and tune analysis, served from the BBB
+- **Tune analysis** — every recording scored for trim, ringing, saturation and station-keeping, in the browser and from the CLI
 - **Live ncurses display** — SBUS channels, PID state, encoders, IMU, motors, system status
 - **IPC bridge** — Unix domain socket (`/tmp/balance_bot.sock`) to Node.js WebSocket server
-- **RoboClaw motor driver** — packet serial, duty/velocity/velocity+accel modes, hardware e-stop via GPIO57
+- **RoboClaw motor driver** — packet serial, duty/velocity/velocity+accel modes, hardware e-stop on GPIO1_25 (resolved at runtime, not hardcoded)
 - **Systemd integration** — `make install` deploys and manages both services
 
 ---
@@ -48,13 +50,19 @@ R-XSR 5V/GND → BeagleBone 5V / GND
 
 ### RC Channel Mapping (AETR / OpenTX)
 
+Drive and turn channels are **configurable at runtime** from the dashboard's RC
+tab and persisted to `robot.conf`; the table below is only the default.
+
 | Channel | Switch | Function |
 |---------|--------|----------|
-| CH1 Ail | Right stick X | Yaw / turn |
-| CH2 Ele | Right stick Y | Forward / back |
+| CH1 Ail | Right stick X | Yaw / turn (default `turn_channel`) |
+| CH2 Ele | Right stick Y | Forward / back (default `drive_channel`) |
 | CH5 SA | 3-pos | Arm / Disarm |
 | CH6 SB | 3-pos | Kill switch |
 | CH10 SD | 3-pos | Speed mode (slow/normal/sport) |
+
+Drive is held at zero until the drive channel has been seen near centre once, so
+a transmitter left out of trim cannot command movement the instant it links.
 
 ---
 
@@ -66,12 +74,12 @@ R-XSR 5V/GND → BeagleBone 5V / GND
 │                                                         │
 │  IMU interrupt @ 100Hz                                  │
 │  └── imu_apply_transform()                              │
-│  └── D1: balance PID  → motor mixing → RoboClaw        │
-│  └── D3: steering PID ┘                                 │
+│  └── pitch PID  → motor mixing → RoboClaw               │
+│  └── yaw PID    ┘                                       │
 │                                                         │
 │  Main loop @ 100Hz                                      │
 │  └── sbus_update() / xbox_update()                      │
-│  └── D2: position hold (encoder-based)                  │
+│  └── position hold (encoder-based)                      │
 │  └── telemetry_update()                                 │
 │  └── ipc_broadcast_telemetry()  ──→ Unix socket         │
 └────────────────────┬────────────────────────────────────┘
@@ -81,10 +89,9 @@ R-XSR 5V/GND → BeagleBone 5V / GND
 │   Unix socket client  ←→  WebSocket server :8675        │
 └────────────────────┬────────────────────────────────────┘
                      │ WebSocket ws://boneblue-0:8675
-              ┌──────┴──────┐
-              ▼             ▼
-  BBotTuneHUD (iOS)    BBotHUD (web)
-  SwiftUI app          http://boneblue-0:8888
+                     ▼
+              bbot_dashboard_v6.html
+              http://boneblue-0:8888
 ```
 
 ### Source Files
@@ -94,17 +101,25 @@ R-XSR 5V/GND → BeagleBone 5V / GND
 | `src/main.c` | Entry point, argument parsing, subsystem init |
 | `src/robot.c` | IMU interrupt, PID loop, motor output, main run loop |
 | `src/pid.c` | Generic PID controller with anti-windup |
-| `src/pid_config.c` | Load/save/apply PID gains and pos_config from `pidconfig.txt` |
+| `src/robot_config.c` | Single sectioned `robot.conf`: gains, position, IMU, SBUS, motor. Atomic writer, migrates from the old files once |
 | `src/imu_config.c` | IMU axis remapping, calibration offsets, `imu_offsets_calibrate()` |
 | `src/ipc_server.c` | Unix socket server, JSON telemetry, command parsing |
 | `src/telemetry.c` | Telemetry data collection from all subsystems |
 | `src/mpu_dmp.c` | Custom MPU-9250 DMP driver (no librobotcontrol dependency) |
 | `src/roboclaw.c` | RoboClaw packet-serial driver |
 | `src/motor_hal_roboclaw.c` | Motor HAL backend: RoboClaw duty/velocity/velocity+accel |
-| `src/roboclaw_estop.c` | Hardware e-stop via GPIO57 (active-low, RoboClaw latches) |
+| `src/roboclaw_estop.c` | Hardware e-stop on GPIO1_25, resolved from the GPIO controller at runtime (sysfs numbering shifts between kernels) |
 | `src/input_sbus.c` | SBUS frame parser, custom baud rate, channel decode |
 | `src/input_xbox.c` | Xbox controller via Linux joystick API |
 | `src/display.c` | ncurses live display, threaded redraw |
+
+| Tool | Description |
+|------|-------------|
+| `tools/analyze_tune.py` | Tune-quality report from a telemetry CSV; compares runs |
+| `tools/trim_from_log.py` | Balance trim from measured drift, not by eye |
+| `tools/check_link.sh` | Finds undefined symbols without linking |
+| `tools/bbot_watch.py` | 1 Hz system recorder for diagnosing lockups |
+| `tools/ls_aliases.sh` | Shell aliases, optional |
 
 ---
 
@@ -146,7 +161,7 @@ sudo make install
 
 `start.sh` handles the full startup sequence:
 1. Kills any stale processes
-2. Clears the RoboClaw e-stop (`estop_clear.sh`)
+2. Clears the RoboClaw e-stop
 3. Resets the RoboClaw via WriteNVM (`roboclaw_reset.py`) — required after any e-stop latch
 4. Starts `server.js` (WebSocket bridge) in background
 5. Starts `serve_web.py` (web dashboard) in background on port 8888
@@ -168,7 +183,7 @@ sudo balance_bot [options]
 
 Options:
   -i <mode>     Input mode: sbus | xbox | ext | none  (default: none)
-  -p <file>     PID config file                       (default: pidconfig.txt)
+  -p <file>     Config file                            (default: robot.conf)
   -u <device>   UART device for SBUS or EXT input
   -m <device>   RoboClaw UART device                  (default: /dev/ttyO1)
   -B <baud>     RoboClaw baud rate                    (default: 460800)
@@ -181,18 +196,18 @@ Options:
 
 ## Web Dashboard
 
-A single-file HTML dashboard (`web/bbot_dashboard.html`) provides the same controls as the iPhone app from any browser on the network.
+A single-file HTML dashboard (`web/bbot_dashboard_v6.html`) provides full control and telemetry from any browser on the network.
 
 ```
 web/
-  bbot_dashboard.html   # dashboard UI
-  serve_web.py          # stdlib HTTP server, no dependencies
+  bbot_dashboard_v6.html   # dashboard UI (current)
+  serve_web.py             # stdlib HTTP server, no dependencies
 ```
 
 `start.sh` launches `serve_web.py` automatically. Navigate to:
 
 ```
-http://boneblue-0:8888/bbot_dashboard.html
+http://boneblue-0:8888/bbot_dashboard_v6.html
 ```
 
 To run standalone without `start.sh`:
@@ -206,8 +221,11 @@ ssh debian@boneblue-0 "cd ~/balance_bot && python3 web/serve_web.py &"
 | Tab | Contents |
 |-----|----------|
 | Control | ARM/DISARM, E-STOP, CLR ESTOP, Zero IMU, Zero Encoders, mode/motor mode pickers, encoder readout, MJPEG video with cat overlay |
-| PID | D1/D2/D3 picker. Kp/Ki/Kd sliders with ×1/×10/×100 step for D1 and D3 only; D2 shows its pos_config instead (all 13 fields) since it has no gains |
-| Graph | Live scrolling plots, D1+D2 dual-axis combined view, series toggle, CSV record/download |
+| PID | Pitch / Position / Yaw picker. Kp/Ki/Kd for pitch and yaw; position shows its zone config instead, since it has no gains. Balance trim lives on the pitch card |
+| Graph | Live scrolling plots, dual-axis combined view, series toggle, CSV record/download |
+| Claw | RoboClaw drive mode, QPPS, polarity, velocity PID |
+| RC | Live SBUS channels and switches, channel mapping / scale / invert / deadband, pose (pitch, yaw) and position controls |
+| Tune | Tune-quality report for the last recording, saved run history, and A/B comparison including a config diff |
 | Debug | Syntax-highlighted raw telemetry JSON |
 | Settings | BBB IP/port, Pi 5 IP, video URL, telemetry option toggles |
 
@@ -229,46 +247,126 @@ After a fall the RoboClaw latches its e-stop internally. To recover without rest
 
 ---
 
-## PID Configuration
+## Configuration
 
-Gains are loaded from `pidconfig.txt` at startup and can be updated live from either client without restarting.
+Everything tunable lives in one sectioned file, `robot.conf`, written atomically
+and loaded at startup. It replaces `pidconfig.txt` and
+`/etc/balance_bot_imu.conf`; if those are present and `robot.conf` is not, they
+are migrated once and then unused.
 
-**Only D1 and D3 have gains.** D2 is not a PID controller — it is a zone-based
-gain-scheduled position hold and is configured entirely by the `# pos_config`
-section below (zones, scales, `max_correction`, `max_angle_rate`). There is no
-D2 gain line in this file; the parser reads line 3 as D1 and line 4 as D3, so
-inserting one would silently load D2's numbers as D3's steering gains.
+**Only pitch and yaw have gains.** Position hold is not a PID — it is a
+zone-scheduled controller configured entirely by its zones and scales.
 
+```ini
+[pitch]
+kp = 0.070
+ki = 0.020
+kd = 0.005
+
+[yaw]
+kp = 0.010
+ki = 0.005
+kd = 0.000
+
+[position]
+zone_a = 8000          # outer threshold, ticks. Contract is A > B > C
+zone_b = 4000
+zone_c = 500
+scale_a = 60.000       # tick error / scale = lean bias, deg. Larger = weaker
+scale_b = 80.000
+scale_c = 200.000
+scale_d = 50.000       # inside zone_c, the tightest hold
+vel_scale_stop = 5.000
+max_correction = 5.000
+max_angle_rate = 0.100 # deg per tick, rate-limits the correction
+back_to_spot = 0       # 1 = chase the target, 0 = loose hold
+drive_mode = 0         # 0 = stick commands lean, 1 = stick moves the target
+drive_rate = 300.0     # ticks/s at full stick in target mode
+runaway_limit = 300    # max |target - pos|, anti-windup
+
+[imu]
+pitch_offset = 98.5500 # where upright is, from calibration
+pitch_axis = 1
+
+[sbus]
+drive_channel = 3
+turn_channel = 1
+drive_scale = 0.250
+turn_rate = 60.0       # deg/s of heading at full stick
+require_center = 1
+
+[motor]
+mode = 0               # 0 = duty, 1 = velocity, 2 = velocity + accel
+pol_l = -1.0
+enc_pol_l = -1.0
 ```
-0                         # legacy holdPosition flag (unused)
-0.000                     # balance_angle / theta_offset trim (deg)
-0.050 0.010 0.005         # D1 balance:  Kp Ki Kd
-0.010 0.010 0.000         # D3 steering: Kp Ki Kd
 
-# pos_config
-zone_a=8000.0
-zone_b=4000.0
-zone_c=500.0
-scale_a=60.0
-scale_b=80.0
-scale_c=200.0
-scale_d=300.0
-...
+Section names changed with the controller rename; `[balance]` and `[steering]`
+are still accepted so an older file keeps loading.
+
+### Backing it up
+
+`robot.conf` exists only on the SD card and is excluded from rsync, so a sync
+cannot overwrite a live calibration. That also means nothing backs it up:
+
+```bash
+make save-config     # on the bot: copies robot.conf into config/machine/
+                     # then commit config/machine/
+make install-config  # on a fresh board: restores it, never overwrites
 ```
 
 ---
 
-## IMU Calibration
+## Balance Trim
 
-The balance angle offset is stored in `/etc/balance_bot_imu.conf` (fallback: `~/balance_bot_imu.conf`).
+The single most misleading fault on this machine. The balance point is where the
+centre of mass sits over the tyre contact patch — not something you can see, and
+with the battery and controller distributed unevenly it is not the geometric
+centreline. Worse, the pitch integrator winds up to compensate, so the robot
+balances happily at the wrong angle and never falls. The error shows up only as
+a slow creep, which reads as a drive fault.
+
+So do not set it by eye. Measure the drift:
 
 ```bash
-# Zero with robot balanced upright — use Zero IMU in either client
-# Or directly:
-echo "pitch_offset 0.0" | sudo tee /etc/balance_bot_imu.conf
+# record ~30s of balancing from the dashboard, then
+python3 tools/trim_from_log.py <log.csv>
 ```
 
-The **Zero IMU** command sets `pitch_offset = current_pitch_deg` so `theta = 0` at the robot's current physical position. It also resets encoders and saves all config.
+```
+net travel -11 ticks = -0.04 m over 80.9s
+TRIMMED. Mean drift +0.03 is inside +/-0.3
+```
+
+If it reports creeping, nudge the trim by the suggested amount and record again.
+Two or three rounds is normal. The dashboard's Tune tab reports the same thing
+without the export.
+
+---
+
+## Tune Analysis
+
+Every recording is scored, in the browser on the Tune tab and from the CLI:
+
+```bash
+python3 tools/analyze_tune.py <log.csv>              # full report
+python3 tools/analyze_tune.py before.csv after.csv   # what changed
+python3 tools/analyze_tune.py *.csv --brief          # one line each
+```
+
+| Section | Question it answers |
+|---------|--------------------|
+| Trim | Does it hold station, or creep? |
+| Balance | How tightly does it track upright, and is it running out of authority? |
+| Ringing | Is there one dominant oscillation, and how big? |
+| Position | How well does station-keeping hold? |
+| Effort | How hard is it working, and is one side working harder? |
+| Health | Did the control loop keep up — is this run even trustworthy? |
+
+Each metric prints against a stated threshold, followed by a prioritised list of
+what to try next. Comparison mode also diffs the config the two runs were
+recorded under, so "did that help?" and "what did I actually change?" are
+answered together.
 
 ---
 
@@ -282,15 +380,25 @@ Commands are JSON sent over WebSocket to `server.js`, which forwards them to the
 | E-stop (assert) | `{"type":"e_stop"}` |
 | Clear e-stop (WriteNVM reset) | `{"type":"reset_estop"}` |
 | Set mode | `{"type":"set_mode","value":1}` (0=idle 1=balance 2=ext 3=manual) |
-| Set PID gains | `{"type":"set_pid","controller":"D1_balance","kp":40,"ki":0,"kd":5}` |
-| Enable controller | `{"type":"set_controller","controller":"D1_balance","enabled":true}` |
+| Set gains | `{"type":"set_pid","controller":"pitch","kp":40,"ki":0,"kd":5}` |
+| Enable controller | `{"type":"set_controller","controller":"yaw","enabled":true}` |
 | Save config | `{"type":"save_pid"}` |
 | Zero IMU + encoders | `{"type":"zero_imu"}` |
 | Zero encoders only | `{"type":"zero_encoders"}` |
-| Set D2 pos config | `{"type":"set_pos_config","zone_a":8000,"scale_d":80,...}` |
-| Set motor config | `{"type":"set_motor_config","mode":0}` |
+| Position hold config | `{"type":"set_pos_config","zone_a":8000,"scale_d":80,...}` |
+| Motor config | `{"type":"set_motor_config","mode":0}` |
+| RC mapping | `{"type":"set_sbus_config","drive_channel":3,"drive_scale":0.25}` |
+| Nudge pose / position | `{"type":"nudge","axis":"pose","delta":0.1}` — axes: `pitch` (trim), `pose` (lean), `yaw`, `fwd` |
 | Telemetry options | `{"type":"set_telemetry","encoders":true,"pid_states":true}` |
-| Request config snapshot | `{"type":"get_config"}` |
+
+Controller names are `pitch`, `position` and `yaw`. The older `balance` and
+`steering` are still accepted, so an out-of-date browser tab keeps working.
+
+Send one by hand with:
+
+```bash
+echo '{"type":"set_pos_config","drive_mode":1}' | socat - UNIX-CONNECT:/tmp/balance_bot.sock
+```
 
 ---
 
