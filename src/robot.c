@@ -409,21 +409,29 @@ void robot_run(void)
         // This is what raw_stick_ref must read, not state.theta_ref which
         // accumulates D2 correction across loops.
         static float stick_input = 0.0f;
+        // Normalised drive command, deadband already applied by input_sbus.c.
+        // Kept alongside stick_input because "is the operator driving?" must be
+        // asked of the STICK, not of the lean angle it happens to produce --
+        // see the stick_centered test below.
+        static float stick_norm = 0.0f;
         if (sbus_is_connected() && state.armed && state.mode == MODE_BALANCE)
         {
-            stick_input = sbus_get_drive() * MAX_THETA_REF;
+            stick_norm = sbus_get_drive();
+            stick_input = stick_norm * MAX_THETA_REF;
             state.theta_ref = stick_input;
             state.steering = sbus_get_turn() * MAX_STEERING;
         }
         else if (!sbus_is_connected())
         {
             stick_input = 0.0f;
+            stick_norm = 0.0f;
         }
 
         // Capture stick input before D2 adds its correction.
         // theta_ref may have accumulated D2 correction from previous loops,
         // so raw_stick_ref must reflect only the operator's input.
         float raw_stick_ref = stick_input;
+        float raw_stick_norm = stick_norm;
 
         // ── D3 steering latch ─────────────────────────────────────────────
         // When the turn stick returns to centre AFTER an active turn, latch
@@ -559,7 +567,21 @@ void robot_run(void)
 
                 // Use raw stick only — exclude D2's own correction so it doesn't
                 // trick the hold logic into thinking the user is driving.
-                bool stick_centered = (fabsf(raw_stick_ref) < 0.5f); /* 0.5 deg ~3% of MAX_THETA_REF */
+                /* Ask the stick, not the angle.
+                 *
+                 * This was `fabsf(raw_stick_ref) < 0.5f`, i.e. half a degree of
+                 * COMMANDED LEAN. That was ~4% of stick travel back when full
+                 * stick meant 11.9 deg. Once sbus drive_scale became
+                 * configurable and defaulted to 0.25, full stick meant 2.97 deg
+                 * and the same 0.5 deg became 17% of travel -- a dead zone
+                 * across the bottom sixth of the stick where the operator is
+                 * pushing and position hold is still pulling the other way.
+                 *
+                 * input_sbus.c has already applied the deadband, so anything
+                 * non-zero here is deliberate operator input. The epsilon only
+                 * guards float noise. This is now independent of drive_scale,
+                 * speed mode and MAX_THETA_REF. */
+                bool stick_centered = (fabsf(raw_stick_norm) < 0.001f);
 
                 // ── D2 verbose debug (enable via IPC: {"type":"debug_position","value":true}) ──
                 static uint64_t d2_log_last_us = 0;
