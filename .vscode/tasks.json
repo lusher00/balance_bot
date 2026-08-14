@@ -2,7 +2,7 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "build and install",
+            "label": "build and install  (\u2325\u21e7\u2318I)",
             "type": "shell",
             "command": "ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "group": "build",
@@ -27,7 +27,7 @@
             }
         },
         {
-            "label": "build",
+            "label": "build  (\u2325\u21e7\u2318K)",
             "type": "shell",
             "command": "ssh boneblue-0 'cd ~/balance_bot && make'",
             "group": "build",
@@ -52,7 +52,7 @@
             }
         },
         {
-            "label": "clean",
+            "label": "clean  (\u2325\u21e7\u2318C)",
             "type": "shell",
             "command": "ssh boneblue-0 'cd ~/balance_bot && make clean'",
             "presentation": {
@@ -62,7 +62,7 @@
             "problemMatcher": []
         },
         {
-            "label": "install",
+            "label": "install  (\u2325\u21e7\u2318P)",
             "type": "shell",
             "command": "ssh boneblue-0 'cd ~/balance_bot && make install'",
             "presentation": {
@@ -72,9 +72,9 @@
             "problemMatcher": []
         },
         {
-            "label": "sync only",
+            "label": "sync only  (\u2325\u21e7\u2318S)",
             "type": "shell",
-            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='bbot_dashboard.html' ${workspaceFolder}/ boneblue-0:~/balance_bot/",
+            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -82,9 +82,9 @@
             "problemMatcher": []
         },
         {
-            "label": "sync and build",
+            "label": "sync and build  (\u21e7\u2318B)",
             "type": "shell",
-            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='bbot_dashboard.html' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
+            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -110,9 +110,9 @@
             }
         },
         {
-            "label": "clean sync and build",
+            "label": "clean sync and build  (\u2325\u21e7\u2318B)",
             "type": "shell",
-            "command": "ssh boneblue-0 'cd ~/balance_bot && make clean' && rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='bbot_dashboard.html' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
+            "command": "ssh boneblue-0 'cd ~/balance_bot && make clean' && rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "group": "build",
             "presentation": {
                 "reveal": "always",

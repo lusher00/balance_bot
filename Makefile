@@ -19,12 +19,12 @@ SRCS = src/main.c \
        src/robot.c \
        src/display.c \
        src/pid.c \
+       src/pid_config.c \
        src/uart_input.c \
        src/roboclaw.c \
        src/roboclaw_estop.c \
 	   src/ipc_server.c \
        src/telemetry.c \
-       src/pid_config.c \
        src/input_xbox.c \
        src/input_sbus.c \
        src/imu_config.c \
@@ -69,6 +69,41 @@ SERVICE = balance_bot.service
 SERVER_SERVICE = balance_bot_server.service
 UNIT_DIR = /etc/systemd/system
 DEFAULTS = /etc/default/balance_bot
+ROBOT_CONF = robot.conf
+
+# ── Machine state ────────────────────────────────────────────────────────────
+# Files that live outside the repo but are expensive to recreate. The IMU
+# calibration in particular is derived empirically (balance the bot, zero_imu,
+# then trim) and exists nowhere else — losing it costs an hour of bench work.
+#
+# These are snapshots of THIS board, not defaults. save-config pulls the live
+# values in so you can commit them; install-config pushes them back to a fresh
+# board but never clobbers a file that is already there.
+save-config:
+	@mkdir -p config/machine
+	@if [ -f $(ROBOT_CONF) ]; then \
+		cp $(ROBOT_CONF) config/machine/robot.conf; \
+		echo "saved $(ROBOT_CONF)"; \
+	else echo "WARN: $(ROBOT_CONF) not found (run this on the bot)"; fi
+	@if [ -f $(DEFAULTS) ]; then \
+		cp $(DEFAULTS) config/machine/balance_bot.default; \
+		echo "saved $(DEFAULTS)"; \
+	else echo "WARN: $(DEFAULTS) not found"; fi
+	@echo "Now commit config/machine/ — this is this board's calibration."
+
+install-config:
+	@mkdir -p config/machine
+	@if [ ! -f $(ROBOT_CONF) ] && [ -f config/machine/robot.conf ]; then \
+		cp config/machine/robot.conf $(ROBOT_CONF); \
+		echo "restored $(ROBOT_CONF)"; \
+	else \
+		echo "Kept existing $(ROBOT_CONF) — refusing to overwrite a live calibration."; \
+		echo "  (delete it first if you really want the committed one)"; \
+	fi
+	@if [ ! -f $(DEFAULTS) ] && [ -f config/machine/balance_bot.default ]; then \
+		sudo cp config/machine/balance_bot.default $(DEFAULTS); \
+		echo "restored $(DEFAULTS)"; \
+	else echo "Kept existing $(DEFAULTS)"; fi
 
 # Install the unit files from systemd/ — these are the versioned copies.
 # Anything machine-specific (device paths, baud, input mode) belongs in
@@ -93,14 +128,10 @@ install: $(BINDIR)/$(TARGET) install-units
 	sudo systemctl stop $(SERVER_SERVICE) || true
 	@echo "Installing $(TARGET) to /usr/local/bin/..."
 	sudo cp $(BINDIR)/$(TARGET) /usr/local/bin/$(TARGET)
-	@if [ ! -f pidconfig.txt ]; then \
-		echo "0" > pidconfig.txt; \
-		echo "0.02" >> pidconfig.txt; \
-		echo "40.0 0.0 5.0" >> pidconfig.txt; \
-		echo "20.0 0.5 2.0" >> pidconfig.txt; \
-		echo "15.0 0.0 1.5" >> pidconfig.txt; \
-		echo "Created default pidconfig.txt"; \
-	fi
+	@# No config seeding here. balance_bot writes robot.conf itself on first
+	@# run, migrating from pidconfig.txt + /etc/balance_bot_imu.conf if present.
+	@# The old block here wrote a positional file with gains that were not this
+	@# robot's, which the migration would then have adopted.
 	@echo "Restarting $(SERVICE) and $(SERVER_SERVICE)..."
 	sudo systemctl start $(SERVICE) || true
 	sudo systemctl start $(SERVER_SERVICE) || true

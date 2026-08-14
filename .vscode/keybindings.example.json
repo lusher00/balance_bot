@@ -1,0 +1,49 @@
+// balance_bot task keybindings
+//
+// VS Code has no workspace-level keybindings, so these cannot live in the repo
+// as active config. Copy them into your USER keybindings.json:
+//
+//     Cmd+K Cmd+S  ->  the {} icon, top right  ->  paste inside the [ ]
+//
+// The "args" string must match the task label in .vscode/tasks.json EXACTLY,
+// including the combo in brackets. If you rename a task, update it here too.
+//
+// shift+cmd+b is VS Code's built-in "run default build task" and already maps
+// to "sync and build" without any of this — it is listed for completeness.
+[
+    {
+        "key": "shift+cmd+b",
+        "command": "workbench.action.tasks.runTask",
+        "args": "sync and build  (\u21e7\u2318B)"
+    },
+    {
+        "key": "alt+shift+cmd+b",
+        "command": "workbench.action.tasks.runTask",
+        "args": "clean sync and build  (\u2325\u21e7\u2318B)"
+    },
+    {
+        "key": "alt+shift+cmd+s",
+        "command": "workbench.action.tasks.runTask",
+        "args": "sync only  (\u2325\u21e7\u2318S)"
+    },
+    {
+        "key": "alt+shift+cmd+k",
+        "command": "workbench.action.tasks.runTask",
+        "args": "build  (\u2325\u21e7\u2318K)"
+    },
+    {
+        "key": "alt+shift+cmd+i",
+        "command": "workbench.action.tasks.runTask",
+        "args": "build and install  (\u2325\u21e7\u2318I)"
+    },
+    {
+        "key": "alt+shift+cmd+p",
+        "command": "workbench.action.tasks.runTask",
+        "args": "install  (\u2325\u21e7\u2318P)"
+    },
+    {
+        "key": "alt+shift+cmd+c",
+        "command": "workbench.action.tasks.runTask",
+        "args": "clean  (\u2325\u21e7\u2318C)"
+    }
+]
