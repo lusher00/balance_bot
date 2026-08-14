@@ -351,7 +351,12 @@ static void draw_pid(int r)
     mvprintw(r, 1, "%-10s  %7s  %7s  %7s  %7s  %7s  %7s  %7s",
              "D2 Drive", "target", "pos", "err", "vel", "poscorr", "veldamp", "th_adj");
     attroff(A_DIM); r++;
-    mvprintw(r, 1, "%-10s  %7d  %7d  %7d  %7d  %+7.3f  %+7.3f  %+7.3f",
+    // enc_velocity is a float, not an int32_t like the three before it. Printing
+    // it with %d is undefined behaviour, not a rounding bug: the double is passed
+    // in a different register class than %d reads, so the column shows garbage
+    // AND every argument after it is read from the wrong place. That is why the
+    // poscorr/veldamp/th_adj columns could never be trusted either.
+    mvprintw(r, 1, "%-10s  %7d  %7d  %7d  %+7.2f  %+7.3f  %+7.3f  %+7.3f",
              "(zone)", d->enc_pos_target, d->enc_pos, d->enc_error,
              d->enc_velocity, d->pos_correction, d->vel_damp, d->theta_ref_adj);
 }

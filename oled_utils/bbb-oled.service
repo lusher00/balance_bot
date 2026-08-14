@@ -1,0 +1,42 @@
+[Unit]
+Description=bbot OLED Status Display
+Documentation=https://github.com/rlush/balance_bot
+# network.target, not network-online.target. The display shows "no ip" quite
+# happily and there is no reason to hold up boot waiting for DHCP just to draw
+# a status screen. network-online.target can add tens of seconds.
+After=network.target
+# The panel is useless without its bus. If i2c-1 has not appeared, fail fast
+# with a clear reason instead of respawning every 5s forever.
+ConditionPathExists=/dev/i2c-1
+# Don't respawn forever against a hard fault; give up and stay failed so it is
+# visible in `systemctl --failed`. These are [Unit] keys, not [Service].
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=debian
+# The i2c group owns /dev/i2c-*. Without this the service dies on a permission
+# error that reads like a missing device.
+SupplementaryGroups=i2c
+# -u so print/logging reach the journal immediately instead of sitting in a
+# pipe buffer until the process exits.
+ExecStart=/usr/bin/python3 -u /usr/local/bin/bbb_oled.py $OLED_ARGS
+# Options live here so they can be changed without editing the unit.
+EnvironmentFile=-/etc/default/bbb-oled
+Restart=always
+RestartSec=5
+
+# Modest hardening. This process needs one character device and one file in
+# /run; it has no business anywhere else.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+DeviceAllow=char-i2c rw
+
+[Install]
+WantedBy=multi-user.target

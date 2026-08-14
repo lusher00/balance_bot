@@ -243,9 +243,18 @@ static int handle_command(const char *json_cmd, char *response, size_t response_
 static void *ipc_estop_reset_thread(void *arg)
 {
     (void)arg;
-    motor_hal_roboclaw_reset();
+    // Only clear the latch if the controller actually came back. Clearing it
+    // unconditionally let ARM be accepted against a dead RoboClaw — the UI
+    // showed the estop cleared while nothing downstream had recovered.
+    if (motor_hal_roboclaw_reset() != 0)
+    {
+        LOG_ERROR("estop reset FAILED — RoboClaw did not reinitialise. "
+                  "Staying latched; power-cycle the controller.");
+        return NULL;
+    }
     state.estop_latched = 0;
     state.trying = 0;  // let angle logic re-set cleanly
+    LOG_INFO("estop reset complete — latch cleared");
     return NULL;
 }
 

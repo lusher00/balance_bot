@@ -1,0 +1,17 @@
+# /etc/default/bbb-oled — options for bbb-oled.service
+#
+# Installed by install.sh only if the file does not already exist, so local
+# edits survive a reinstall. Run `systemctl restart bbb-oled` after changing.
+#
+# Everything bbb_oled.py accepts is valid here; see `bbb_oled.py --help`.
+#
+#   --i2c-port N        bus number (the Blue's only external I2C is i2c-1)
+#   --i2c-addr 0x3C     panel address; some modules are 0x3D
+#   --height 32         for 128x32 panels; layout adapts
+#   --service NAME      which unit the BBOT line and heartbeat track
+#   --refresh 1.0       redraw interval
+#   --status-interval   how often to shell out to systemctl (keep >= 2 on ARM)
+#   --batt-path PATH    battery status JSON
+#   -v                  debug logging to the journal
+
+OLED_ARGS="--i2c-port 1 --i2c-addr 0x3C --service balance_bot"

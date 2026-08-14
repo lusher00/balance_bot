@@ -95,6 +95,32 @@ def send_acked(fd, payload, timeout=1.0):
             time.sleep(0.01)
     return False
 
+# The RoboClaw e-stop line is AM335x GPIO1_25 — legacy sysfs number 57.
+#
+# This used to be hardcoded as 569, which disagreed with src/roboclaw_estop.c's
+# 537 and therefore drove a different pin (GPIO2_25). Resolve it the same way
+# the C does so the two can never drift apart again.
+#
+# Do NOT match on the gpiochip label. Labels are assigned in registration order,
+# not by hardware bank, and on this board GPIO0 registers last (different
+# interconnect), so "gpio-0-31" is actually GPIO1 and "gpio-32-63" is GPIO2.
+# The controller's MMIO address is the only durable key.
+ESTOP_BANK_ADDR = "4804c000"   # AM335x GPIO1 controller
+ESTOP_BANK_OFFSET = 25         # GPIO1_25
+
+def resolve_estop_gpio():
+    """sysfs number of GPIO1_25 on the running kernel, or None."""
+    import glob
+    for chip in sorted(glob.glob("/sys/class/gpio/gpiochip*")):
+        try:
+            if ESTOP_BANK_ADDR not in os.path.realpath(os.path.join(chip, "device")):
+                continue
+            with open(os.path.join(chip, "base")) as f:
+                return int(f.read().strip()) + ESTOP_BANK_OFFSET
+        except (OSError, ValueError):
+            continue
+    return None
+
 def gpio_high(gpio):
     try:
         gpio_path = "/sys/class/gpio/gpio%d" % gpio
@@ -102,16 +128,32 @@ def gpio_high(gpio):
             with open("/sys/class/gpio/export", "w") as f:
                 f.write(str(gpio))
             time.sleep(0.15)
-        with open("%s/direction" % gpio_path, "w") as f:
-            f.write("out")
-        with open("%s/value" % gpio_path, "w") as f:
-            f.write("1")
-        print("roboclaw_reset: GPIO%d -> HIGH" % gpio)
+        # "high" configures the line as an output already driven high, in one
+        # step. Writing "out" first drives it LOW until the value write lands,
+        # and that falling edge re-latches the RoboClaw — the reason the e-stop
+        # cleared by hand but never across a boot.
+        try:
+            with open("%s/direction" % gpio_path, "w") as f:
+                f.write("high")
+        except OSError:
+            with open("%s/direction" % gpio_path, "w") as f:
+                f.write("out")
+            with open("%s/value" % gpio_path, "w") as f:
+                f.write("1")
+            print("roboclaw_reset: GPIO%d direction=high rejected, used out+1" % gpio)
+        with open("%s/value" % gpio_path) as f:
+            lvl = f.read().strip()
+        print("roboclaw_reset: GPIO%d -> HIGH (reads %s)" % (gpio, lvl))
     except Exception as e:
         print("roboclaw_reset: GPIO%d warning: %s" % (gpio, e))
 
 try:
-    gpio_high(569)
+    _estop = resolve_estop_gpio()
+    if _estop is None:
+        print("roboclaw_reset: WARNING — no gpiochip owns %s.gpio (AM335x GPIO1); "
+              "e-stop NOT released" % ESTOP_BANK_ADDR)
+    else:
+        gpio_high(_estop)
     time.sleep(0.1)
     fd = open_port(PORT, BAUD)
     time.sleep(0.1)
