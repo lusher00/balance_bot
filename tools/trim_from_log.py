@@ -17,14 +17,17 @@ up to compensate, so the robot balances happily at the wrong angle. It never
 falls, so nothing feels wrong. The error appears only as a slow creep, which
 reads as a drive problem rather than a trim problem.
 
-So measure the drift instead of the pose. While balancing, wheel velocity is
-approximately linear in pitch error:
+So measure the drift instead of the pose. Bin the balancing samples by pitch,
+average wheel velocity within each bin, and find where that curve crosses zero.
+That angle is where the robot does not accelerate: the true balance point, and
+the value the balance trim should be set to.
 
-    enc_velocity ~= k * (theta - theta_equilibrium)
+Binning matters. A point-wise fit of velocity against angle is mostly noise,
+because velocity is the INTEGRAL of angle error rather than proportional to it —
+the two run about 90 degrees out of phase. Averaging within a bin cancels that.
 
-Fit that line over the balancing samples and the x-intercept is the angle at
-which the robot does not accelerate. That is the true balance point, and the
-trim correction is its negation.
+The curve may slope up or down depending on IMU mounting and motor/encoder
+polarity; only monotonicity and the crossing matter.
 
   ./trim_from_log.py bbot_1786725755805.csv
   ./trim_from_log.py log.csv --max-theta 8      # tighten the balancing filter
@@ -149,23 +152,29 @@ def main():
 
     same = all(m > 0 for _, m, _ in curve) or all(m < 0 for _, m, _ in curve)
 
-    # A believable equilibrium needs more than one bin flipping sign. Require a
-    # run of RUN bins negative below and RUN positive above, in that order --
-    # velocity must INCREASE with pitch, because leaning further forward has to
-    # produce more forward motion. A single-bin dip between two positive bins is
-    # sensor noise, and treating it as a crossing produced a confidently wrong
-    # answer (-4.88 deg) on the first log this was run against.
+    # A believable equilibrium needs more than one bin flipping sign: require a
+    # run of RUN bins on one side of zero and RUN on the other. A single-bin dip
+    # between two same-signed bins is sensor noise, and treating it as a crossing
+    # produced a confidently wrong answer (-4.88 deg) on the first real log.
+    #
+    # The curve may slope EITHER way. Whether leaning forward reads as +theta,
+    # and whether forward motion reads as +encVel, depend on IMU mounting and on
+    # pol_*/enc_pol_* -- on this robot all four are -1 and the curve slopes down.
+    # An earlier version demanded an increasing curve and threw away a clean
+    # r=-0.91 signal. What matters is monotonic and crossing zero, not the sign.
     RUN = 2
     cross = None
     for k in range(len(curve) - 1):
         y0, y1 = curve[k][1], curve[k + 1][1]
-        if not (y0 <= 0 <= y1):
+        if not (y0 <= 0 <= y1 or y0 >= 0 >= y1):
             continue
         below = [curve[j][1] for j in range(max(0, k - RUN + 1), k + 1)]
         above = [curve[j][1] for j in range(k + 1, min(len(curve), k + 1 + RUN))]
         if len(below) < RUN or len(above) < RUN:
             continue
-        if all(v <= 0 for v in below) and all(v >= 0 for v in above):
+        rising = all(v <= 0 for v in below) and all(v >= 0 for v in above)
+        falling = all(v >= 0 for v in below) and all(v <= 0 for v in above)
+        if rising or falling:
             f = 0 if y1 == y0 else (0 - y0) / (y1 - y0)
             cross = curve[k][0] + f * (curve[k + 1][0] - curve[k][0])
             break
@@ -177,10 +186,11 @@ def main():
     bx = [b for b, _, _ in curve]
     by = [m for _, m, _ in curve]
     _, _, r_curve = linfit(bx, by)
+    strong = r_curve is not None and abs(r_curve) > 0.5
     print(f"\n  binned curve trend: r = {r_curve:+.2f} "
-          f"({'usable' if r_curve is not None and r_curve > 0.5 else 'too noisy to locate an equilibrium'})")
+          f"({'usable' if strong else 'too noisy to locate an equilibrium'})")
 
-    if cross is not None and r_curve is not None and r_curve > 0.5:
+    if cross is not None and strong:
         if abs(cross) < 0.3:
             print(f"\n  Equilibrium at {cross:+.2f} deg — already trimmed, leave it alone.")
         else:
