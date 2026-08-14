@@ -719,6 +719,9 @@ static int parse_json_command(const char *json_cmd)
         PCFG_FLOAT("max_correction", max_correction);
         PCFG_FLOAT("max_angle_rate", max_angle_rate);
         PCFG_INT("back_to_spot", back_to_spot);
+        PCFG_INT("drive_mode", drive_mode);
+        PCFG_FLOAT("drive_rate", drive_rate);
+        PCFG_INT("runaway_limit", runaway_limit);
 
 #undef PCFG_FLOAT
 #undef PCFG_INT
@@ -1074,14 +1077,17 @@ static void build_telemetry_json(char *buffer, size_t size)
                     "\"scale_a\":%.1f,\"scale_b\":%.1f,\"scale_c\":%.1f,\"scale_d\":%.1f,"
                     "\"vel_scale_stop\":%.1f,\"vel_scale_move\":%.1f,\"vel_scale_turning\":%.1f,"
                     "\"stopped_vel\":%d,\"max_correction\":%.2f,"
-                    "\"max_angle_rate\":%.2f,\"back_to_spot\":%d},",
+                    "\"max_angle_rate\":%.2f,\"back_to_spot\":%d,"
+                    "\"drive_mode\":%d,\"drive_rate\":%.1f,\"runaway_limit\":%d},",
                     g_pos_config.zone_a, g_pos_config.zone_b, g_pos_config.zone_c,
                     g_pos_config.scale_a, g_pos_config.scale_b,
                     g_pos_config.scale_c, g_pos_config.scale_d,
                     g_pos_config.vel_scale_stop, g_pos_config.vel_scale_move,
                     g_pos_config.vel_scale_turning,
                     g_pos_config.stopped_vel, g_pos_config.max_correction,
-                    g_pos_config.max_angle_rate, g_pos_config.back_to_spot);
+                    g_pos_config.max_angle_rate, g_pos_config.back_to_spot,
+                    g_pos_config.drive_mode, g_pos_config.drive_rate,
+                    g_pos_config.runaway_limit);
 
     // sbus_config -- the live mapping, so the dashboard can sync its controls
     // to what the bot is actually running rather than to its own defaults.

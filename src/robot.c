@@ -193,6 +193,9 @@ int robot_init(void)
     g_pos_config.max_correction = POS_MAX_CORRECTION_DEFAULT;
     g_pos_config.max_angle_rate = POS_MAX_ANGLE_RATE_DEFAULT;
     g_pos_config.back_to_spot = POS_BACK_TO_SPOT_DEFAULT;
+    g_pos_config.drive_mode = POS_DRIVE_MODE_DEFAULT;
+    g_pos_config.drive_rate = POS_DRIVE_RATE_DEFAULT;
+    g_pos_config.runaway_limit = POS_RUNAWAY_LIMIT_DEFAULT;
 
     g_motor_config.mode = MOTOR_HAL_MODE_DEFAULT;
     g_motor_config.qpps_max = MOTOR_QPPS_MAX_DEFAULT;
@@ -424,16 +427,64 @@ void robot_run(void)
          * the bot would not turn no matter how the channels were mapped. */
         static float steering_target = 0.0f;
 
+        /* Fractional carry for target-mode drive: at 100 Hz a full-stick
+         * advance is only a few ticks per loop, so truncating every tick would
+         * throw most of the command away. */
+        static float drive_accum = 0.0f;
+
         if (sbus_is_connected() && state.armed && state.mode == MODE_BALANCE)
         {
             stick_norm = sbus_get_drive();
-            stick_input = stick_norm * MAX_THETA_REF;
-            state.theta_ref = stick_input;
+
+            if (g_pos_config.drive_mode == DRIVE_MODE_TARGET)
+            {
+                /* Stick commands VELOCITY: advance where we want to be and let
+                 * position hold work out the lean. Centring the stick stops the
+                 * target moving, the bot coasts past it, and the growing error
+                 * produces the braking lean on its own -- no reverse stick, no
+                 * timing judgement. theta_ref is an OUTPUT in this mode, so the
+                 * stick must not touch it. */
+                drive_accum += stick_norm * g_pos_config.drive_rate * DT;
+                int32_t whole = (int32_t)drive_accum;
+                if (whole != 0)
+                {
+                    state.enc_pos_target += whole;
+                    drive_accum -= (float)whole;
+                }
+                stick_input = 0.0f;
+            }
+            else
+            {
+                /* Stick commands ACCELERATION (legacy). */
+                stick_input = stick_norm * MAX_THETA_REF;
+                state.theta_ref = stick_input;
+            }
 
             /* Hold the stick over and the bot keeps turning; release and it
              * holds the heading it reached. */
             steering_target += sbus_get_turn() * g_sbus_config.turn_rate * DT;
             state.steering = steering_target;
+        }
+        else
+        {
+            drive_accum = 0.0f;
+        }
+
+        if (g_pos_config.drive_mode == DRIVE_MODE_TARGET)
+        {
+            /* Anti-windup. A blocked or lifted wheel lets the target run away
+             * from where the bot can actually get to; the debt then discharges
+             * violently the moment traction returns. Kept well inside zone_c so
+             * the loose-hold abandon branch is not triggered by it. */
+            int32_t lim = g_pos_config.runaway_limit;
+            if (lim > 0)
+            {
+                int32_t lead = state.enc_pos_target - state.enc_pos;
+                if (lead > lim)
+                    state.enc_pos_target = state.enc_pos + lim;
+                else if (lead < -lim)
+                    state.enc_pos_target = state.enc_pos - lim;
+            }
         }
         else if (!sbus_is_connected())
         {
@@ -603,7 +654,14 @@ void robot_run(void)
                  * non-zero here is deliberate operator input. The epsilon only
                  * guards float noise. This is now independent of drive_scale,
                  * speed mode and MAX_THETA_REF. */
-                bool stick_centered = (fabsf(raw_stick_norm) < 0.001f);
+                /* In target mode there is no "driving" branch to hand over to:
+                 * position hold owns theta_ref the whole time, which is the
+                 * entire point. Forcing this true keeps the hold loop running
+                 * while the stick is deflected, so the bot decelerates into its
+                 * moving target instead of being flown open-loop. */
+                bool stick_centered = (g_pos_config.drive_mode == DRIVE_MODE_TARGET)
+                                          ? true
+                                          : (fabsf(raw_stick_norm) < 0.001f);
 
                 // ── D2 verbose debug (enable via IPC: {"type":"debug_position","value":true}) ──
                 static uint64_t d2_log_last_us = 0;

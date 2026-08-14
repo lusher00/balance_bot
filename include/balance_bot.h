@@ -106,6 +106,13 @@
 #define POS_STOPPED_VEL_DEFAULT 40
 #define POS_MAX_CORRECTION_DEFAULT 10.0f
 #define POS_MAX_ANGLE_RATE_DEFAULT 0.05f // deg/tick — ramps 0.5°/s at 10 Hz vel window
+/* Drive stick interpretation. Defaults to the legacy lean mode so behaviour is
+ * unchanged until you deliberately switch it. drive_rate 300 ticks/s is about
+ * 1.0 m/s at full stick; runaway_limit 300 ticks is about 1.0 m of lead, well
+ * inside zone_c so the loose-hold abandon branch never fires because of it. */
+#define POS_DRIVE_MODE_DEFAULT 0
+#define POS_DRIVE_RATE_DEFAULT 300.0f
+#define POS_RUNAWAY_LIMIT_DEFAULT 300
 #define POS_BACK_TO_SPOT_DEFAULT 1       // Full zone hold by default
 // How often the RoboClaw is polled for wheel speed (ms).
 //
@@ -154,7 +161,31 @@ typedef struct
                              // reference implementation uses 1°/loop at 500Hz ≈ 5°/loop at 100Hz.
     int back_to_spot;        // 1 = full zone-based hold (A/B/C/D);
                              // 0 = only correct inside zone_c (loose hold, position hold mode)
+
+    /* ── how the drive stick is interpreted ──────────────────────────────
+     *
+     * DRIVE_MODE_LEAN (0, the original): the stick sets theta_ref directly, so
+     * it commands ACCELERATION. There is no stick position meaning "stop" --
+     * centring it commands "stand upright", which does not shed the momentum
+     * already there. The operator has to brake manually with reverse stick and
+     * judge the reversal by eye.
+     *
+     * DRIVE_MODE_TARGET (1): the stick advances enc_pos_target at drive_rate,
+     * so it commands VELOCITY. Position hold owns theta_ref throughout and lean
+     * becomes an output. Centring the stick stops the target advancing; the bot
+     * coasts past it, position error builds, and the controller produces the
+     * braking lean by itself. Stopping needs no skill.
+     */
+    int drive_mode;          // 0 = lean (legacy), 1 = position target
+    float drive_rate;        // ticks/sec the target advances at full stick
+    int32_t runaway_limit;   // max |enc_pos_target - enc_pos| in ticks. Without
+                             // this, a blocked or lifted wheel lets the target
+                             // run away and the debt discharges violently when
+                             // traction returns.
 } pos_config_t;
+
+#define DRIVE_MODE_LEAN   0
+#define DRIVE_MODE_TARGET 1
 
 // ============================================================================
 // WHEEL & ENCODER PHYSICAL CONSTANTS

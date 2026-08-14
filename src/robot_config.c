@@ -113,6 +113,9 @@ void robot_config_defaults(robot_config_t *c)
     c->position.max_correction = POS_MAX_CORRECTION_DEFAULT;
     c->position.max_angle_rate = POS_MAX_ANGLE_RATE_DEFAULT;
     c->position.back_to_spot = POS_BACK_TO_SPOT_DEFAULT;
+    c->position.drive_mode = POS_DRIVE_MODE_DEFAULT;
+    c->position.drive_rate = POS_DRIVE_RATE_DEFAULT;
+    c->position.runaway_limit = POS_RUNAWAY_LIMIT_DEFAULT;
 
     c->motor.mode = MOTOR_HAL_MODE_DEFAULT;
     c->motor.qpps_max = MOTOR_QPPS_MAX_DEFAULT;
@@ -218,6 +221,9 @@ int robot_config_load(const char *path, robot_config_t *c)
             else if (KEY("max_correction")) c->position.max_correction = fv;
             else if (KEY("max_angle_rate")) c->position.max_angle_rate = fv;
             else if (KEY("back_to_spot")) c->position.back_to_spot = (int)fv;
+            else if (KEY("drive_mode")) c->position.drive_mode = (int)fv;
+            else if (KEY("drive_rate")) c->position.drive_rate = fv;
+            else if (KEY("runaway_limit")) c->position.runaway_limit = (int32_t)fv;
         }
         else if (ieq(section, "sbus"))
         {
@@ -313,6 +319,9 @@ int robot_config_save(const char *path, const robot_config_t *c)
     fprintf(f, "max_correction    = %.3f\n", c->position.max_correction);
     fprintf(f, "max_angle_rate    = %.3f\n", c->position.max_angle_rate);
     fprintf(f, "back_to_spot      = %d\n", c->position.back_to_spot);
+    fprintf(f, "drive_mode        = %d\n", c->position.drive_mode);
+    fprintf(f, "drive_rate        = %.1f\n", c->position.drive_rate);
+    fprintf(f, "runaway_limit     = %d\n", c->position.runaway_limit);
     fprintf(f, "\n");
 
     fprintf(f, "# IMU mounting calibration. pitch_offset is the RAW pitch angle at\n");
@@ -490,6 +499,9 @@ static int load_legacy_pid(const char *path, robot_config_t *c)
         else if (ieq(k, "max_correction")) c->position.max_correction = v;
         else if (ieq(k, "max_angle_rate")) c->position.max_angle_rate = v;
         else if (ieq(k, "back_to_spot")) c->position.back_to_spot = (int)v;
+        else if (ieq(k, "drive_mode")) c->position.drive_mode = (int)v;
+        else if (ieq(k, "drive_rate")) c->position.drive_rate = v;
+        else if (ieq(k, "runaway_limit")) c->position.runaway_limit = (int32_t)v;
         else if (ieq(k, "mode")) c->motor.mode = (int)v;
         else if (ieq(k, "qpps_max")) c->motor.qpps_max = (int)v;
         else if (ieq(k, "accel_qpps")) c->motor.accel_qpps = (int)v;
