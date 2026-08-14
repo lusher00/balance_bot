@@ -17,17 +17,24 @@ up to compensate, so the robot balances happily at the wrong angle. It never
 falls, so nothing feels wrong. The error appears only as a slow creep, which
 reads as a drive problem rather than a trim problem.
 
-So measure the drift instead of the pose. Bin the balancing samples by pitch,
-average wheel velocity within each bin, and find where that curve crosses zero.
-That angle is where the robot does not accelerate: the true balance point, and
-the value the balance trim should be set to.
+So measure the drift instead of the pose. The verdict is NET POSITION DRIFT: a
+correctly trimmed robot holds its ground. Anything else creeps, and the creep
+rate tells you which way to move the trim.
 
-Binning matters. A point-wise fit of velocity against angle is mostly noise,
-because velocity is the INTEGRAL of angle error rather than proportional to it —
-the two run about 90 degrees out of phase. Averaging within a bin cancels that.
+  trim  0.00  ->  +1.85 m over 62 s   (creeping forward, badly out)
+  trim -0.60  ->  -0.04 m over 81 s   (trimmed)
 
-The curve may slope up or down depending on IMU mounting and motor/encoder
-polarity; only monotonicity and the crossing matter.
+DO NOT try to compute the balance angle from the relationship between pitch and
+wheel velocity. Under closed-loop control the balance PID regulates theta, so
+the pitch variation in a log is oscillation, not exploration of an equilibrium.
+Binning velocity against pitch recovers the PHASE relationship between them —
+which looks beautifully clean (this robot scores r = -0.91) and whose zero
+crossing is a phase artefact, nothing to do with the balance point. An earlier
+version of this tool did exactly that and confidently recommended -2.44 deg for
+a robot that was already trimmed at -0.60. The bot took off.
+
+The curve is still printed, because its shape is a useful sanity check on
+whether the robot was genuinely balancing. It is a diagnostic, not an estimator.
 
   ./trim_from_log.py bbot_1786725755805.csv
   ./trim_from_log.py log.csv --max-theta 8      # tighten the balancing filter
@@ -102,6 +109,8 @@ def main():
 
     theta = col(rows, idx, "bal_measurement")
     vel = col(rows, idx, "pos_encVel")
+    pos = col(rows, idx, "pos_encPos")
+    tcol = col(rows, idx, "t")
     if theta is None or vel is None:
         print("need bal_measurement and pos_encVel columns; found:\n  " +
               ", ".join(hdr), file=sys.stderr)
@@ -150,84 +159,32 @@ def main():
     for b, m, n in curve:
         print(f"    {b:+6.1f} deg  n={n:4d}  {m:+7.2f} {'#' * min(int(abs(m) * 2), 40)}")
 
-    same = all(m > 0 for _, m, _ in curve) or all(m < 0 for _, m, _ in curve)
+    # ── verdict: net position drift ──────────────────────────────────
+    # This, and only this, decides the trim. See the module docstring for why
+    # the pitch/velocity curve above must not be used to compute a number.
+    net = pos[-1] - pos[0]
+    dur = tcol[-1] - tcol[0]
+    mm_per_tick = 155.0 * 3.14159 / 145.1
+    print(f"\n  net travel {net:+.0f} ticks = {net*mm_per_tick/1000:+.2f} m "
+          f"over {dur:.1f}s  ({net/dur*mm_per_tick/1000:+.3f} m/s)")
 
-    # A believable equilibrium needs more than one bin flipping sign: require a
-    # run of RUN bins on one side of zero and RUN on the other. A single-bin dip
-    # between two same-signed bins is sensor noise, and treating it as a crossing
-    # produced a confidently wrong answer (-4.88 deg) on the first real log.
-    #
-    # The curve may slope EITHER way. Whether leaning forward reads as +theta,
-    # and whether forward motion reads as +encVel, depend on IMU mounting and on
-    # pol_*/enc_pol_* -- on this robot all four are -1 and the curve slopes down.
-    # An earlier version demanded an increasing curve and threw away a clean
-    # r=-0.91 signal. What matters is monotonic and crossing zero, not the sign.
-    RUN = 2
-    cross = None
-    for k in range(len(curve) - 1):
-        y0, y1 = curve[k][1], curve[k + 1][1]
-        if not (y0 <= 0 <= y1 or y0 >= 0 >= y1):
-            continue
-        below = [curve[j][1] for j in range(max(0, k - RUN + 1), k + 1)]
-        above = [curve[j][1] for j in range(k + 1, min(len(curve), k + 1 + RUN))]
-        if len(below) < RUN or len(above) < RUN:
-            continue
-        rising = all(v <= 0 for v in below) and all(v >= 0 for v in above)
-        falling = all(v >= 0 for v in below) and all(v <= 0 for v in above)
-        if rising or falling:
-            f = 0 if y1 == y0 else (0 - y0) / (y1 - y0)
-            cross = curve[k][0] + f * (curve[k + 1][0] - curve[k][0])
-            break
-
-    # The crossing only means anything if the curve is broadly increasing. If
-    # velocity does not rise with pitch, there is no single equilibrium in this
-    # data and any crossing is an artefact -- on the first real log this scored
-    # r=0.35 and produced a crossing that contradicted the log's own mean drift.
-    bx = [b for b, _, _ in curve]
-    by = [m for _, m, _ in curve]
-    _, _, r_curve = linfit(bx, by)
-    strong = r_curve is not None and abs(r_curve) > 0.5
-    print(f"\n  binned curve trend: r = {r_curve:+.2f} "
-          f"({'usable' if strong else 'too noisy to locate an equilibrium'})")
-
-    if cross is not None and strong:
-        if abs(cross) < 0.3:
-            print(f"\n  Equilibrium at {cross:+.2f} deg — already trimmed, leave it alone.")
-        else:
-            print(f"\n  EQUILIBRIUM: {cross:+.2f} deg   (velocity crosses zero here,")
-            print(f"  with a monotonic curve either side, so this is trustworthy.)")
-            print(f"  Apply {cross:+.2f} deg to the balance trim, then re-log to confirm.")
-        return 0
-
+    DEADBAND = 0.30           # ticks/100ms considered "not creeping"
     print()
-    if abs(mean_drift) < 0.3:
-        print("  Mean drift is small, but the curve is too noisy to confirm the")
-        print("  equilibrium. Re-log before concluding it is trimmed -- a symmetric")
-        print("  swing about a WRONG balance point also averages to zero drift.")
+    if abs(mean_drift) <= DEADBAND:
+        print(f"  TRIMMED. Mean drift {mean_drift:+.2f} is inside +/-{DEADBAND},")
+        print(f"  and it travelled {abs(net*mm_per_tick/1000):.2f} m in {dur:.0f}s.")
+        print("  Leave the trim alone. Do not chase the curve above.")
         return 0
 
-    direction = "MORE NEGATIVE" if mean_drift > 0 else "MORE POSITIVE"
-    print(f"  The bot creeps {'forward' if mean_drift > 0 else 'backward'} persistently.")
-    print(f"  Balance trim needs to go {direction}.")
-
-    if same:
-        print()
-        print("  Every pitch bin drifts the same way, so the balance point is OUTSIDE")
-        print("  the range of angles in this log. The magnitude cannot be read off")
-        print("  this data -- only the direction.")
-        step = -0.5 if mean_drift > 0 else 0.5
-        print(f"\n  Apply {step:+.1f} deg, record another log, and run this again.")
-        print("  Iterate until the mean drift falls under +/-0.3. Do NOT try to")
-        print("  jump straight to a computed value; nothing here supports one.")
-    else:
-        step = -0.5 if mean_drift > 0 else 0.5
-        print(f"\n  The curve is not monotonic, so there is no single equilibrium to")
-        print(f"  read off it. Direction is reliable; magnitude is not.")
-        if cross is not None:
-            print(f"  (It does cross zero at {cross:+.2f} deg, but with r={r_curve:+.2f} that")
-            print(f"   crossing is noise -- note it contradicts the drift above.)")
-        print(f"\n  Apply {step:+.1f} deg, re-log, and run this again. Iterate until the")
-        print("  mean drift is under +/-0.3 and the trend firms up above r=0.5.")
+    # Scale the suggested step by how hard it is creeping, but keep it small --
+    # converging in three careful steps beats one confident overshoot.
+    step = 0.5 if abs(mean_drift) > 1.5 else 0.3
+    step = -step if mean_drift > 0 else step
+    print(f"  CREEPING {'forward' if mean_drift > 0 else 'backward'} at "
+          f"{mean_drift:+.2f} ticks/100ms ({net/dur*mm_per_tick/1000:+.3f} m/s).")
+    print(f"\n  Adjust the balance trim by {step:+.1f} deg, re-log 30s, run this again.")
+    print(f"  Converged when the drift is inside +/-{DEADBAND}. It usually takes")
+    print("  two or three steps; stop as soon as it says TRIMMED.")
     return 0
 
 
