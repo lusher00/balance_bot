@@ -1146,7 +1146,21 @@ void ipc_broadcast_telemetry(void)
     char buffer[BUFFER_SIZE];
 
     // Build JSON telemetry
-    build_telemetry_json(buffer, sizeof(buffer));
+    /* Leave room for the terminator. A unix socket is a BYTE STREAM with no
+     * message boundaries: the reader gets whatever chunk sizes the kernel
+     * chooses, which may split a packet in half or glue two together. Without a
+     * delimiter the far end cannot tell where one JSON object ends and the next
+     * begins, so it guesses -- and every guess it gets wrong is a silently
+     * dropped packet. This worked by luck while packets were small enough to
+     * usually land in a single read. */
+    build_telemetry_json(buffer, sizeof(buffer) - 2);
+
+    size_t len = strlen(buffer);
+    if (len + 1 < sizeof(buffer))
+    {
+        buffer[len++] = '\n';
+        buffer[len] = '\0';
+    }
 
     // Send to all active clients
     pthread_mutex_lock(&clients_mutex);
@@ -1154,7 +1168,9 @@ void ipc_broadcast_telemetry(void)
     {
         if (clients[i].active)
         {
-            ssize_t written = write(clients[i].socket_fd, buffer, strlen(buffer));
+            /* One write per packet, so the newline cannot be separated from the
+             * object it terminates. */
+            ssize_t written = write(clients[i].socket_fd, buffer, len);
             if (written < 0)
             {
                 LOG_ERROR("Failed to send telemetry to client %d", i);
