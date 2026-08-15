@@ -2650,7 +2650,7 @@
       state.packetsReceived++;
 
       if (d.system) {
-        state.armed = !!d.system.armed;
+        state.armed = settle('armed', !!d.system.armed);
         state.mode = d.system.mode;
         state.loopHz = d.system.loop_hz ?? 0;
         if (d.system.theta_offset !== undefined)
@@ -2739,7 +2739,7 @@
         posCfgBot = { ...d.pos_config };
         // Keep the Drive picker showing what the BOT is doing, not what the UI
         // last sent -- they diverge if it is changed from the CLI or a restart.
-        if (posCfgBot && posCfgBot.drive_mode !== undefined) syncDriveSeg(posCfgBot.drive_mode);
+        if (posCfgBot && posCfgBot.drive_mode !== undefined) syncDriveSeg(settle('drive_mode', posCfgBot.drive_mode));
       }
       if (d.pos_config && !posCfgReceived) {
         const pc = d.pos_config;
@@ -2946,7 +2946,8 @@
     // ════════════════════════════════════════════════════════════════════════════
     function toggleArm() {
       const next = !state.armed;
-      state.armed = next;   // optimistic — telemetry will confirm
+      state.armed = next;
+      markPending('armed', next);
       updateUI();
       sendCmd({ type: 'arm', value: next });
     }
@@ -3651,6 +3652,7 @@
     // everything else and survives a restart.
     function setDriveMode(m) {
       posCfg.drive_mode = m;
+      markPending('drive_mode', m);
       sendCmd({ type: 'set_pos_config', drive_mode: m });
       syncDriveSeg(m);
     }
@@ -3666,6 +3668,32 @@
     // that reparses the DOM -- ten times a second, while you were looking at a
     // different tab. Enabling the encoders block grew the payload and tipped it
     // over into unusable.
+    // ── optimistic UI, without the flip-back ────────────────────────────────
+    // Commands go out over the socket and come back echoed in telemetry, but a
+    // packet already in flight when you clicked still carries the OLD value.
+    // Applying it blindly flips the control back a moment later: ARM looked like
+    // it disarmed itself, and the Drive picker snapped back to Lean.
+    //
+    // After sending, hold the expected value briefly. Accept telemetry as soon
+    // as it agrees, or once the window expires -- so if the bot genuinely
+    // refused the command the UI ends up telling the truth rather than lying.
+    const pendingCmd = {};
+    const PENDING_MS = 1200;
+
+    function markPending(field, value) {
+      pendingCmd[field] = { value, until: performance.now() + PENDING_MS };
+    }
+
+    function settle(field, incoming) {
+      const p = pendingCmd[field];
+      if (!p) return incoming;
+      if (incoming === p.value || performance.now() > p.until) {
+        delete pendingCmd[field];
+        return incoming;
+      }
+      return p.value;   // bot has not caught up yet; hold what we asked for
+    }
+
     function panelVisible(name) {
       const el = document.getElementById('panel-' + name);
       return !!el && el.classList.contains('active');
