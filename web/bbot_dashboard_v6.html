@@ -2559,6 +2559,7 @@
     }
 
     function updateRC() {
+      if (!panelVisible('rc')) return;   // ~40 DOM lookups per packet otherwise
       if (!rcBuilt) { buildRC(); buildRCMap(); buildPose(); buildBalTrim(); }
       const s = state.sbus;
       const link = document.getElementById('rc-link');
@@ -3658,6 +3659,18 @@
         b.classList.toggle('active', Number(b.dataset.drive) === Number(m)));
     }
 
+    // Is a panel actually on screen? Telemetry lands at ~10 Hz and every panel
+    // was redrawn on every packet regardless of which tab was showing. The Debug
+    // panel was the worst by far: a full JSON.stringify of the entire telemetry
+    // object, three regex passes over the result, and an innerHTML assignment
+    // that reparses the DOM -- ten times a second, while you were looking at a
+    // different tab. Enabling the encoders block grew the payload and tipped it
+    // over into unusable.
+    function panelVisible(name) {
+      const el = document.getElementById('panel-' + name);
+      return !!el && el.classList.contains('active');
+    }
+
     function switchTab(name) {
       document.querySelectorAll('.tab').forEach(t =>
         t.classList.toggle('active', t.dataset.tab === name));
@@ -3667,6 +3680,12 @@
         if (p.id === 'panel-graph') {
           p.style.display = '';
           if (match) rebuildPlots();
+      // The per-panel updates skip work when hidden, so give the tab you just
+      // switched to an immediate draw instead of leaving it stale for a packet.
+      try {
+        if (name === 'rc') updateRC();
+        if (name === 'debug' && lastTelemetry) updateDebug(lastTelemetry);
+      } catch (e) { /* a switch can precede any telemetry */ }
         }
       });
     }
@@ -3809,11 +3828,12 @@
     // Debug
     // ════════════════════════════════════════════════════════════════════════════
     function updateDebug(d) {
-      document.getElementById('debug-pkt').textContent = `${state.packetsReceived} packets`;
-      // Keep the raw object so Copy/Export hand over exactly what arrived,
-      // rather than re-serialising whatever the DOM happens to be showing.
+      // Always keep the raw object, so Copy/Export work from any tab and hand
+      // over exactly what arrived rather than re-serialising the DOM.
       lastTelemetry = d;
-      if (debugHold) return;          // frozen: leave the displayed packet alone
+      if (!panelVisible('debug')) return;   // the expensive part, only if shown
+      document.getElementById('debug-pkt').textContent = `${state.packetsReceived} packets`;
+      if (debugHold) return;                // frozen: leave the packet alone
       document.getElementById('debug-out').innerHTML = syntaxHL(JSON.stringify(d, null, 2));
     }
 
