@@ -465,42 +465,62 @@ int sbus_update(void) {
     uint8_t byte;
     int decoded = 0;
 
-    while (read(sbus.fd, &byte, 1) == 1) {
-        // Sync: wait for header at position 0
-        if (sbus.buf_pos == 0 && byte != SBUS_HEADER) continue;
+    /* Read in blocks, not byte at a time.
+     *
+     * This was one read() syscall per byte. SBUS delivers a 25-byte frame every
+     * ~7 ms, so ~3570 bytes/sec became ~3570 syscalls/sec, and each blocking read
+     * that sleeps and wakes costs two context switches -- about 7100/sec. vmstat
+     * on the bot measured 6983-7156, which is the whole of it.
+     *
+     * The CPU was never saturated (60%+ idle), but 30% system time against 6% user
+     * time and that context-switch rate wrecks latency: ssh went sluggish and the
+     * telemetry dashboard rendered erratically, on a board with cycles to spare.
+     *
+     * A 256-byte read covers ten frames, so the syscall count drops by two orders
+     * of magnitude. The parse below is unchanged -- it still consumes one byte at
+     * a time, it just no longer crosses into the kernel to get each one. */
+    uint8_t chunk[256];
+    ssize_t got;
+    
+    while ((got = read(sbus.fd, chunk, sizeof(chunk))) > 0) {
+        for (ssize_t ci = 0; ci < got; ci++) {
+            byte = chunk[ci];
+            // Sync: wait for header at position 0
+            if (sbus.buf_pos == 0 && byte != SBUS_HEADER) continue;
 
-        sbus.buf[sbus.buf_pos++] = byte;
+            sbus.buf[sbus.buf_pos++] = byte;
 
-        if (sbus.buf_pos == SBUS_FRAME_LEN) {
-            sbus.buf_pos = 0;
+            if (sbus.buf_pos == SBUS_FRAME_LEN) {
+                sbus.buf_pos = 0;
 
-            // Validate footer (lower nibble of byte 24)
-            if ((sbus.buf[24] & SBUS_FOOTER_MASK) != SBUS_FOOTER) {
-                LOG_DEBUG("SBUS: bad footer 0x%02X — resyncing", sbus.buf[24]);
-                continue;
+                // Validate footer (lower nibble of byte 24)
+                if ((sbus.buf[24] & SBUS_FOOTER_MASK) != SBUS_FOOTER) {
+                    LOG_DEBUG("SBUS: bad footer 0x%02X — resyncing", sbus.buf[24]);
+                    continue;
+                }
+
+                sbus_decode_frame(sbus.buf);
+
+                if (sbus.failsafe) {
+                    LOG_WARN("SBUS: FAILSAFE active — forcing kill");
+                    /* Re-arm the interlock: after a link loss we cannot know where
+                     * the stick is, and the operator must re-centre it. */
+                    sbus.drive_centered = false;
+                    sbus.kill  = 0;
+                    sbus.arm   = 0;
+                    sbus.drive = 0.0f;
+                    sbus.turn  = 0.0f;
+                    sbus.aux1  = 0.0f;
+                    sbus.aux2  = 0.0f;
+                } else if (sbus.frame_lost) {
+                    // Single lost frame — hold last values, don't kill yet
+                    LOG_DEBUG("SBUS: frame lost flag set");
+                } else {
+                    sbus_decode_channels();
+                }
+
+                decoded = 1;
             }
-
-            sbus_decode_frame(sbus.buf);
-
-            if (sbus.failsafe) {
-                LOG_WARN("SBUS: FAILSAFE active — forcing kill");
-                /* Re-arm the interlock: after a link loss we cannot know where
-                 * the stick is, and the operator must re-centre it. */
-                sbus.drive_centered = false;
-                sbus.kill  = 0;
-                sbus.arm   = 0;
-                sbus.drive = 0.0f;
-                sbus.turn  = 0.0f;
-                sbus.aux1  = 0.0f;
-                sbus.aux2  = 0.0f;
-            } else if (sbus.frame_lost) {
-                // Single lost frame — hold last values, don't kill yet
-                LOG_DEBUG("SBUS: frame lost flag set");
-            } else {
-                sbus_decode_channels();
-            }
-
-            decoded = 1;
         }
     }
 
