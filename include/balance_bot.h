@@ -438,8 +438,37 @@ void robot_cleanup(void);
 // ============================================================================
 
 int ipc_server_init(void);
-void ipc_broadcast_telemetry(void);
 void ipc_server_cleanup(void);
+
+/* The stream is split into three messages rather than one combined packet:
+ *
+ *   telemetry  dynamic state (imu, encoders, controllers, motors). Sent at
+ *              rates.pid_states.
+ *   rc         raw + decoded SBUS. Sent at rates.rc, which is much higher --
+ *              the receiver produces a frame every ~7 ms, so bundling this
+ *              into the 10 Hz telemetry packet threw away 13 of every 14
+ *              samples and no amount of client-side work could recover them.
+ *   config     motor_config / pos_config / sbus_config. These only change on
+ *              command, so they are sent on connect and on change instead of
+ *              being retransmitted in every packet.
+ *
+ * All three are newline-terminated JSON objects carrying a "type" field, on the
+ * same socket. A reader must dispatch on "type" and ignore types it does not
+ * know, so this can be extended without breaking existing clients. */
+void ipc_broadcast_telemetry(void);
+void ipc_broadcast_rc(void);
+void ipc_broadcast_config(void);
+
+/* Mark the config packet as needing a resend. Call from anywhere that changes
+ * motor_config, pos_config or sbus_config. Cheap -- sets a flag; the control
+ * loop does the send via ipc_broadcast_config_if_dirty(). */
+void ipc_config_touch(void);
+void ipc_broadcast_config_if_dirty(void);
+
+/* Worst telemetry-drop count across connected clients. Reported in the
+ * telemetry packet so a stalled bridge is visible as a number rather than
+ * inferred from gaps in a graph. */
+unsigned long ipc_get_tx_drops(void);
 
 // ============================================================================
 // TELEMETRY (telemetry.c)

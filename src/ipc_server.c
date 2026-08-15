@@ -67,6 +67,12 @@
 #include <pthread.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
+#include <sys/ioctl.h>
+#ifdef __linux__
+#include <linux/sockios.h>   /* SIOCOUTQ — see client_has_headroom() */
+#endif
 #include "rc_compat.h"
 #include "roboclaw_estop.h"
 
@@ -79,6 +85,8 @@ static void *client_handler_thread(void *arg);
 static int handle_command(const char *json_cmd, char *response, size_t response_len);
 static int parse_json_command(const char *json_cmd);
 static void build_telemetry_json(char *buffer, size_t size);
+static void build_rc_json(char *buffer, size_t size);
+static void build_config_json(char *buffer, size_t size);
 
 // Client connection tracking
 typedef struct
@@ -86,6 +94,13 @@ typedef struct
     int socket_fd;
     bool active;
     pthread_t thread;
+    /* Frames skipped because this client's socket buffer was full. Non-zero
+     * here means the client is not keeping up, which is a property of the
+     * client or the link -- not of the control loop. */
+    unsigned long dropped;
+    /* RC packets deliberately skipped to preserve telemetry headroom. Not a
+     * fault -- see TX_RESERVE_BYTES. */
+    unsigned long rc_yielded;
 } client_connection_t;
 
 static client_connection_t clients[MAX_CLIENTS] = {0};
@@ -118,6 +133,21 @@ static void *server_thread_func(void *arg __attribute__((unused)))
 
         LOG_INFO("New client connected (fd=%d)", client_fd);
 
+        /* Non-blocking from the moment we own it. ipc_broadcast_line() runs on
+         * the control loop thread; on a blocking fd a client that stops draining
+         * would stall the balance loop inside write(). O_NONBLOCK is a property
+         * of the open file description, so it applies to the read side too --
+         * client_handler_thread() therefore poll()s before reading rather than
+         * spinning on EAGAIN. */
+        int fl = fcntl(client_fd, F_GETFL, 0);
+        if (fl < 0 || fcntl(client_fd, F_SETFL, fl | O_NONBLOCK) < 0)
+        {
+            LOG_ERROR("Failed to set O_NONBLOCK on fd=%d: %s",
+                      client_fd, strerror(errno));
+            close(client_fd);
+            continue;
+        }
+
         // Find free slot for client
         pthread_mutex_lock(&clients_mutex);
         bool added = false;
@@ -127,6 +157,8 @@ static void *server_thread_func(void *arg __attribute__((unused)))
             {
                 clients[i].socket_fd = client_fd;
                 clients[i].active = true;
+                clients[i].dropped = 0;
+                clients[i].rc_yielded = 0;
 
                 // Spawn handler thread
                 if (pthread_create(&clients[i].thread, NULL,
@@ -145,6 +177,15 @@ static void *server_thread_func(void *arg __attribute__((unused)))
             }
         }
         pthread_mutex_unlock(&clients_mutex);
+
+        /* A fresh client has no motor/pos/sbus config yet -- those are no longer
+         * repeated in every telemetry packet, so without this its controls would
+         * sit at their built-in defaults until someone happened to change a
+         * setting. Flagging it here lets the CONTROL LOOP do the actual send, so
+         * every write to a client fd still comes from one thread and a config
+         * packet can never interleave into the middle of a telemetry packet. */
+        if (added)
+            ipc_config_touch();
 
         if (!added)
         {
@@ -171,7 +212,28 @@ static void *client_handler_thread(void *arg)
 
     while (client->active)
     {
+        /* The fd is O_NONBLOCK (set in the accept path so the control loop can
+         * never block writing to it), so a bare read() would spin on EAGAIN and
+         * burn a core. Wait for readability instead. The timeout is what lets
+         * this thread notice client->active going false at shutdown. */
+        struct pollfd pfd = { .fd = client->socket_fd, .events = POLLIN };
+        int pr = poll(&pfd, 1, 200);
+        if (pr == 0)
+            continue;                 /* timeout -- re-check client->active */
+        if (pr < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            LOG_ERROR("poll failed on fd=%d: %s", client->socket_fd, strerror(errno));
+            break;
+        }
+        if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL))
+            break;
+
         bytes_read = read(client->socket_fd, buffer, sizeof(buffer) - 1);
+
+        if (bytes_read < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+            continue;
 
         if (bytes_read <= 0)
         {
@@ -679,6 +741,7 @@ static int parse_json_command(const char *json_cmd)
 
         if (robot_config_save_current(NULL) != 0)
             LOG_WARN("sbus_config applied but could not be saved to disk");
+        ipc_config_touch();
         return 0;
     }
 
@@ -739,6 +802,7 @@ static int parse_json_command(const char *json_cmd)
         if (robot_config_save_current(NULL) != 0)
             LOG_WARN("pos_config updated but could not be saved to disk");
         LOG_INFO("iPhone: pos_config updated + saved");
+        ipc_config_touch();
         return 0;
     }
 
@@ -811,6 +875,7 @@ static int parse_json_command(const char *json_cmd)
         motor_config_apply(&cfg);
         LOG_INFO("iPhone: motor_config updated — mode=%d qpps_max=%d accel=%d baud=%d pol=%.1f/%.1f",
                  cfg.mode, cfg.qpps_max, cfg.accel_qpps, cfg.baud, cfg.pol_l, cfg.pol_r);
+        ipc_config_touch();
         return 0;
     }
 
@@ -857,6 +922,14 @@ static int parse_json_command(const char *json_cmd)
             return -1;
         }
         LOG_INFO("iPhone: claw PID set — kp=%.4f ki=%.4f kd=%.4f", kp, ki, kd);
+        /* motor_hal_set_claw_pid() pushes the gains to the RoboClaw but does not
+         * touch g_motor_config, so the config packet would keep advertising the
+         * old values to any client that connected afterwards. Mirror them here
+         * before flagging the resend. */
+        g_motor_config.claw_kp = kp;
+        g_motor_config.claw_ki = ki;
+        g_motor_config.claw_kd = kd;
+        ipc_config_touch();
         return 0;
     }
 
@@ -913,7 +986,12 @@ static void build_telemetry_json(char *buffer, size_t size)
     {
         pos = json_append(buffer, pos, size,
                         "\"system\":{\"battery\":%.2f,\"armed\":%s,\"mode\":%d,\"loop_hz\":%.1f,\"theta_offset\":%.4f,\"pose_lean\":%.4f,"
-                        "\"batt_voltage\":%.3f,\"batt_status\":%d,\"claw_voltage\":%.2f,\"claw_temp\":%.1f},",
+                        "\"batt_voltage\":%.3f,\"batt_status\":%d,\"claw_voltage\":%.2f,\"claw_temp\":%.1f,"
+                        /* Telemetry packets the kernel refused because the
+                         * client was not draining. Non-zero means holes in the
+                         * graphs, and it means the bridge or the link is behind
+                         * -- not the renderer. */
+                        "\"tx_drops\":%lu},",
                         g_telemetry_data.system.battery_voltage,
                         g_telemetry_data.system.armed ? "true" : "false",
                         g_telemetry_data.system.mode,
@@ -923,25 +1001,16 @@ static void build_telemetry_json(char *buffer, size_t size)
                         g_telemetry_data.system.batt_voltage,
                         (int)g_telemetry_data.system.batt_status,
                         g_telemetry_data.system.claw_voltage,
-                        g_telemetry_data.system.claw_temp);
+                        g_telemetry_data.system.claw_temp,
+                        ipc_get_tx_drops());
     }
 
-    // Motor config (always included — small, static, useful for app to confirm active mode)
-    pos = json_append(buffer, pos, size,
-                    "\"motor_config\":{\"mode\":%d,\"qpps_max\":%d,\"accel_qpps\":%d,"
-                    "\"pol_l\":%.1f,\"pol_r\":%.1f,\"enc_pol_l\":%.1f,\"enc_pol_r\":%.1f,"
-                    "\"claw_kp\":%.6f,\"claw_ki\":%.6f,\"claw_kd\":%.6f,\"baud\":%d},",
-                    g_motor_config.mode,
-                    g_motor_config.qpps_max,
-                    g_motor_config.accel_qpps,
-                    g_motor_config.pol_l,
-                    g_motor_config.pol_r,
-                    g_motor_config.enc_pol_l,
-                    g_motor_config.enc_pol_r,
-                    g_motor_config.claw_kp,
-                    g_motor_config.claw_ki,
-                    g_motor_config.claw_kd,
-                    g_motor_config.baud);
+    /* motor_config / pos_config / sbus_config used to be rebuilt and appended
+     * here on every packet. They only change when a set_* command changes them,
+     * so ~700 of the ~2000 bytes in every packet were byte-identical to the
+     * previous packet. They now live in the "config" message, sent once when a
+     * client connects and again whenever a command actually changes one of
+     * them. See build_config_json() / ipc_broadcast_config(). */
 
     // Encoders
     if (g_debug_config.telemetry.encoders)
@@ -1070,7 +1139,93 @@ static void build_telemetry_json(char *buffer, size_t size)
                     g_telemetry_data.motors.left_duty,
                     g_telemetry_data.motors.right_duty);
 
-    // pos_config -- always included so app can sync on connect
+    /* sbus moved out of this packet entirely -- see build_rc_json(). It was the
+     * one block here whose source changes faster than this packet is sent: the
+     * receiver delivers a frame every ~7 ms and this packet goes out every
+     * 100 ms, so the RC panel was being fed 1 sample in 14 and could not show a
+     * stick movement faithfully no matter how fast the browser drew it. */
+
+    /* Remove trailing comma. pos == 0 is impossible (the "{" above always
+     * lands), but read the guard as belt-and-braces if a future edit makes the
+     * first append conditional. */
+    if (pos > 0 && buffer[pos - 1] == ',')
+        pos--;
+
+    pos = json_append(buffer, pos, size, "}\n");
+}
+
+/**
+ * @brief Build the RC (SBUS) packet.
+ *
+ * Split out of build_telemetry_json() so it can be broadcast at its own, much
+ * higher rate. input_sbus.c already decodes all 16 channels and both flags;
+ * this mirrors what draw_sbus() shows in the ncurses UI.
+ *
+ * Raw channel values are 172..1811, centre 992 (see SBUS_MIN/MID/MAX_RAW).
+ * Decoded fields are what the firmware actually derived from them, so the
+ * dashboard can show the mapping working rather than just the numbers.
+ *
+ * Roughly 270 bytes, versus ~2000 for a full telemetry packet -- which is what
+ * makes sending it at 50 Hz cheaper than the old 10 Hz combined packet was.
+ */
+static void build_rc_json(char *buffer, size_t size)
+{
+    size_t pos = 0;
+
+    pos = json_append(buffer, pos, size,
+                    "{\"type\":\"rc\",\"timestamp\":%llu,"
+                    "\"connected\":%s,\"failsafe\":%s,\"drive_armed\":%s,\"ch\":[",
+                    (unsigned long long)(rc_nanos_since_boot() / 1000),
+                    sbus_is_connected() ? "true" : "false",
+                    sbus_get_failsafe() ? "true" : "false",
+                    sbus_drive_armed() ? "true" : "false");
+    for (int i = 0; i < 16; i++)
+        pos = json_append(buffer, pos, size,
+                        "%s%u", i ? "," : "", (unsigned)sbus_get_channel_raw(i));
+    pos = json_append(buffer, pos, size,
+                    "],\"drive\":%.4f,\"turn\":%.4f,"
+                    "\"arm\":%d,\"kill\":%d,\"speed\":%d,"
+                    "\"sw_c\":%d,\"sw_e\":%d,\"sw_f\":%s,"
+                    "\"aux1\":%.4f,\"aux2\":%.4f}\n",
+                    sbus_get_drive(), sbus_get_turn(),
+                    sbus_get_arm(), sbus_get_kill(), sbus_get_speed_mode(),
+                    sbus_get_sw_c(), sbus_get_sw_e(),
+                    sbus_get_sw_f() ? "true" : "false",
+                    sbus_get_aux1(), sbus_get_aux2());
+}
+
+/**
+ * @brief Build the config packet -- everything that only changes on command.
+ *
+ * Sent once when a client connects and again whenever a set_* command actually
+ * changes one of these values (see ipc_config_touch()). A client that has never
+ * seen one of these has no values to sync its controls to, so this must be sent
+ * on connect and not merely on change.
+ */
+static void build_config_json(char *buffer, size_t size)
+{
+    size_t pos = 0;
+
+    pos = json_append(buffer, pos, size,
+                    "{\"type\":\"config\",\"timestamp\":%llu,",
+                    (unsigned long long)(rc_nanos_since_boot() / 1000));
+
+    pos = json_append(buffer, pos, size,
+                    "\"motor_config\":{\"mode\":%d,\"qpps_max\":%d,\"accel_qpps\":%d,"
+                    "\"pol_l\":%.1f,\"pol_r\":%.1f,\"enc_pol_l\":%.1f,\"enc_pol_r\":%.1f,"
+                    "\"claw_kp\":%.6f,\"claw_ki\":%.6f,\"claw_kd\":%.6f,\"baud\":%d},",
+                    g_motor_config.mode,
+                    g_motor_config.qpps_max,
+                    g_motor_config.accel_qpps,
+                    g_motor_config.pol_l,
+                    g_motor_config.pol_r,
+                    g_motor_config.enc_pol_l,
+                    g_motor_config.enc_pol_r,
+                    g_motor_config.claw_kp,
+                    g_motor_config.claw_ki,
+                    g_motor_config.claw_kd,
+                    g_motor_config.baud);
+
     pos = json_append(buffer, pos, size,
                     "\"pos_config\":{"
                     "\"zone_a\":%d,\"zone_b\":%d,\"zone_c\":%d,"
@@ -1089,95 +1244,216 @@ static void build_telemetry_json(char *buffer, size_t size)
                     g_pos_config.drive_mode, g_pos_config.drive_rate,
                     g_pos_config.runaway_limit);
 
-    // sbus_config -- the live mapping, so the dashboard can sync its controls
-    // to what the bot is actually running rather than to its own defaults.
     pos = json_append(buffer, pos, size,
                       "\"sbus_config\":{\"drive_channel\":%d,\"turn_channel\":%d,"
                       "\"drive_scale\":%.4f,\"turn_scale\":%.4f,\"turn_rate\":%.2f,"
                       "\"drive_invert\":%d,\"turn_invert\":%d,"
-                      "\"deadband\":%.4f,\"require_center\":%d},",
+                      "\"deadband\":%.4f,\"require_center\":%d}",
                       g_sbus_config.drive_channel, g_sbus_config.turn_channel,
                       g_sbus_config.drive_scale, g_sbus_config.turn_scale,
                       g_sbus_config.turn_rate,
                       g_sbus_config.drive_invert, g_sbus_config.turn_invert,
                       g_sbus_config.deadband, g_sbus_config.require_center);
 
-    // sbus -- raw transmitter state. input_sbus.c already decodes all 16
-    // channels and both flags; this block is the only thing that was missing
-    // to get it off the bot. Mirrors what draw_sbus() shows in the ncurses UI.
-    //
-    // Raw channel values are 172..1811, centre 992 (see SBUS_MIN/MID/MAX_RAW).
-    // Decoded fields are what the firmware actually derived from them, so the
-    // dashboard can show the mapping working rather than just the numbers.
-    pos = json_append(buffer, pos, size,
-                    "\"sbus\":{\"connected\":%s,\"failsafe\":%s,\"drive_armed\":%s,\"ch\":[",
-                    sbus_is_connected() ? "true" : "false",
-                    sbus_get_failsafe() ? "true" : "false",
-                    sbus_drive_armed() ? "true" : "false");
-    for (int i = 0; i < 16; i++)
-        pos = json_append(buffer, pos, size,
-                        "%s%u", i ? "," : "", (unsigned)sbus_get_channel_raw(i));
-    pos = json_append(buffer, pos, size,
-                    "],\"drive\":%.4f,\"turn\":%.4f,"
-                    "\"arm\":%d,\"kill\":%d,\"speed\":%d,"
-                    "\"sw_c\":%d,\"sw_e\":%d,\"sw_f\":%s,"
-                    "\"aux1\":%.4f,\"aux2\":%.4f},",
-                    sbus_get_drive(), sbus_get_turn(),
-                    sbus_get_arm(), sbus_get_kill(), sbus_get_speed_mode(),
-                    sbus_get_sw_c(), sbus_get_sw_e(),
-                    sbus_get_sw_f() ? "true" : "false",
-                    sbus_get_aux1(), sbus_get_aux2());
-
-    // Remove trailing comma
-    if (buffer[pos - 1] == ',')
-        pos--;
-
     pos = json_append(buffer, pos, size, "}\n");
+}
+
+/**
+ * @brief Send one already-built, newline-terminated packet to every client.
+ *
+ * A unix socket is a BYTE STREAM with no message boundaries: the reader gets
+ * whatever chunk sizes the kernel chooses, which may split a packet in half or
+ * glue two together. Without a delimiter the far end cannot tell where one JSON
+ * object ends and the next begins, so it guesses -- and every guess it gets
+ * wrong is a silently dropped packet. Hence exactly one '\n' per packet, and
+ * one write() per packet so the newline cannot be separated from the object it
+ * terminates.
+ *
+ * The write is non-blocking (see ipc_server_init / the accept path, which set
+ * O_NONBLOCK). This matters more than it looks: this function runs on the
+ * CONTROL LOOP thread. With a blocking fd, a client that stops draining -- a
+ * phone that walked out of wifi range, a paused node bridge -- fills the socket
+ * buffer and then write() blocks the balance loop until it drains. Dropping a
+ * telemetry frame is free; stalling the loop that keeps the robot upright is
+ * not. EAGAIN therefore means "skip this frame for this client", not an error.
+ */
+/* Send buffer headroom reserved for telemetry, in bytes.
+ *
+ * Telemetry and RC share one socket buffer (~208 KB, which in practice accepts
+ * ~90 packets of this size). Before the RC stream existed, 10 packets/s meant a
+ * stalled reader was tolerated for ~9 s. At 10 + 50 packets/s that headroom
+ * collapses to ~1.6 s -- and when it runs out, the kernel refuses whatever is
+ * written next, which is as likely to be a telemetry packet as an RC one.
+ *
+ * That is what makes graph traces go angular: a dropped telemetry packet is a
+ * missing sample, and the plot joins the two survivors with a straight line.
+ * RC is resent 50 times a second and nobody can see one missing frame; a
+ * telemetry sample is gone from the trace and from any CSV recorded from it.
+ *
+ * So RC yields. If the queue is deeper than this, RC packets are skipped and
+ * the remaining buffer is left for telemetry. */
+#define TX_RESERVE_BYTES (64 * 1024)
+
+/* true if this client's send queue is shallow enough to accept a low priority
+ * packet. Checked before writing rather than discovering it via EAGAIN, so a
+ * low priority packet cannot consume the last of the buffer.
+ *
+ * SIOCOUTQ is Linux-only, and this tree is edited on a Mac and built on the
+ * BeagleBone. Guarded so a local `make` on macOS still compiles rather than
+ * failing on a missing <linux/sockios.h>; there it degrades to the unprioritised
+ * behaviour, which is correct-but-worse, not broken. */
+static bool client_has_headroom(int fd)
+{
+#ifdef SIOCOUTQ
+    int queued = 0;
+    if (ioctl(fd, SIOCOUTQ, &queued) != 0)
+        return true;            /* cannot tell -- behave as before */
+    return queued < TX_RESERVE_BYTES;
+#else
+    (void)fd;
+    return true;
+#endif
+}
+
+static void ipc_broadcast_line(const char *buffer, size_t len, const char *what,
+                               bool low_priority)
+{
+    pthread_mutex_lock(&clients_mutex);
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (!clients[i].active)
+            continue;
+
+        if (low_priority && !client_has_headroom(clients[i].socket_fd))
+        {
+            /* Deliberate, and not the same thing as a failure: RC is stepping
+             * aside so telemetry keeps its slot. Counted separately so it does
+             * not read as packet loss in the logs. */
+            clients[i].rc_yielded++;
+            continue;
+        }
+
+        ssize_t written = write(clients[i].socket_fd, buffer, len);
+        if (written < 0)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                /* Client is behind. Drop this frame rather than stall the loop.
+                 * Rate-limited so a backed-up client cannot flood the log --
+                 * which would itself cost loop time. */
+                clients[i].dropped++;
+                if ((clients[i].dropped % 100) == 1)
+                    LOG_WARN("client %d behind, dropped %lu %s frame(s)",
+                             i, (unsigned long)clients[i].dropped, what);
+            }
+            else if (errno != EINTR && errno != EPIPE)
+            {
+                LOG_ERROR("Failed to send %s to client %d: %s",
+                          what, i, strerror(errno));
+            }
+        }
+        else if ((size_t)written < len)
+        {
+            /* Should be unreachable: on Linux a non-blocking AF_UNIX
+             * SOCK_STREAM write is all-or-nothing for messages that fit in the
+             * send buffer -- verified, it returns EAGAIN rather than writing a
+             * prefix. If it ever did happen the stream would be desynchronised
+             * (a truncated object glued to the next one), so say so loudly
+             * rather than counting it as an ordinary drop. */
+            LOG_ERROR("PARTIAL WRITE of %s to client %d (%zd/%zu) -- stream framing lost",
+                      what, i, written, len);
+            clients[i].dropped++;
+        }
+    }
+    pthread_mutex_unlock(&clients_mutex);
+}
+
+/* Builders already terminate with "}\n", so this only measures. */
+static void ipc_build_and_send(void (*build)(char *, size_t), const char *what,
+                               bool low_priority)
+{
+    char buffer[BUFFER_SIZE];
+    buffer[0] = '\0';
+    build(buffer, sizeof(buffer) - 1);
+    size_t len = strlen(buffer);
+    if (len == 0)
+        return;
+    if (buffer[len - 1] != '\n')
+    {
+        /* Truncated: the closing "}\n" never fitted. Sending it would hand the
+         * reader an unparseable fragment, so drop it and say so. */
+        LOG_ERROR("%s packet truncated at %zu bytes, not sent", what, len);
+        return;
+    }
+    ipc_broadcast_line(buffer, len, what, low_priority);
 }
 
 /**
  * @brief Broadcast telemetry to all connected clients
  *
- * Call this periodically from the main control loop to send
- * telemetry data to connected iPhone apps.
+ * Call this periodically from the main control loop.
  */
 void ipc_broadcast_telemetry(void)
 {
-    char buffer[BUFFER_SIZE];
+    /* Never yields. A missing telemetry sample is a hole in every graph and
+     * every recorded CSV. */
+    ipc_build_and_send(build_telemetry_json, "telemetry", false);
+}
 
-    // Build JSON telemetry
-    /* Leave room for the terminator. A unix socket is a BYTE STREAM with no
-     * message boundaries: the reader gets whatever chunk sizes the kernel
-     * chooses, which may split a packet in half or glue two together. Without a
-     * delimiter the far end cannot tell where one JSON object ends and the next
-     * begins, so it guesses -- and every guess it gets wrong is a silently
-     * dropped packet. This worked by luck while packets were small enough to
-     * usually land in a single read. */
-    build_telemetry_json(buffer, sizeof(buffer) - 2);
+/**
+ * @brief Broadcast the RC (SBUS) packet.
+ *
+ * Small and cheap by design -- call this at the RC rate, not the telemetry
+ * rate. See build_rc_json().
+ */
+void ipc_broadcast_rc(void)
+{
+    /* Yields when the client is behind -- see TX_RESERVE_BYTES. */
+    ipc_build_and_send(build_rc_json, "rc", true);
+}
 
-    size_t len = strlen(buffer);
-    if (len + 1 < sizeof(buffer))
-    {
-        buffer[len++] = '\n';
-        buffer[len] = '\0';
-    }
+/**
+ * @brief Broadcast the config packet (motor / pos / sbus config).
+ */
+void ipc_broadcast_config(void)
+{
+    /* Never yields: it is sent once on connect, and a client that misses it
+     * shows its controls at built-in defaults until something else changes. */
+    ipc_build_and_send(build_config_json, "config", false);
+}
 
-    // Send to all active clients
+/* Worst drop count across connected clients, for the telemetry packet. Exposed
+ * so "is the bot dropping packets?" is answerable from the dashboard instead of
+ * inferred from the shape of a graph. */
+unsigned long ipc_get_tx_drops(void)
+{
+    unsigned long worst = 0;
     pthread_mutex_lock(&clients_mutex);
     for (int i = 0; i < MAX_CLIENTS; i++)
-    {
-        if (clients[i].active)
-        {
-            /* One write per packet, so the newline cannot be separated from the
-             * object it terminates. */
-            ssize_t written = write(clients[i].socket_fd, buffer, len);
-            if (written < 0)
-            {
-                LOG_ERROR("Failed to send telemetry to client %d", i);
-            }
-        }
-    }
+        if (clients[i].active && clients[i].dropped > worst)
+            worst = clients[i].dropped;
     pthread_mutex_unlock(&clients_mutex);
+    return worst;
+}
+
+/* Set whenever a command changes something in the config packet. The control
+ * loop clears it by calling ipc_broadcast_config_if_dirty() -- config is sent
+ * from the loop thread like everything else, so there is exactly one writer per
+ * client fd ordering-wise and a command cannot interleave a config packet into
+ * the middle of a telemetry packet. */
+static volatile sig_atomic_t config_dirty = 0;
+
+void ipc_config_touch(void)
+{
+    config_dirty = 1;
+}
+
+void ipc_broadcast_config_if_dirty(void)
+{
+    if (!config_dirty)
+        return;
+    config_dirty = 0;
+    ipc_broadcast_config();
 }
 
 /**

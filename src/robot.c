@@ -85,6 +85,7 @@ debug_config_t g_debug_config;
 // Telemetry counters
 static uint64_t telemetry_counter = 0;
 static uint64_t last_telemetry_broadcast = 0;
+static uint64_t last_rc_broadcast = 0;
 
 // Motor duty tracking (for telemetry)
 static float last_left_duty = 0.0f;
@@ -896,14 +897,45 @@ void robot_run(void)
         g_telemetry_data.motors.right_duty = last_right_duty;
 
         uint64_t now = rc_nanos_since_boot() / 1000000; // ms
-        uint64_t telemetry_interval = 1000 / g_debug_config.rates.pid_states;
 
-        if (now - last_telemetry_broadcast >= telemetry_interval)
+        /* Guard the divisions: a zero rate from a bad config would be a
+         * divide-by-zero here, and the old code divided unguarded. */
         {
-            ipc_broadcast_telemetry();
-            last_telemetry_broadcast = now;
-            telemetry_counter++;
+            int tel_hz = g_debug_config.rates.pid_states;
+            if (tel_hz < 1) tel_hz = 1;
+            uint64_t telemetry_interval = 1000 / (uint64_t)tel_hz;
+
+            if (now - last_telemetry_broadcast >= telemetry_interval)
+            {
+                ipc_broadcast_telemetry();
+                last_telemetry_broadcast = now;
+                telemetry_counter++;
+            }
         }
+
+        /* RC on its own, much faster clock. Separate from telemetry because the
+         * SBUS frame rate (~143 Hz) is an order of magnitude above the telemetry
+         * rate: bundled into the 10 Hz packet, 13 of every 14 receiver frames
+         * were thrown away before they ever left the board. The packet is small
+         * (~270 bytes) so this is cheaper than it sounds. */
+        {
+            int rc_hz = g_debug_config.rates.rc;
+            if (rc_hz < 1) rc_hz = 1;
+            if (rc_hz > 100) rc_hz = 100;   /* control loop rate — above this we
+                                             * would just resend identical data */
+            uint64_t rc_interval = 1000 / (uint64_t)rc_hz;
+
+            if (now - last_rc_broadcast >= rc_interval)
+            {
+                ipc_broadcast_rc();
+                last_rc_broadcast = now;
+            }
+        }
+
+        /* Config: sent on client connect and whenever a command changed one of
+         * motor_config / pos_config / sbus_config. No-op on the vast majority of
+         * iterations -- it is a flag test. */
+        ipc_broadcast_config_if_dirty();
 
         display_update();
 

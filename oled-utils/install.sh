@@ -58,7 +58,7 @@ done
 need_root "$@"
 
 for f in "$SCRIPT_SRC" "$UNIT_SRC" "$DEFAULT_SRC"; do
-    [ -f "$f" ] || die "missing $f — run this from the oled_utils directory"
+    [ -f "$f" ] || die "missing $f — run this from the oled-utils directory"
 done
 
 # ── preflight ───────────────────────────────────────────────────────

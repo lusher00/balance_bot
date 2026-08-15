@@ -261,6 +261,13 @@ typedef struct
     int system_status;  // System status update rate (default: 1 Hz)
     int pid_states;     // PID state update rate (default: 10 Hz)
     int full_telemetry; // Full telemetry rate (default: 10 Hz, max: 100 Hz)
+    /* RC (SBUS) packet rate. Deliberately much higher than pid_states: the
+     * receiver delivers a frame every ~7 ms (~143 Hz), so at 10 Hz the RC
+     * display saw 1 sample in 14 and a quick stick movement never appeared at
+     * full deflection. The RC packet is ~270 bytes against ~1300 for telemetry,
+     * so 50 Hz of RC costs less bandwidth than the old combined packet did at
+     * 10 Hz. Values above the control loop rate (100 Hz) just send duplicates. */
+    int rc;
 } telemetry_rates_t;
 
 /**
@@ -428,9 +435,10 @@ static inline debug_config_t get_default_debug_config(void)
             .system_status = true},
         .overlays = {.crosshair = true, .stats = false},
         .rates = {
-            .system_status = 1,  // 1 Hz
-            .pid_states = 10,    // 10 Hz
-            .full_telemetry = 10 // 10 Hz
+            .system_status = 1,   // 1 Hz
+            .pid_states = 10,     // 10 Hz
+            .full_telemetry = 10, // 10 Hz
+            .rc = 30              // 30 Hz — see telemetry_rates_t.rc
         },
         .logging = {.level = LOG_LEVEL_INFO, .console = true, .file = false, .timestamps = true},
         .display = {

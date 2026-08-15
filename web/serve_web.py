@@ -50,30 +50,60 @@ Then open http://boneblue-0:8888 in any browser on the network.
 import http.server, socketserver, os, sys
 
 PORT = 8888
-WEB_DIR = os.path.join(os.path.dirname(__file__))
+# abspath: os.path.dirname(__file__) is '' when this is run as
+# `cd web && python3 serve_web.py`, and os.chdir('') raises FileNotFoundError.
+WEB_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # The dashboard that matches current firmware.
 #
-# bbot_dashboard.html is a symlink to v4, and v0..v5 all parse D2 telemetry with
-# normPID() — they read setpoint/measurement/error/p_term, which the firmware no
-# longer emits, so every D2 series silently plots zero. Serving by explicit name
-# rather than relying on the symlink, which cannot be repointed here.
+# v0..v5 all parse D2 telemetry with normPID() — they read
+# setpoint/measurement/error/p_term, which the firmware no longer emits, so every
+# D2 series silently plots zero. They also contain no SBUS parsing whatsoever,
+# so the RC panel does not exist in any of them.
 CURRENT = "bbot_dashboard_v6.html"
-
-# Anything in this list is served with a warning banner injected, so an old URL
-# in someone's bookmarks announces itself instead of quietly lying.
-STALE = {f"bbot_dashboard_v{n}.html" for n in range(6)} | {"bbot_dashboard.html"}
 
 BANNER = (
     '<div style="position:fixed;top:0;left:0;right:0;z-index:99999;'
     'background:#b3261e;color:#fff;font:13px/1.5 system-ui,sans-serif;'
     'padding:8px 14px;text-align:center">'
-    'Outdated dashboard — D2 telemetry will read zero against current firmware. '
+    'Outdated dashboard — no RC panel, and D2 telemetry will read zero against '
+    'current firmware. '
     f'<a href="/{CURRENT}" style="color:#fff;font-weight:600">Open v6</a>'
     '</div><div style="height:36px"></div>'
 )
 
 os.chdir(WEB_DIR)
+
+
+def _stale_names():
+    """Names that get the warning banner injected, so an old URL in someone's
+    bookmarks announces itself instead of quietly lying.
+
+    bbot_dashboard.html is deliberately NOT hardcoded in here. It is a symlink,
+    and it has since been repointed at v6 — listing it unconditionally meant
+    that URL served the *current* dashboard under a red banner claiming it was
+    outdated, which is precisely the quiet lie this banner exists to prevent.
+    Resolve it instead and flag it only if it really is stale.
+    """
+    names = {f"bbot_dashboard_v{n}.html" for n in range(6)}
+    generic = "bbot_dashboard.html"
+
+    if os.path.islink(generic):
+        if os.path.basename(os.readlink(generic)) != CURRENT:
+            names.add(generic)
+    elif os.path.isfile(generic):
+        # A plain copy of unknown vintage. Byte-compare against the current
+        # dashboard rather than guessing from the name.
+        try:
+            with open(generic, "rb") as a, open(CURRENT, "rb") as b:
+                if a.read() != b.read():
+                    names.add(generic)
+        except OSError:
+            names.add(generic)
+    return names
+
+
+STALE = _stale_names()
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
