@@ -416,10 +416,10 @@ static inline debug_config_t get_default_debug_config(void)
 {
     debug_config_t config = {
         .telemetry = {
-            /* On. The Control tab has a live encoder card, and with this off it
-             * sat there showing stale zeros -- a readout that looks live and is
-             * not is worse than no readout. It is four ints per packet. */
-            .encoders = true,
+            /* Off. The Control tab's encoder card is gone -- nothing consumed
+             * this. Position telemetry already carries enc_pos/enc_error, which
+             * is what the graphs and the tune analysis actually use. */
+            .encoders = false,
             .imu_attitude = true, // For 3D visualization
             .imu_full = false,    // Disable high-bandwidth data
             .pid_states = true,

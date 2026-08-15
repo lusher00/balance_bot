@@ -997,6 +997,18 @@
                background:rgba(251,191,36,.07);border-left:2px solid #fbbf24;
                font-size:11.5px;line-height:1.5}
     .tune-todo.clean{background:rgba(74,222,128,.07);border-left-color:#4ade80}
+
+    /* ── live throughput meter ────────────────────────────────────── */
+    #perf-hud{position:fixed;left:6px;bottom:6px;z-index:9999;
+      font:10px/1.45 ui-monospace,SFMono-Regular,monospace;
+      background:rgba(0,0,0,.78);color:#9fb3c8;border:1px solid rgba(255,255,255,.12);
+      border-radius:4px;padding:5px 8px;pointer-events:auto;cursor:pointer;
+      white-space:pre;min-width:150px}
+    #perf-hud b{color:#e6edf3;font-weight:600}
+    #perf-hud .good{color:#4ade80}
+    #perf-hud .warn{color:#fbbf24}
+    #perf-hud .bad{color:#f87171}
+    #perf-hud.min{min-width:0;padding:3px 6px}
   </style>
 </head>
 
@@ -1044,6 +1056,7 @@
   <div id="panels">
 
     <!-- CONTROL -->
+    <div id="perf-hud" onclick="perfToggle()" title="click to collapse">starting…</div>
     <div class="panel active" id="panel-control">
       <div id="video-wrap">
         <img id="video-feed" alt="">
@@ -1154,19 +1167,6 @@
         </div>
       </div>
 
-      <div class="card" id="enc-card">
-        <span class="sub-label">Encoders</span>
-        <div class="row" style="gap:16px">
-          <div><span style="color:var(--txt3);font-size:9px">L TICKS</span><br><span id="enc-l"
-              style="font-size:13px">0</span></div>
-          <div><span style="color:var(--txt3);font-size:9px">R TICKS</span><br><span id="enc-r"
-              style="font-size:13px">0</span></div>
-          <div><span style="color:var(--txt3);font-size:9px">L VEL</span><br><span id="enc-lv"
-              style="font-size:13px">0</span></div>
-          <div><span style="color:var(--txt3);font-size:9px">R VEL</span><br><span id="enc-rv"
-              style="font-size:13px">0</span></div>
-        </div>
-      </div>
     </div>
 
     <!-- PID -->
@@ -2647,6 +2647,7 @@
     }
 
     function handleTelemetry(d) {
+      const _t0 = performance.now();   // throughput meter
       state.packetsReceived++;
 
       if (d.system) {
@@ -2684,7 +2685,6 @@
         state.imu.phi = d.imu.phi ?? 0;
         state.imu.psi = d.imu.psi ?? 0;
       }
-      if (d.encoders) state.encoders = d.encoders;
       if (d.cat) state.cat = d.cat;
 
       const d1r = normPID(d.balance);
@@ -2784,6 +2784,7 @@
 
       updateUI();
       updateDebug(d);
+      perfMark(_t0);
     }
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -2841,12 +2842,6 @@
       });
 
       // Encoders
-      if (state.encoders) {
-        setTxt('enc-l', state.encoders.left_ticks ?? 0);
-        setTxt('enc-r', state.encoders.right_ticks ?? 0);
-        setTxt('enc-lv', (state.encoders.left_vel ?? 0).toFixed(1));
-        setTxt('enc-rv', (state.encoders.right_vel ?? 0).toFixed(1));
-      }
 
       // Cat
       const catBadge = document.getElementById('cat-badge');
@@ -3692,6 +3687,68 @@
         return incoming;
       }
       return p.value;   // bot has not caught up yet; hold what we asked for
+    }
+
+
+    // ── throughput meter ────────────────────────────────────────────────────────
+    // Built because "the dashboard is slow" kept being diagnosed by reasoning
+    // instead of measurement, and every one of those diagnoses was wrong. This
+    // separates the three things that can be slow, which need different fixes:
+    //
+    //   rx    packets per second actually arriving over the socket. If this is
+    //         low, the bot or the node bridge is the problem and no amount of
+    //         rendering work will help.
+    //   gap   worst interval between packets in the last second. A healthy 10 Hz
+    //         feed sits at ~100 ms; a big gap means stalls, not a low average.
+    //   draw  milliseconds spent inside handleTelemetry. If rx is fine and this
+    //         is large, the fault is in the rendering, which IS ours to fix.
+    //
+    // Deliberately not gated on a tab: it has to work while you are looking at
+    // whatever is misbehaving.
+    const perfHud = { stamps: [], draw: 0, drawMax: 0, lastPaint: 0, min: false };
+
+    function perfMark(startMs) {
+      const now = performance.now();
+      perfHud.draw = now - startMs;
+      if (perfHud.draw > perfHud.drawMax) perfHud.drawMax = perfHud.draw;
+      perfHud.stamps.push(now);
+      while (perfHud.stamps.length && now - perfHud.stamps[0] > 2000) perfHud.stamps.shift();
+      if (now - perfHud.lastPaint < 500) return;    // repaint the HUD at 2 Hz
+      perfHud.lastPaint = now;
+      perfPaint(now);
+    }
+
+    function perfPaint(now) {
+      const el = document.getElementById('perf-hud');
+      if (!el) return;
+      const st = perfHud.stamps;
+      const hz = st.length > 1 ? (st.length - 1) / ((st.at(-1) - st[0]) / 1000) : 0;
+      let gap = 0;
+      for (let i = 1; i < st.length; i++) gap = Math.max(gap, st[i] - st[i - 1]);
+      const since = st.length ? now - st.at(-1) : 0;
+      const cls = v => v >= 8 ? 'good' : v >= 4 ? 'warn' : 'bad';
+      const gcls = g => g < 200 ? 'good' : g < 500 ? 'warn' : 'bad';
+      const dcls = d => d < 5 ? 'good' : d < 20 ? 'warn' : 'bad';
+      const wsState = (typeof ws !== 'undefined' && ws)
+        ? ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][ws.readyState] : 'none';
+      if (perfHud.min) {
+        el.className = 'min';
+        el.innerHTML = `<span class="${cls(hz)}">${hz.toFixed(1)}Hz</span>`;
+        return;
+      }
+      el.className = '';
+      el.innerHTML =
+        `<b>rx</b>   <span class="${cls(hz)}">${hz.toFixed(1)} Hz</span>  (${state.packetsReceived})\n` +
+        `<b>gap</b>  <span class="${gcls(gap)}">${gap.toFixed(0)} ms</span> max, ${since.toFixed(0)} since\n` +
+        `<b>draw</b> <span class="${dcls(perfHud.draw)}">${perfHud.draw.toFixed(1)} ms</span> now, ` +
+        `${perfHud.drawMax.toFixed(0)} peak\n` +
+        `<b>ws</b>   ${wsState}`;
+    }
+
+    function perfToggle() {
+      perfHud.min = !perfHud.min;
+      perfHud.drawMax = 0;              // clicking also resets the peak
+      perfPaint(performance.now());
     }
 
     function panelVisible(name) {
