@@ -8,10 +8,19 @@ The problem this solves: when the board wedges, whatever explains it is in RAM
 and dies with it. Journald on most BeagleBone images is volatile (no
 /var/log/journal), so a reboot erases the evidence.
 
-So: sample once a second, write a CSV line, and fsync it. Every line is on
-disk before the next one is taken. When the board dies, the last line written
-is the last moment it was alive — and `--postmortem` finds the gap and shows
-you the run-up to it.
+So: sample once a second, write a CSV line, and periodically fsync. When the
+board dies, the last line on disk is close to the last moment it was alive —
+and `--postmortem` finds the gap and shows you the run-up to it.
+
+COST. This is a diagnostic tool, not a background service. fsync on an SD card
+is expensive: at one fsync per second this used 10% of a BeagleBone core
+sustained (19% peaks, 95 minutes of CPU over a 15 hour uptime) and drove system
+time to 65%, which starved everything else on the box — ssh went sluggish and
+the telemetry dashboard became unusable while the robot itself was fine.
+
+So fsync now defaults to every 10 seconds, which bounds the loss to 10 samples
+if the board dies. Use --paranoid for the old per-line behaviour when you are
+actively hunting a lockup, and turn it off again afterwards.
 
   run:        sudo ./bbot_watch.py
   after boot: ./bbot_watch.py --postmortem
@@ -243,7 +252,7 @@ def rotate(path):
         pass
 
 
-def run():
+def run(fsync_every=10):
     os.makedirs(LOG_DIR, exist_ok=True)
     rotate(CSV)
     new = not os.path.exists(CSV) or os.path.getsize(CSV) == 0
@@ -282,7 +291,10 @@ def run():
         print("bbot_watch: dmesg follow unavailable", file=sys.stderr)
 
     botcpu, stat = BotCpu(), Stat()
-    print(f"bbot_watch: logging to {CSV} (fsync per line)", flush=True)
+    print(f"bbot_watch: logging to {CSV} "
+          f"(fsync every {fsync_every} sample{'s' if fsync_every != 1 else ''})",
+          flush=True)
+    since_sync = 0
     try:
         while True:
             t0 = time.monotonic()
@@ -306,7 +318,10 @@ def run():
             ]
             csv.write(",".join(str(x) for x in row) + "\n")
             csv.flush()
-            os.fsync(csv.fileno())          # the whole point — survive the hang
+            since_sync += 1
+            if since_sync >= fsync_every:
+                os.fsync(csv.fileno())      # bounded loss, bounded cost
+                since_sync = 0
             time.sleep(max(0.0, 1.0 - (time.monotonic() - t0)))
     except KeyboardInterrupt:
         pass
@@ -424,5 +439,13 @@ if __name__ == "__main__":
                     help="analyse an existing log instead of recording")
     ap.add_argument("--gap", type=float, default=5.0,
                     help="seconds of silence that counts as a death (default 5)")
+    ap.add_argument("--fsync-every", type=int, default=10, metavar="N",
+                    help="fsync every N samples (default 10). Lower is safer but "
+                         "costs real CPU on an SD card")
+    ap.add_argument("--paranoid", action="store_true",
+                    help="fsync every line. Loses nothing on a hard lockup, but "
+                         "costs ~10%% of a BeagleBone core -- use while hunting a "
+                         "lockup, not permanently")
     a = ap.parse_args()
-    sys.exit(postmortem(a.gap) if a.postmortem else (run() or 0))
+    every = 1 if a.paranoid else max(1, a.fsync_every)
+    sys.exit(postmortem(a.gap) if a.postmortem else (run(every) or 0))

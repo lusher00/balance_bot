@@ -1,3 +1,11 @@
+# DIAGNOSTIC ONLY -- do not 'systemctl enable' this.
+#
+# Left running permanently it costs ~10% of the BeagleBone's single core
+# and pushes system time to 65% through fsync on the SD card, which starves
+# ssh and the telemetry bridge. Start it when you are chasing a lockup:
+#
+#   sudo systemctl start bbot-watch     (then stop it again)
+#
 [Unit]
 Description=Balance Bot system recorder (lockup / SSH-drop diagnosis)
 # Deliberately NOT tied to balance_bot.service. If the board wedges while
