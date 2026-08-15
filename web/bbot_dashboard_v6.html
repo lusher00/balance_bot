@@ -972,6 +972,43 @@
       opacity: .35;
       pointer-events: none;
     }
+
+    /* ── Tune tab ─────────────────────────────────────────────────── */
+    .tune-sub{font-weight:400;opacity:.55;font-size:11px;margin-left:8px}
+    .tune-rep{font-size:12px}
+    .tune-rep table{width:100%;border-collapse:collapse}
+    .tune-rep td{padding:3px 4px;border-bottom:1px solid rgba(255,255,255,.05)}
+    .tune-rep td.lbl{opacity:.75}
+    .tune-rep td.val{text-align:right;font-family:ui-monospace,SFMono-Regular,monospace;font-weight:600}
+    .tune-rep td.note{opacity:.45;font-size:11px}
+    .tune-sec{margin:14px 0 4px;font-size:10px;letter-spacing:.1em;opacity:.55;text-transform:uppercase}
+    .pill{display:inline-block;min-width:34px;text-align:center;border-radius:3px;
+          padding:1px 5px;font-size:10px;font-weight:700;letter-spacing:.04em}
+    .pill.ok{background:rgba(74,222,128,.14);color:#4ade80}
+    .pill.warn{background:rgba(251,191,36,.14);color:#fbbf24}
+    .pill.bad{background:rgba(248,113,113,.18);color:#f87171}
+    .tune-run{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;
+              border-bottom:1px solid rgba(255,255,255,.06)}
+    .tune-run .nm{flex:1;font-family:ui-monospace,monospace;opacity:.85}
+    .tune-run .mini{opacity:.5;font-size:11px}
+    .tune-run input{accent-color:#38bdf8}
+    .delta-better{color:#4ade80}.delta-worse{color:#f87171}
+    .tune-todo{margin-top:10px;padding:8px 10px;border-radius:5px;
+               background:rgba(251,191,36,.07);border-left:2px solid #fbbf24;
+               font-size:11.5px;line-height:1.5}
+    .tune-todo.clean{background:rgba(74,222,128,.07);border-left-color:#4ade80}
+
+    /* ── live throughput meter ────────────────────────────────────── */
+    #perf-hud{position:fixed;left:6px;bottom:6px;z-index:9999;
+      font:10px/1.45 ui-monospace,SFMono-Regular,monospace;
+      background:rgba(0,0,0,.78);color:#9fb3c8;border:1px solid rgba(255,255,255,.12);
+      border-radius:4px;padding:5px 8px;pointer-events:auto;cursor:pointer;
+      white-space:pre;min-width:150px}
+    #perf-hud b{color:#e6edf3;font-weight:600}
+    #perf-hud .good{color:#4ade80}
+    #perf-hud .warn{color:#fbbf24}
+    #perf-hud .bad{color:#f87171}
+    #perf-hud.min{min-width:0;padding:3px 6px}
   </style>
 </head>
 
@@ -1011,6 +1048,7 @@
     <div class="tab" data-tab="claw">Claw</div>
     <div class="tab" data-tab="rc">RC</div>
     <div class="tab" data-tab="debug">Debug</div>
+    <div class="tab" data-tab="tune">Tune</div>
     <div class="tab" data-tab="settings">Settings</div>
   </div>
 
@@ -1018,6 +1056,7 @@
   <div id="panels">
 
     <!-- CONTROL -->
+    <div id="perf-hud" onclick="perfToggle()" title="click to collapse">starting…</div>
     <div class="panel active" id="panel-control">
       <div id="video-wrap">
         <img id="video-feed" alt="">
@@ -1094,9 +1133,28 @@
       <div class="card">
         <span class="sub-label">Robot Mode</span>
         <div class="seg-group" id="mode-seg">
-          <button class="seg-btn active" data-mode="1" onclick="setMode(1)">Balance</button>
-          <button class="seg-btn" data-mode="2" onclick="setMode(2)">Ext Ctrl</button>
-          <button class="seg-btn" data-mode="3" onclick="setMode(3)">Manual</button>
+            <button class="seg-btn active" data-mode="1" onclick="setMode(1)">Balance</button>
+            <button class="seg-btn" data-mode="2" onclick="setMode(2)">Ext Ctrl</button>
+          </div>
+          <div style="font-size:9px;color:var(--txt3);margin-top:6px">
+            Balance is the normal mode and the only one that reads the RC sticks.
+            Ext Ctrl takes drive commands from the UART instead. Manual was removed:
+            robot.c has no handler for it, so selecting it silently disabled the RC.
+          </div>
+        </div>
+
+        <div class="card">
+          <span class="sub-label">Drive</span>
+          <div class="seg-group" id="drive-seg">
+            <button class="seg-btn active" data-drive="0" onclick="setDriveMode(0)">Lean</button>
+            <button class="seg-btn" data-drive="1" onclick="setDriveMode(1)">Target</button>
+          </div>
+          <div style="font-size:9px;color:var(--txt3);margin-top:6px">
+            <b>Lean</b> &mdash; the stick sets a tilt angle, so it commands acceleration.
+            Centring it means &ldquo;stand up straight&rdquo;, not &ldquo;stop&rdquo;, so you brake
+            with reverse stick.<br>
+            <b>Target</b> &mdash; the stick moves the hold point, so it commands speed.
+            Release and the bot coasts to a halt by itself.
         </div>
       </div>
 
@@ -1109,28 +1167,15 @@
         </div>
       </div>
 
-      <div class="card" id="enc-card">
-        <span class="sub-label">Encoders</span>
-        <div class="row" style="gap:16px">
-          <div><span style="color:var(--txt3);font-size:9px">L TICKS</span><br><span id="enc-l"
-              style="font-size:13px">0</span></div>
-          <div><span style="color:var(--txt3);font-size:9px">R TICKS</span><br><span id="enc-r"
-              style="font-size:13px">0</span></div>
-          <div><span style="color:var(--txt3);font-size:9px">L VEL</span><br><span id="enc-lv"
-              style="font-size:13px">0</span></div>
-          <div><span style="color:var(--txt3);font-size:9px">R VEL</span><br><span id="enc-rv"
-              style="font-size:13px">0</span></div>
-        </div>
-      </div>
     </div>
 
     <!-- PID -->
     <div class="panel" id="panel-pid">
       <div class="row spaced" style="margin-bottom:10px">
         <div class="g-picker" id="pid-ctrl-picker">
-          <button class="g-seg active" data-pidctrl="bal" onclick="selectPIDCtrl('bal')">Balance</button>
+          <button class="g-seg active" data-pidctrl="pit" onclick="selectPIDCtrl('pit')">Pitch</button>
           <button class="g-seg" data-pidctrl="pos" onclick="selectPIDCtrl('pos')">Position</button>
-          <button class="g-seg" data-pidctrl="str" onclick="selectPIDCtrl('str')">Steering</button>
+          <button class="g-seg" data-pidctrl="yaw" onclick="selectPIDCtrl('yaw')">Yaw</button>
         </div>
         <div class="row" style="gap:6px">
           <button class="g-btn" onclick="sendCmd({type:'get_config'})">↻ Refresh</button>
@@ -1140,59 +1185,60 @@
       </div>
 
       <!-- balance / steering card -->
-      <div id="pid-bal-card" class="card">
+      <div id="pid-pit-card" class="card">
         <div class="row spaced" style="margin-bottom:10px">
           <div>
-            <div class="card-title" id="pid-bal-title">Balance</div>
+            <div class="card-title" id="pid-pit-title">Pitch</div>
             <div style="font-size:9px;color:var(--txt3)">Angle → Motor torque · Keeps robot upright</div>
           </div>
-          <button class="enable-btn off" id="pid-bal-en" onclick="toggleCtrl('balance','bal')">OFF</button>
+          <button class="enable-btn off" id="pid-pit-en" onclick="toggleCtrl('pitch','pit')">OFF</button>
         </div>
-        <div id="pid-bal-gains">
+        <div id="pit-trim-ctl"></div>
+        <div id="pid-pit-gains">
           <div class="pid-row">
             <span class="pid-label">Kp</span>
-            <input type="range" class="pid-slider" id="sl-bal-kp" min="-200" max="200" step="0.1"
-              oninput="onPIDSlider('bal','kp',this.value)">
+            <input type="range" class="pid-slider" id="sl-pit-kp" min="-200" max="200" step="0.1"
+              oninput="onPIDSlider('pit','kp',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('bal','kp',-1)">−</button>
-              <input class="val-box" id="vb-bal-kp" value="40" onchange="onPIDValBox('bal','kp',this.value)"
-                onblur="onPIDValBox('bal','kp',this.value)">
-              <button class="step-btn" onclick="stepPID('bal','kp',1)">+</button>
+              <button class="step-btn" onclick="stepPID('pit','kp',-1)">−</button>
+              <input class="val-box" id="vb-pit-kp" value="40" onchange="onPIDValBox('pit','kp',this.value)"
+                onblur="onPIDValBox('pit','kp',this.value)">
+              <button class="step-btn" onclick="stepPID('pit','kp',1)">+</button>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Ki</span>
-            <input type="range" class="pid-slider" id="sl-bal-ki" min="-10" max="10" step="0.01"
-              oninput="onPIDSlider('bal','ki',this.value)">
+            <input type="range" class="pid-slider" id="sl-pit-ki" min="-10" max="10" step="0.01"
+              oninput="onPIDSlider('pit','ki',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('bal','ki',-1)">−</button>
-              <input class="val-box" id="vb-bal-ki" value="0" onchange="onPIDValBox('bal','ki',this.value)"
-                onblur="onPIDValBox('bal','ki',this.value)">
-              <button class="step-btn" onclick="stepPID('bal','ki',1)">+</button>
+              <button class="step-btn" onclick="stepPID('pit','ki',-1)">−</button>
+              <input class="val-box" id="vb-pit-ki" value="0" onchange="onPIDValBox('pit','ki',this.value)"
+                onblur="onPIDValBox('pit','ki',this.value)">
+              <button class="step-btn" onclick="stepPID('pit','ki',1)">+</button>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Kd</span>
-            <input type="range" class="pid-slider" id="sl-bal-kd" min="-50" max="50" step="0.1"
-              oninput="onPIDSlider('bal','kd',this.value)">
+            <input type="range" class="pid-slider" id="sl-pit-kd" min="-50" max="50" step="0.1"
+              oninput="onPIDSlider('pit','kd',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('bal','kd',-1)">−</button>
-              <input class="val-box" id="vb-bal-kd" value="5" onchange="onPIDValBox('bal','kd',this.value)"
-                onblur="onPIDValBox('bal','kd',this.value)">
-              <button class="step-btn" onclick="stepPID('bal','kd',1)">+</button>
+              <button class="step-btn" onclick="stepPID('pit','kd',-1)">−</button>
+              <input class="val-box" id="vb-pit-kd" value="5" onchange="onPIDValBox('pit','kd',this.value)"
+                onblur="onPIDValBox('pit','kd',this.value)">
+              <button class="step-btn" onclick="stepPID('pit','kd',1)">+</button>
             </div>
           </div>
           <div class="row" style="margin-top:6px;gap:6px">
             <span style="font-size:9px;color:var(--txt3)">Step ×</span>
             <div class="mult-sel" id="mult-bal">
-              <button class="mult-btn active" data-m="1" onclick="setMult('bal',1)">1</button>
-              <button class="mult-btn" data-m="10" onclick="setMult('bal',10)">10</button>
-              <button class="mult-btn" data-m="100" onclick="setMult('bal',100)">100</button>
+              <button class="mult-btn active" data-m="1" onclick="setMult('pit',1)">1</button>
+              <button class="mult-btn" data-m="10" onclick="setMult('pit',10)">10</button>
+              <button class="mult-btn" data-m="100" onclick="setMult('pit',100)">100</button>
             </div>
           </div>
         </div>
         <div class="divider"></div>
-        <div id="pid-bal-live">
+        <div id="pid-pit-live">
           <span class="sub-label">Live Status</span>
           <div class="row" style="gap:16px;margin-bottom:4px">
             <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="bal-err"
@@ -1207,54 +1253,54 @@
       </div>
 
       <!-- steering (hidden when position selected) -->
-      <div id="pid-str-card" class="card" style="display:none">
+      <div id="pid-yaw-card" class="card" style="display:none">
         <div class="row spaced" style="margin-bottom:10px">
           <div>
-            <div class="card-title">Steering</div>
+            <div class="card-title">Yaw</div>
             <div style="font-size:9px;color:var(--txt3)">Yaw → Motor differential · Turns left/right</div>
           </div>
-          <button class="enable-btn off" id="pid-str-en" onclick="toggleCtrl('steering','str')">OFF</button>
+          <button class="enable-btn off" id="pid-yaw-en" onclick="toggleCtrl('yaw','yaw')">OFF</button>
         </div>
-        <div id="pid-str-gains">
+        <div id="pid-yaw-gains">
           <div class="pid-row">
             <span class="pid-label">Kp</span>
-            <input type="range" class="pid-slider" id="sl-str-kp" min="-200" max="200" step="0.1"
-              oninput="onPIDSlider('str','kp',this.value)">
+            <input type="range" class="pid-slider" id="sl-yaw-kp" min="-200" max="200" step="0.1"
+              oninput="onPIDSlider('yaw','kp',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('str','kp',-1)">−</button>
-              <input class="val-box" id="vb-str-kp" value="15" onchange="onPIDValBox('str','kp',this.value)"
-                onblur="onPIDValBox('str','kp',this.value)">
-              <button class="step-btn" onclick="stepPID('str','kp',1)">+</button>
+              <button class="step-btn" onclick="stepPID('yaw','kp',-1)">−</button>
+              <input class="val-box" id="vb-yaw-kp" value="15" onchange="onPIDValBox('yaw','kp',this.value)"
+                onblur="onPIDValBox('yaw','kp',this.value)">
+              <button class="step-btn" onclick="stepPID('yaw','kp',1)">+</button>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Ki</span>
-            <input type="range" class="pid-slider" id="sl-str-ki" min="-10" max="10" step="0.01"
-              oninput="onPIDSlider('str','ki',this.value)">
+            <input type="range" class="pid-slider" id="sl-yaw-ki" min="-10" max="10" step="0.01"
+              oninput="onPIDSlider('yaw','ki',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('str','ki',-1)">−</button>
-              <input class="val-box" id="vb-str-ki" value="0" onchange="onPIDValBox('str','ki',this.value)"
-                onblur="onPIDValBox('str','ki',this.value)">
-              <button class="step-btn" onclick="stepPID('str','ki',1)">+</button>
+              <button class="step-btn" onclick="stepPID('yaw','ki',-1)">−</button>
+              <input class="val-box" id="vb-yaw-ki" value="0" onchange="onPIDValBox('yaw','ki',this.value)"
+                onblur="onPIDValBox('yaw','ki',this.value)">
+              <button class="step-btn" onclick="stepPID('yaw','ki',1)">+</button>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Kd</span>
-            <input type="range" class="pid-slider" id="sl-str-kd" min="-50" max="50" step="0.1"
-              oninput="onPIDSlider('str','kd',this.value)">
+            <input type="range" class="pid-slider" id="sl-yaw-kd" min="-50" max="50" step="0.1"
+              oninput="onPIDSlider('yaw','kd',this.value)">
             <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('str','kd',-1)">−</button>
-              <input class="val-box" id="vb-str-kd" value="1.5" onchange="onPIDValBox('str','kd',this.value)"
-                onblur="onPIDValBox('str','kd',this.value)">
-              <button class="step-btn" onclick="stepPID('str','kd',1)">+</button>
+              <button class="step-btn" onclick="stepPID('yaw','kd',-1)">−</button>
+              <input class="val-box" id="vb-yaw-kd" value="1.5" onchange="onPIDValBox('yaw','kd',this.value)"
+                onblur="onPIDValBox('yaw','kd',this.value)">
+              <button class="step-btn" onclick="stepPID('yaw','kd',1)">+</button>
             </div>
           </div>
           <div class="row" style="margin-top:6px;gap:6px">
             <span style="font-size:9px;color:var(--txt3)">Step ×</span>
             <div class="mult-sel" id="mult-str">
-              <button class="mult-btn active" data-m="1" onclick="setMult('str',1)">1</button>
-              <button class="mult-btn" data-m="10" onclick="setMult('str',10)">10</button>
-              <button class="mult-btn" data-m="100" onclick="setMult('str',100)">100</button>
+              <button class="mult-btn active" data-m="1" onclick="setMult('yaw',1)">1</button>
+              <button class="mult-btn" data-m="10" onclick="setMult('yaw',10)">10</button>
+              <button class="mult-btn" data-m="100" onclick="setMult('yaw',100)">100</button>
             </div>
           </div>
         </div>
@@ -1542,10 +1588,43 @@
         <span style="font-size:10px;color:var(--txt3)">Last telemetry</span>
         <span id="debug-pkt" style="font-size:10px;color:var(--txt3)">0 packets</span>
       </div>
+      <div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <button class="g-btn" onclick="debugCopy()">Copy JSON</button>
+        <button class="g-btn" onclick="debugExport()">Export .json</button>
+        <button class="g-btn" id="debug-hold-btn" onclick="debugToggleHold()">Freeze</button>
+        <span id="debug-note" style="font-size:10px;color:var(--txt3);align-self:center"></span>
+      </div>
       <div id="debug-out">Waiting for data…</div>
     </div>
 
     <!-- SETTINGS -->
+    <div class="panel" id="panel-tune">
+      <div class="card">
+        <div class="card-title">Tune quality
+          <span class="tune-sub">from the last recording &mdash; press Rec on the Graph tab, fly 30s, press Stop</span>
+        </div>
+        <div id="tune-report" class="tune-rep">
+          <div style="opacity:.5;padding:8px 0">
+            No run analysed yet. Record 30 seconds of balancing and this fills in.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Saved runs <span class="tune-sub">tick two to compare</span></div>
+        <div id="tune-runs"></div>
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="g-btn" onclick="tuneClearRuns()">Clear all</button>
+          <button class="g-btn" onclick="tuneExport()">Export JSON</button>
+        </div>
+      </div>
+
+      <div class="card" id="tune-cmp-card" style="display:none">
+        <div class="card-title">Comparison</div>
+        <div id="tune-compare" class="tune-rep"></div>
+      </div>
+    </div>
+
     <div class="panel" id="panel-settings">
       <div class="card">
         <div class="card-title">Connection</div>
@@ -1594,10 +1673,10 @@
       imu: { theta: 0, phi: 0, psi: 0 },
       encoders: null,
       cat: null,
-      bal: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
+      pit: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
       // position is a zone-based position hold, not a PID — different shape on purpose.
       pos: { enabled: false, encTarget: 0, encPos: 0, encError: 0, encVel: 0, posCorr: 0, velDamp: 0, thetaAdj: 0, activeScale: 0, maxCorrection: 0 },
-      str: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
+      yaw: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
       // Commanded wheel duty as sent to the RoboClaw — not a controller.
       mot: { leftDuty: 0, rightDuty: 0 },
       sbus: null,
@@ -1605,11 +1684,11 @@
 
     // balance and steering only. position has no gains; see posCfg for its tuning parameters.
     const pidCfg = {
-      bal: { kp: 40, ki: 0, kd: 5, received: false },
-      str: { kp: 15, ki: 0, kd: 1.5, received: false },
+      pit: { kp: 40, ki: 0, kd: 5, received: false },
+      yaw: { kp: 15, ki: 0, kd: 1.5, received: false },
     };
 
-    const pidMult = { bal: 1, str: 1, claw: 1 };
+    const pidMult = { pit: 1, yaw: 1, claw: 1 };
 
     // Claw motor controller config (mirrors motor_config_t)
     const clawCfg = {
@@ -1632,7 +1711,7 @@
     // This — not posCfg — is ground truth for what the firmware is running.
     let posCfgBot = null;
     // Same for balance/steering gains: pidCfg is seeded once for the sliders and drifts.
-    let gainsBot = { bal: null, str: null };
+    let gainsBot = { pit: null, yaw: null };
 
     const POS_SLIDERS = [
       { key: 'zone_a', label: 'Zone A (outer)', min: 1000, max: 30000, step: 500, group: 'zones' },
@@ -1727,7 +1806,7 @@
     function seriesLabel(ctrl, key) {
       return SERIES_LABELS[key] || key;
     }
-    const CTRL_NAMES = ['BAL', 'POS', 'STR', 'MOT'];
+    const CTRL_NAMES = ['PIT', 'POS', 'YAW', 'MOT'];
     const CTRL_DASH = [[], [8, 4], [2, 4], [4, 2, 1, 2]];
 
     function makeBuf(ctrlIdx) {
@@ -1985,15 +2064,27 @@
         started: new Date().toISOString(),
         haveBot: !!bot,
         pos: bot ? { ...posCfg, ...bot } : { ...posCfg },
-        bal: gainsBot.bal || { ...pidCfg.bal },
-        str: gainsBot.str || { ...pidCfg.str },
-        gainsFromBot: !!(gainsBot.bal && gainsBot.str),
+        pit: gainsBot.pit || { ...pidCfg.pit },
+        yaw: gainsBot.yaw || { ...pidCfg.yaw },
+        gainsFromBot: !!(gainsBot.pit && gainsBot.yaw),
         drift,
       };
     }
 
     function toggleRecord() {
-      if (recording) { recording = false; saveCSV(); recordBuf = Array.from({ length: NUM_CTRL }, () => []); recordMeta = null; loopStat = null; }
+      if (recording) {
+        recording = false;
+        saveCSV();
+        // Score the run before the buffer is cleared. Same numbers the CSV would
+        // give tools/analyze_tune.py, without the export/import round trip -- and
+        // stored, so the next run has something to be compared against.
+        try {
+          const m = tuneAnalyze(recordBuf, recordMeta, loopStat);
+          if (m) { tuneRenderReport(m); tuneRecordRun(m); }
+          else console.warn('tune: run had no balancing samples, not scored');
+        } catch (e) { console.warn('tune: analysis failed', e); }
+        recordBuf = Array.from({ length: NUM_CTRL }, () => []); recordMeta = null; loopStat = null;
+      }
       else {
         recording = true;
         recordBuf = Array.from({ length: NUM_CTRL }, () => []);
@@ -2009,7 +2100,7 @@
       btn.textContent = recording ? '⏹ Stop' : '⏺ Rec';
     }
     function saveCSV() {
-      const ctrlNames = ['bal', 'pos', 'str', 'mot'];
+      const ctrlNames = ['pit', 'pos', 'yaw', 'mot'];
       // Headers come from each controller's own key set, so position columns are
       // named pos_encError / pos_posCorr / etc. An exported pos_pTerm column would
       // be read as a PID trace by anyone opening the file later — it is not one.
@@ -2041,8 +2132,8 @@
              + `samples=${loopStat.n} below_95Hz=${loopStat.below}`
              + `${loopStat.below ? '  <-- CONTROL LOOP MISSED RATE, treat this run with suspicion' : ''}\n`;
       }
-      csv += `# bal_gains: kp=${m.bal.kp} ki=${m.bal.ki} kd=${m.bal.kd}\n`;
-      csv += `# str_gains: kp=${m.str.kp} ki=${m.str.ki} kd=${m.str.kd}\n`;
+      csv += `# pit_gains: kp=${m.pit.kp} ki=${m.pit.ki} kd=${m.pit.kd}\n`;
+      csv += `# yaw_gains: kp=${m.yaw.kp} ki=${m.yaw.ki} kd=${m.yaw.kd}\n`;
       csv += `# note: position is a zone-scheduled position hold, not a PID — it has no gains.\n`;
       csv += `#   pos_encError is (enc_pos_target - enc_pos), same sign as the error the\n`;
       csv += `#   controller acts on, so pos_posCorr == pos_encError / pos_activeScale.\n`;
@@ -2338,6 +2429,7 @@
 
     STEP_HANDLERS['pitch'] = d => nudge('pitch', d);
     STEP_HANDLERS['pose']  = d => nudge('pose', d);
+    STEP_HANDLERS['yaw']   = d => nudge('yaw', d);
     STEP_HANDLERS['drvsc'] = d => {
       sbusCfg.drive_scale = Math.min(1, Math.max(0, +(sbusCfg.drive_scale + d).toFixed(3)));
       syncRCMap(); sendSbusCfg();
@@ -2371,31 +2463,41 @@
       // dir: +1 forward, -1 back. Ticks, because that is what the hold loop uses.
       nudge('fwd', dir * Math.round(2 * padStepMm / MM_PER_TICK));
     }
-    function padTurn(dir) { nudge('yaw', dir * 15); }   // 15 deg of phi_diff per press
+    // Uses the Yaw stepper's selected step, so the pad arrows and the stepper
+    // cannot drift apart. Was hardcoded to 15 deg regardless of the scale shown.
+    function padTurn(dir) { nudge('yaw', dir * (stepState['yaw'] ?? 15)); }
 
+    // Pose and position controls.
+    //
+    // Three separate things, and conflating them has caused real confusion:
+    //   PITCH    a commanded lean off upright. The bot WILL drive away.
+    //   YAW      a commanded heading change, in degrees of wheel differential.
+    //   POSITION where to hold station, in millimetres of travel.
+    //
+    // Balance TRIM is deliberately NOT here. It is a calibration of where
+    // upright is, not a command to move, so it sits with the balance controller
+    // on the PID tab. Having it adjacent to the commanded lean invited exactly
+    // the mix-up its own caption had to warn about.
     function buildPose() {
       document.getElementById('pose-ctl').innerHTML = `
-        <div style="font-size:9px;color:var(--txt3);margin-bottom:6px">
-          <b style="color:var(--yellow)">Commanded lean</b> — deliberately leans the
-          bot off upright so you can watch it creep at a known angle. It WILL drive
-          away. Ramped in and out at max_angle_rate, cleared on disarm.
+        <span class="sub-label">Pose</span>
+        <div style="font-size:9px;color:var(--txt3);margin:4px 0 6px">
+          <b style="color:var(--yellow)">Commanded lean and heading</b> — these move the bot
+          on purpose. Lean ramps in and out at max_angle_rate; both clear on disarm.
         </div>` +
-        stepper('pose', 'Lean (°)', [0.05, 0.1, 0.5], v => v.toFixed(2)) + `
+        stepper('pose', 'Pitch (°)', [0.05, 0.1, 0.5], v => v.toFixed(2)) +
+        stepper('yaw', 'Yaw (°)', [5, 15, 45], v => String(v)) + `
         <div class="row" style="gap:6px;margin:4px 0 10px">
           <button class="g-btn" onclick="nudge('pose_zero',0)">Zero lean</button>
           <span id="pose-live" style="font-size:10px;align-self:center;color:var(--txt3)"></span>
         </div>
 
         <div class="divider"></div>
-        <div style="font-size:9px;color:var(--txt3);margin-bottom:6px">
-          <b>Balance trim</b> — where upright <i>is</i>. Different thing entirely:
-          this is the calibration that makes the bot sit still, not a command to move.
-          Persisted to robot.conf.
-        </div>` +
-        stepper('pitch', 'Trim (°)', [0.01, 0.05, 0.2], v => v.toFixed(2)) + `
-
-        <div class="divider"></div>
         <span class="sub-label">Position</span>
+        <div style="font-size:9px;color:var(--txt3);margin:4px 0 6px">
+          Moves the hold target. Left/right use the Yaw step above, so the arrows and
+          the stepper cannot disagree.
+        </div>
         <div class="pad" style="margin-top:6px">
           <span class="spacer"></span>
           <button onclick="padMove(1)" title="forward">&#9650;</button>
@@ -2412,6 +2514,21 @@
               onclick="padStep(${v})">${v}</button>`).join('')}
           <span style="font-size:9px;color:var(--txt3);align-self:center">mm / press</span>
         </div>`;
+    }
+
+    // Balance trim: the calibration that decides where upright IS.
+    function buildBalTrim() {
+      const el = document.getElementById('pit-trim-ctl');
+      if (!el) return;
+      el.innerHTML = `
+        <div class="divider"></div>
+        <span class="sub-label">Balance trim</span>
+        <div style="font-size:9px;color:var(--txt3);margin:4px 0 6px">
+          Where upright <i>is</i> — the calibration that makes the bot sit still instead of
+          creeping. Not a command to move. Persisted to robot.conf. Read it off a run:
+          creeping forward means go more negative.
+        </div>` +
+        stepper('pitch', 'Trim (°)', [0.01, 0.05, 0.2], v => v.toFixed(2));
     }
 
     let rcBuilt = false;
@@ -2442,7 +2559,8 @@
     }
 
     function updateRC() {
-      if (!rcBuilt) { buildRC(); buildRCMap(); buildPose(); }
+      if (!panelVisible('rc')) return;   // ~40 DOM lookups per packet otherwise
+      if (!rcBuilt) { buildRC(); buildRCMap(); buildPose(); buildBalTrim(); }
       const s = state.sbus;
       const link = document.getElementById('rc-link');
       const fs = document.getElementById('rc-failsafe');
@@ -2529,10 +2647,11 @@
     }
 
     function handleTelemetry(d) {
+      const _t0 = performance.now();   // throughput meter
       state.packetsReceived++;
 
       if (d.system) {
-        state.armed = !!d.system.armed;
+        state.armed = settle('armed', !!d.system.armed);
         state.mode = d.system.mode;
         state.loopHz = d.system.loop_hz ?? 0;
         if (d.system.theta_offset !== undefined)
@@ -2544,7 +2663,7 @@
           if (live) {
             // theta_ref is what the balance loop is actually tracking, so it
             // shows the ramp arriving rather than the target you asked for.
-            const tr = state.bal ? Number(state.bal.setpoint).toFixed(2) : '—';
+            const tr = state.pit ? Number(state.pit.setpoint).toFixed(2) : '—';
             live.textContent = Math.abs(pl) > 0.0005
               ? `ACTIVE — θ_ref ${tr}°` : `off — θ_ref ${tr}°`;
             live.style.color = Math.abs(pl) > 0.0005 ? 'var(--yellow)' : 'var(--txt3)';
@@ -2566,7 +2685,6 @@
         state.imu.phi = d.imu.phi ?? 0;
         state.imu.psi = d.imu.psi ?? 0;
       }
-      if (d.encoders) state.encoders = d.encoders;
       if (d.cat) state.cat = d.cat;
 
       const d1r = normPID(d.balance);
@@ -2575,13 +2693,13 @@
       const motr = normMotors(d.motors);
 
       if (d1r) {
-        Object.assign(state.bal, d1r);
+        Object.assign(state.pit, d1r);
         appendGraphPoint(0, d1r);
-        if (d1r.kp != null) gainsBot.bal = { kp: d1r.kp, ki: d1r.ki ?? 0, kd: d1r.kd ?? 0 };
-        if (!pidCfg.bal.received && d1r.kp != null) {
-          pidCfg.bal.kp = d1r.kp; pidCfg.bal.ki = d1r.ki ?? 0; pidCfg.bal.kd = d1r.kd ?? 0;
-          pidCfg.bal.received = true;
-          syncPIDUI('bal');
+        if (d1r.kp != null) gainsBot.pit = { kp: d1r.kp, ki: d1r.ki ?? 0, kd: d1r.kd ?? 0 };
+        if (!pidCfg.pit.received && d1r.kp != null) {
+          pidCfg.pit.kp = d1r.kp; pidCfg.pit.ki = d1r.ki ?? 0; pidCfg.pit.kd = d1r.kd ?? 0;
+          pidCfg.pit.received = true;
+          syncPIDUI('pit');
         }
       }
       if (d2r) {
@@ -2591,13 +2709,13 @@
         appendGraphPoint(1, d2r);
       }
       if (d3r) {
-        Object.assign(state.str, d3r);
+        Object.assign(state.yaw, d3r);
         appendGraphPoint(2, d3r);
-        if (d3r.kp != null) gainsBot.str = { kp: d3r.kp, ki: d3r.ki ?? 0, kd: d3r.kd ?? 0 };
-        if (!pidCfg.str.received && d3r.kp != null) {
-          pidCfg.str.kp = d3r.kp; pidCfg.str.ki = d3r.ki ?? 0; pidCfg.str.kd = d3r.kd ?? 0;
-          pidCfg.str.received = true;
-          syncPIDUI('str');
+        if (d3r.kp != null) gainsBot.yaw = { kp: d3r.kp, ki: d3r.ki ?? 0, kd: d3r.kd ?? 0 };
+        if (!pidCfg.yaw.received && d3r.kp != null) {
+          pidCfg.yaw.kp = d3r.kp; pidCfg.yaw.ki = d3r.ki ?? 0; pidCfg.yaw.kd = d3r.kd ?? 0;
+          pidCfg.yaw.received = true;
+          syncPIDUI('yaw');
         }
       }
       if (motr) {
@@ -2619,6 +2737,9 @@
         // pidconfig.txt edit plus restart, anything not this dashboard.
         // CSV preambles must be stamped from posCfgBot, never from posCfg.
         posCfgBot = { ...d.pos_config };
+        // Keep the Drive picker showing what the BOT is doing, not what the UI
+        // last sent -- they diverge if it is changed from the CLI or a restart.
+        if (posCfgBot && posCfgBot.drive_mode !== undefined) syncDriveSeg(settle('drive_mode', posCfgBot.drive_mode));
       }
       if (d.pos_config && !posCfgReceived) {
         const pc = d.pos_config;
@@ -2663,6 +2784,7 @@
 
       updateUI();
       updateDebug(d);
+      perfMark(_t0);
     }
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -2720,12 +2842,6 @@
       });
 
       // Encoders
-      if (state.encoders) {
-        setTxt('enc-l', state.encoders.left_ticks ?? 0);
-        setTxt('enc-r', state.encoders.right_ticks ?? 0);
-        setTxt('enc-lv', (state.encoders.left_vel ?? 0).toFixed(1));
-        setTxt('enc-rv', (state.encoders.right_vel ?? 0).toFixed(1));
-      }
 
       // Cat
       const catBadge = document.getElementById('cat-badge');
@@ -2739,14 +2855,14 @@
       }
 
       // PID live status
-      updatePIDLive('bal', state.bal);
+      updatePIDLive('pit', state.pit);
       updatePIDLive('pos', state.pos);
-      updatePIDLive('str', state.str);
+      updatePIDLive('yaw', state.yaw);
 
       // Controller enable buttons
-      setEnableBtn('pid-bal-en', state.bal.enabled);
+      setEnableBtn('pid-pit-en', state.pit.enabled);
       setEnableBtn('pid-pos-en', state.pos.enabled);
-      setEnableBtn('pid-str-en', state.str.enabled);
+      setEnableBtn('pid-yaw-en', state.yaw.enabled);
     }
 
     function setTxt(id, val, color) {
@@ -2825,7 +2941,8 @@
     // ════════════════════════════════════════════════════════════════════════════
     function toggleArm() {
       const next = !state.armed;
-      state.armed = next;   // optimistic — telemetry will confirm
+      state.armed = next;
+      markPending('armed', next);
       updateUI();
       sendCmd({ type: 'arm', value: next });
     }
@@ -2853,14 +2970,14 @@
     // ════════════════════════════════════════════════════════════════════════════
     // PID tab
     // ════════════════════════════════════════════════════════════════════════════
-    let currentPIDCtrl = 'bal';
+    let currentPIDCtrl = 'pit';
 
     function selectPIDCtrl(ctrl) {
       currentPIDCtrl = ctrl;
       document.querySelectorAll('#pid-ctrl-picker .g-seg').forEach(b =>
         b.classList.toggle('active', b.dataset.pidctrl === ctrl));
-      document.getElementById('pid-bal-card').style.display = ctrl === 'bal' ? '' : 'none';
-      document.getElementById('pid-str-card').style.display = ctrl === 'str' ? '' : 'none';
+      document.getElementById('pid-pit-card').style.display = ctrl === 'pit' ? '' : 'none';
+      document.getElementById('pid-yaw-card').style.display = ctrl === 'yaw' ? '' : 'none';
       document.getElementById('pid-pos-card').style.display = ctrl === 'pos' ? '' : 'none';
     }
 
@@ -2920,7 +3037,7 @@
     function sendPIDUpdate(ctrl) {
       // position is deliberately absent: it is not a PID and the firmware
       // rejects set_pid for it. position is tuned through sendPosConfig().
-      const names = { bal: 'balance', str: 'steering' };
+      const names = { pit: 'balance', yaw: 'steering' };
       if (!names[ctrl]) {
         console.warn(`sendPIDUpdate: ${ctrl} has no PID gains — ignoring`);
         return;
@@ -3123,6 +3240,522 @@
 
     // Tabs
     // ════════════════════════════════════════════════════════════════════════════
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // Tune quality
+    //
+    // Same metrics as tools/analyze_tune.py, computed here from recordBuf so a
+    // run is scored the moment you press Stop. Runs persist in localStorage, so
+    // "was that better?" is answerable against a run from last week rather than
+    // from memory.
+    //
+    // Thresholds are duplicated from the python deliberately: this has to work
+    // with no server round-trip, and a dashboard that silently disagreed with
+    // the CLI would be worse than one that obviously does. Keep them in step.
+    // ════════════════════════════════════════════════════════════════════════════
+    const TUNE_TH = {
+      drift:     { ok: 0.30, bad: 1.00 },
+      thetaRms:  { ok: 1.50, bad: 3.00 },
+      thetaPeak: { ok: 6.00, bad: 12.0 },
+      sat:       { ok: 2.0,  bad: 10.0 },
+      ringAmp:   { ok: 1.0,  bad: 3.0  },
+      posRms:    { ok: 60,   bad: 200  },
+      asym:      { ok: 0.05, bad: 0.15 },
+      loop:      { ok: 2.0,  bad: 10.0 },
+    };
+    const TUNE_MM_PER_TICK = 155.0 * Math.PI / 145.1;
+    const TUNE_KEY = 'bbot.tuneRuns.v1';
+    const TUNE_MAX_RUNS = 24;
+
+    const tMean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+    const tRms = a => a.length ? Math.sqrt(a.reduce((x, y) => x + y * y, 0) / a.length) : 0;
+
+    function tVerdict(v, th) {
+      const m = Math.abs(v);
+      if (m <= th.ok) return 'ok';
+      if (m >= th.bad) return 'bad';
+      return 'warn';
+    }
+
+    // Dominant period by autocorrelation. Matches the python: take the first
+    // peak AFTER the correlation goes negative, which skips the trivial zero-lag
+    // peak without windowing. Downsampled so a 60s run stays under a few ms.
+    function tAutocorr(sig, dt, lo, hi) {
+      lo = lo || 0.05; hi = hi || 5.0;
+      if (!sig || sig.length < 64 || !(dt > 0)) return { period: null, amp: 0 };
+      let step = 1, x = sig;
+      if (sig.length > 1500) { step = Math.ceil(sig.length / 1500); x = sig.filter((_, i) => i % step === 0); }
+      const edt = dt * step;
+      const m = tMean(x), d = x.map(v => v - m);
+      const denom = d.reduce((a, v) => a + v * v, 0);
+      if (denom <= 0) return { period: null, amp: 0 };
+      const loLag = Math.max(1, Math.round(lo / edt));
+      const hiLag = Math.min(Math.floor(d.length / 2), Math.round(hi / edt));
+      if (hiLag <= loLag) return { period: null, amp: 0 };
+      let sawNeg = false, bestLag = null, bestVal = 0;
+      for (let lag = 1; lag < hiLag; lag++) {
+        let s = 0;
+        for (let k = 0; k < d.length - lag; k++) s += d[k] * d[k + lag];
+        s /= denom;
+        if (s < 0) { sawNeg = true; continue; }
+        if (sawNeg && lag >= loLag && s > bestVal) { bestVal = s; bestLag = lag; }
+      }
+      if (bestLag === null) return { period: null, amp: 0 };
+      return { period: bestLag * edt, amp: tRms(d) * Math.sqrt(Math.max(bestVal, 0)) * Math.SQRT2 };
+    }
+
+    function tuneAnalyze(buf, meta, loop) {
+      const bal = buf[0] || [], pos = buf[1] || [], mot = buf[3] || [];
+      if (!bal.length) return null;
+
+      const dur = bal.length > 1 ? (bal.at(-1).t - bal[0].t) : 0;
+      const dt = bal.length > 1 ? dur / (bal.length - 1) : 0;
+
+      // Balancing samples only. A fall or being held would poison every stat.
+      const okIdx = [];
+      for (let i = 0; i < bal.length; i++) if (Math.abs(bal[i].measurement) <= 8) okIdx.push(i);
+      if (!okIdx.length) return null;
+
+      const th = okIdx.map(i => bal[i].measurement);
+      const err = okIdx.map(i => bal[i].setpoint - bal[i].measurement);
+
+      const ev = pos.length ? pos.map(r => r.encVel).filter(v => isFinite(v)) : [];
+      const ee = pos.length ? pos.map(r => r.encError).filter(v => isFinite(v)) : [];
+      const ep = pos.length ? pos.map(r => r.encPos) : [];
+
+      let sat = 0, duty = [], asym = [];
+      for (const r of mot) {
+        if (Math.abs(r.leftDuty) > 0.95 || Math.abs(r.rightDuty) > 0.95) sat++;
+        duty.push((r.leftDuty + r.rightDuty) / 2);
+        asym.push(Math.abs(r.leftDuty - r.rightDuty));
+      }
+
+      const ring = tAutocorr(th, dt);
+      const posRing = ee.length ? tAutocorr(ee, dt, 0.5, 8.0) : { period: null, amp: 0 };
+      const netTicks = ep.length > 1 ? (ep.at(-1) - ep[0]) : 0;
+
+      return {
+        n: bal.length, dur, dt,
+        keep: okIdx.length,
+        droppedPct: 100 * (bal.length - okIdx.length) / bal.length,
+        drift: ev.length ? tMean(ev) : 0,
+        netTicks, netM: netTicks * TUNE_MM_PER_TICK / 1000,
+        thetaRms: tRms(err), thetaPeak: Math.max(...err.map(Math.abs)),
+        thetaMean: tMean(th),
+        satPct: mot.length ? 100 * sat / mot.length : 0,
+        dutyRms: tRms(duty), asym: tMean(asym),
+        ringPeriod: ring.period, ringAmp: ring.amp,
+        posRms: tRms(ee), posPeak: ee.length ? Math.max(...ee.map(Math.abs)) : 0,
+        posTightPct: ee.length ? 100 * ee.filter(v => Math.abs(v) < 2).length / ee.length : 0,
+        posPeriod: posRing.period, posAmp: posRing.amp,
+        loopBelowPct: loop && loop.n ? 100 * loop.below / loop.n : 0,
+        loopMean: loop && loop.n ? loop.sum / loop.n : 0,
+        falls: bal.filter(r => Math.abs(r.measurement) > 14).length,
+        cfg: meta || null,
+      };
+    }
+
+    // ── run storage ─────────────────────────────────────────────────────────────
+    function tuneLoadRuns() {
+      try { return JSON.parse(localStorage.getItem(TUNE_KEY) || '[]'); }
+      catch (e) { return []; }
+    }
+    function tuneSaveRuns(runs) {
+      try { localStorage.setItem(TUNE_KEY, JSON.stringify(runs.slice(-TUNE_MAX_RUNS))); }
+      catch (e) { console.warn('tune: could not persist runs', e); }
+    }
+    function tuneRecordRun(m) {
+      if (!m) return;
+      const runs = tuneLoadRuns();
+      const d = new Date();
+      runs.push({
+        id: Date.now(),
+        label: d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+        m,
+      });
+      tuneSaveRuns(runs);
+      tuneRenderRuns();
+    }
+    function tuneClearRuns() {
+      if (!confirm('Delete all saved tune runs?')) return;
+      tuneSaveRuns([]); tuneRenderRuns();
+      document.getElementById('tune-cmp-card').style.display = 'none';
+    }
+    function tuneExport() {
+      const blob = new Blob([JSON.stringify(tuneLoadRuns(), null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `bbot_tune_runs_${Date.now()}.json`;
+      a.click(); URL.revokeObjectURL(a.href);
+    }
+
+    // ── rendering ───────────────────────────────────────────────────────────────
+    function tRow(label, value, verdictKey, note) {
+      const v = verdictKey ? `<span class="pill ${verdictKey}">${verdictKey.toUpperCase()}</span>` : '';
+      return `<tr><td style="width:44px">${v}</td><td class="lbl">${label}</td>` +
+             `<td class="val">${value}</td><td class="note">${note || ''}</td></tr>`;
+    }
+
+    function tuneRenderReport(m) {
+      const el = document.getElementById('tune-report');
+      if (!el) return;
+      if (!m) { el.innerHTML = '<div style="opacity:.5;padding:8px 0">Run had no balancing samples.</div>'; return; }
+      const f = (x, d) => (x === null || x === undefined || !isFinite(x)) ? '—' : x.toFixed(d === undefined ? 2 : d);
+      let h = `<div style="opacity:.55;font-size:11px;margin-bottom:6px">` +
+              `${m.n} samples over ${f(m.dur, 1)}s · ${m.keep} balancing` +
+              (m.droppedPct > 1 ? ` · ${f(m.droppedPct, 0)}% dropped as falls/held` : '') + `</div>`;
+
+      h += `<div class="tune-sec">Trim — does it hold station?</div><table>`;
+      h += tRow('mean drift', f(m.drift), tVerdict(m.drift, TUNE_TH.drift), `ticks/100ms · ok &lt;${TUNE_TH.drift.ok}`);
+      h += tRow('net travel', f(m.netM), tVerdict(m.drift, TUNE_TH.drift), `m in ${f(m.dur, 0)}s`);
+      h += `</table>`;
+
+      h += `<div class="tune-sec">Balance — how tightly does it track upright?</div><table>`;
+      h += tRow('pitch error RMS', f(m.thetaRms), tVerdict(m.thetaRms, TUNE_TH.thetaRms), `deg · ok &lt;${TUNE_TH.thetaRms.ok}`);
+      h += tRow('pitch error peak', f(m.thetaPeak), tVerdict(m.thetaPeak, TUNE_TH.thetaPeak), `deg · ok &lt;${TUNE_TH.thetaPeak.ok}`);
+      h += tRow('motor saturation', f(m.satPct, 1), tVerdict(m.satPct, TUNE_TH.sat), `% of samples · ok &lt;${TUNE_TH.sat.ok}%`);
+      h += `</table>`;
+
+      h += `<div class="tune-sec">Ringing — one dominant oscillation?</div><table>`;
+      if (m.ringPeriod) {
+        const v = tVerdict(m.ringAmp, TUNE_TH.ringAmp);
+        h += tRow('dominant period', f(m.ringPeriod), v, 's');
+        h += tRow('amplitude', f(m.ringAmp), v, `deg · ok &lt;${TUNE_TH.ringAmp.ok}`);
+      } else {
+        h += tRow('dominant mode', 'none', 'ok', 'no strong periodic component');
+      }
+      h += `</table>`;
+
+      h += `<div class="tune-sec">Position hold — station keeping</div><table>`;
+      h += tRow('position error RMS', f(m.posRms, 0), tVerdict(m.posRms, TUNE_TH.posRms),
+                `ticks = ${f(m.posRms * TUNE_MM_PER_TICK, 0)} mm · ok &lt;${TUNE_TH.posRms.ok}`);
+      h += tRow('position error peak', f(m.posPeak, 0), tVerdict(m.posPeak, TUNE_TH.posRms),
+                `ticks = ${f(m.posPeak * TUNE_MM_PER_TICK / 1000, 2)} m`);
+      h += tRow('inside deadband', f(m.posTightPct, 0), '', '% of samples with |err| &lt; 2 ticks');
+      if (m.posPeriod) h += tRow('limit cycle', f(m.posPeriod), '', `s · ${f(m.posAmp * TUNE_MM_PER_TICK, 0)} mm amplitude`);
+      h += `</table>`;
+
+      h += `<div class="tune-sec">Effort</div><table>`;
+      h += tRow('duty RMS', f(m.dutyRms, 3), '', 'of full scale');
+      h += tRow('left/right asymmetry', f(m.asym, 3), tVerdict(m.asym, TUNE_TH.asym), `duty · ok &lt;${TUNE_TH.asym.ok}`);
+      h += `</table>`;
+
+      h += `<div class="tune-sec">Health — is this run trustworthy?</div><table>`;
+      h += tRow('loop ticks below 95Hz', f(m.loopBelowPct, 1), tVerdict(m.loopBelowPct, TUNE_TH.loop), `% · ok &lt;${TUNE_TH.loop.ok}%`);
+      h += tRow('samples beyond 14 deg', String(m.falls), m.falls ? 'warn' : 'ok', 'fall-detection territory');
+      h += `</table>`;
+
+      h += tuneAdvice(m);
+      el.innerHTML = h;
+    }
+
+    function tuneAdvice(m) {
+      const todo = [];
+      if (m.loopBelowPct >= TUNE_TH.loop.bad)
+        todo.push('Loop rate is poor — fix that first, every number above is measured through it.');
+      if (Math.abs(m.drift) > TUNE_TH.drift.ok)
+        todo.push(`Creeping ${m.drift > 0 ? 'forward' : 'backward'}. Adjust balance trim by ` +
+                  `${m.drift > 0 ? '-0.3' : '+0.3'} deg and re-log before touching any gain — ` +
+                  `creep masquerades as every other fault.`);
+      if (m.satPct >= TUNE_TH.sat.bad)
+        todo.push(`Motors saturated on ${m.satPct.toFixed(0)}% of samples. The loop is out of ` +
+                  `authority; raising gains cannot help.`);
+      if (m.ringPeriod && m.ringAmp >= TUNE_TH.ringAmp.bad)
+        todo.push(`Strong ${m.ringPeriod.toFixed(2)}s oscillation at ${m.ringAmp.toFixed(1)} deg. ` +
+                  `Fast (&lt;0.5s) usually means kp or kd too high; slow (&gt;1s) usually means ` +
+                  `position hold fighting balance — look at vel_scale_stop and scale_d.`);
+      if (m.posRms >= TUNE_TH.posRms.bad)
+        todo.push(`Position error RMS ${m.posRms.toFixed(0)} ticks. Station-keeping is loose — ` +
+                  `scale_d, or back_to_spot is off.`);
+      if (m.asym >= TUNE_TH.asym.bad)
+        todo.push('Left/right duty differs persistently — drivetrain drag, or the steering ' +
+                  'setpoint is not centred.');
+      if (!todo.length)
+        return `<div class="tune-todo clean"><b>Nothing flagged.</b> This is a good tune — ` +
+               `run <code>make save-config</code> and commit config/machine/ before changing anything.</div>`;
+      return `<div class="tune-todo"><b>What to do next</b><ol style="margin:6px 0 0 16px;padding:0">` +
+             todo.map(t => `<li style="margin-bottom:4px">${t}</li>`).join('') + `</ol></div>`;
+    }
+
+    function tuneRenderRuns() {
+      const el = document.getElementById('tune-runs');
+      if (!el) return;
+      const runs = tuneLoadRuns();
+      if (!runs.length) { el.innerHTML = '<div style="opacity:.5;padding:6px 0">No saved runs yet.</div>'; return; }
+      el.innerHTML = runs.slice().reverse().map(r => {
+        const m = r.m;
+        const flags = [];
+        if (Math.abs(m.drift) > TUNE_TH.drift.ok) flags.push('creep');
+        if (m.satPct >= TUNE_TH.sat.bad) flags.push('saturated');
+        if (m.ringPeriod && m.ringAmp >= TUNE_TH.ringAmp.bad) flags.push('ringing');
+        const cls = flags.length ? 'warn' : 'ok';
+        return `<div class="tune-run">
+          <input type="checkbox" data-runid="${r.id}" onchange="tuneOnPick()">
+          <span class="nm">${r.label}</span>
+          <span class="mini">${m.dur.toFixed(0)}s · drift ${m.drift.toFixed(2)} ·
+                pitch ${m.thetaRms.toFixed(2)} · pos ${m.posRms.toFixed(0)}</span>
+          <span class="pill ${cls}">${flags.length ? flags.join('/') : 'clean'}</span>
+          <button class="g-btn" style="padding:1px 6px;font-size:10px"
+                  onclick="tuneShow(${r.id})">view</button>
+        </div>`;
+      }).join('');
+    }
+
+    function tuneShow(id) {
+      const r = tuneLoadRuns().find(x => x.id === id);
+      if (r) { tuneRenderReport(r.m); switchTab('tune'); window.scrollTo(0, 0); }
+    }
+
+    function tuneOnPick() {
+      const picked = [...document.querySelectorAll('#tune-runs input:checked')];
+      if (picked.length > 2) { picked[0].checked = false; return tuneOnPick(); }
+      const card = document.getElementById('tune-cmp-card');
+      if (picked.length !== 2) { card.style.display = 'none'; return; }
+      const runs = tuneLoadRuns();
+      const ids = picked.map(p => Number(p.dataset.runid));
+      const a = runs.find(r => r.id === Math.min(...ids));
+      const b = runs.find(r => r.id === Math.max(...ids));
+      if (!a || !b) return;
+      card.style.display = '';
+      tuneRenderCompare(a, b);
+    }
+
+    function tuneRenderCompare(a, b) {
+      const rows = [
+        ['drift',            'drift',            2, TUNE_TH.drift],
+        ['thetaRms',         'pitch RMS',        2, TUNE_TH.thetaRms],
+        ['thetaPeak',        'pitch peak',       2, TUNE_TH.thetaPeak],
+        ['satPct',           'saturation %',     1, TUNE_TH.sat],
+        ['ringAmp',          'ring amplitude',   2, TUNE_TH.ringAmp],
+        ['posRms',           'position RMS',     0, TUNE_TH.posRms],
+        ['asym',             'L/R asymmetry',    3, TUNE_TH.asym],
+        ['loopBelowPct',     'loop <95Hz %',     1, TUNE_TH.loop],
+      ];
+      let h = `<div style="opacity:.6;font-size:11px;margin-bottom:6px">` +
+              `${a.label} &nbsp;&rarr;&nbsp; ${b.label}</div>`;
+      h += `<table><tr><td></td><td class="lbl">metric</td>` +
+           `<td class="val">${a.label.split(',')[0]}</td>` +
+           `<td class="val">${b.label.split(',')[0]}</td>` +
+           `<td class="val">change</td></tr>`;
+      for (const [key, label, dp, th] of rows) {
+        const av = a.m[key], bv = b.m[key];
+        if (av === undefined || bv === undefined || av === null || bv === null) continue;
+        const d = bv - av;
+        const better = Math.abs(bv) < Math.abs(av);
+        const same = Math.abs(d) < 1e-9;
+        const cls = same ? '' : (better ? 'delta-better' : 'delta-worse');
+        h += `<tr><td style="width:44px"><span class="pill ${tVerdict(bv, th)}">${tVerdict(bv, th).toUpperCase()}</span></td>` +
+             `<td class="lbl">${label}</td><td class="val">${av.toFixed(dp)}</td>` +
+             `<td class="val">${bv.toFixed(dp)}</td>` +
+             `<td class="val ${cls}">${same ? '—' : (d > 0 ? '+' : '') + d.toFixed(dp)}</td></tr>`;
+      }
+      h += `</table>`;
+      // config diff, since "what did I actually change?" is the real question
+      const ca = a.m.cfg, cb = b.m.cfg;
+      if (ca && cb) {
+        const diffs = [];
+        for (const grp of ['pos', 'pit', 'yaw']) {
+          const ga = ca[grp] || {}, gb = cb[grp] || {};
+          for (const k of new Set([...Object.keys(ga), ...Object.keys(gb)])) {
+            if (Number(ga[k]) !== Number(gb[k])) diffs.push(`${grp}.${k}: ${ga[k]} → ${gb[k]}`);
+          }
+        }
+        h += `<div class="tune-sec">Config changed between these runs</div>`;
+        h += diffs.length
+          ? `<div style="font-family:ui-monospace,monospace;font-size:11px;line-height:1.7">` +
+            diffs.map(d => `<div>${d}</div>`).join('') + `</div>`
+          : `<div style="opacity:.5;font-size:11px">Nothing — same config both runs. ` +
+            `Any difference above is run-to-run variation, not a change you made.</div>`;
+      }
+      document.getElementById('tune-compare').innerHTML = h;
+    }
+
+
+    // ── Debug: copy / export / freeze ───────────────────────────────────────────
+    // Telemetry arrives at ~10 Hz, so reading a value off the screen is a race and
+    // selecting the text by hand is worse. Freeze holds one packet still; Copy and
+    // Export always hand over the exact object that arrived.
+    let lastTelemetry = null;
+    let debugHold = false;
+
+    function debugNote(msg) {
+      const el = document.getElementById('debug-note');
+      if (!el) return;
+      el.textContent = msg;
+      setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2500);
+    }
+
+    function debugJSON() {
+      if (!lastTelemetry) return null;
+      // Stamp it, so a pasted packet carries its own context. A JSON blob with no
+      // idea which robot or when is markedly less useful.
+      return JSON.stringify({
+        captured: new Date().toISOString(),
+        host: location.hostname,
+        packets: state.packetsReceived,
+        telemetry: lastTelemetry,
+      }, null, 2);
+    }
+
+    async function debugCopy() {
+      const txt = debugJSON();
+      if (!txt) return debugNote('no telemetry yet');
+      try {
+        await navigator.clipboard.writeText(txt);
+        debugNote(`copied ${(txt.length / 1024).toFixed(1)} kB`);
+      } catch (e) {
+        // The clipboard API needs a secure context. Over plain http to the bot it
+        // is unavailable, so fall back rather than failing silently.
+        const ta = document.createElement('textarea');
+        ta.value = txt;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+        document.body.removeChild(ta);
+        debugNote(ok ? 'copied' : 'copy blocked — use Export');
+      }
+    }
+
+    function debugExport() {
+      const txt = debugJSON();
+      if (!txt) return debugNote('no telemetry yet');
+      const blob = new Blob([txt], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      const t = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      a.download = `bbot_telemetry_${t}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      debugNote('exported');
+    }
+
+    function debugToggleHold() {
+      debugHold = !debugHold;
+      const b = document.getElementById('debug-hold-btn');
+      if (b) {
+        b.textContent = debugHold ? 'Live' : 'Freeze';
+        b.classList.toggle('rec-active', debugHold);
+      }
+      debugNote(debugHold ? 'frozen — Copy/Export still take the latest packet' : 'live');
+    }
+
+
+    // Drive algorithm. Lives in pos_config, so it persists to robot.conf with
+    // everything else and survives a restart.
+    function setDriveMode(m) {
+      posCfg.drive_mode = m;
+      markPending('drive_mode', m);
+      sendCmd({ type: 'set_pos_config', drive_mode: m });
+      syncDriveSeg(m);
+    }
+    function syncDriveSeg(m) {
+      document.querySelectorAll('#drive-seg .seg-btn').forEach(b =>
+        b.classList.toggle('active', Number(b.dataset.drive) === Number(m)));
+    }
+
+    // Is a panel actually on screen? Telemetry lands at ~10 Hz and every panel
+    // was redrawn on every packet regardless of which tab was showing. The Debug
+    // panel was the worst by far: a full JSON.stringify of the entire telemetry
+    // object, three regex passes over the result, and an innerHTML assignment
+    // that reparses the DOM -- ten times a second, while you were looking at a
+    // different tab. Enabling the encoders block grew the payload and tipped it
+    // over into unusable.
+    // ── optimistic UI, without the flip-back ────────────────────────────────
+    // Commands go out over the socket and come back echoed in telemetry, but a
+    // packet already in flight when you clicked still carries the OLD value.
+    // Applying it blindly flips the control back a moment later: ARM looked like
+    // it disarmed itself, and the Drive picker snapped back to Lean.
+    //
+    // After sending, hold the expected value briefly. Accept telemetry as soon
+    // as it agrees, or once the window expires -- so if the bot genuinely
+    // refused the command the UI ends up telling the truth rather than lying.
+    const pendingCmd = {};
+    const PENDING_MS = 1200;
+
+    function markPending(field, value) {
+      pendingCmd[field] = { value, until: performance.now() + PENDING_MS };
+    }
+
+    function settle(field, incoming) {
+      const p = pendingCmd[field];
+      if (!p) return incoming;
+      if (incoming === p.value || performance.now() > p.until) {
+        delete pendingCmd[field];
+        return incoming;
+      }
+      return p.value;   // bot has not caught up yet; hold what we asked for
+    }
+
+
+    // ── throughput meter ────────────────────────────────────────────────────────
+    // Built because "the dashboard is slow" kept being diagnosed by reasoning
+    // instead of measurement, and every one of those diagnoses was wrong. This
+    // separates the three things that can be slow, which need different fixes:
+    //
+    //   rx    packets per second actually arriving over the socket. If this is
+    //         low, the bot or the node bridge is the problem and no amount of
+    //         rendering work will help.
+    //   gap   worst interval between packets in the last second. A healthy 10 Hz
+    //         feed sits at ~100 ms; a big gap means stalls, not a low average.
+    //   draw  milliseconds spent inside handleTelemetry. If rx is fine and this
+    //         is large, the fault is in the rendering, which IS ours to fix.
+    //
+    // Deliberately not gated on a tab: it has to work while you are looking at
+    // whatever is misbehaving.
+    const perfHud = { stamps: [], draw: 0, drawMax: 0, lastPaint: 0, min: false };
+
+    function perfMark(startMs) {
+      const now = performance.now();
+      perfHud.draw = now - startMs;
+      if (perfHud.draw > perfHud.drawMax) perfHud.drawMax = perfHud.draw;
+      perfHud.stamps.push(now);
+      while (perfHud.stamps.length && now - perfHud.stamps[0] > 2000) perfHud.stamps.shift();
+      if (now - perfHud.lastPaint < 500) return;    // repaint the HUD at 2 Hz
+      perfHud.lastPaint = now;
+      perfPaint(now);
+    }
+
+    function perfPaint(now) {
+      const el = document.getElementById('perf-hud');
+      if (!el) return;
+      const st = perfHud.stamps;
+      const hz = st.length > 1 ? (st.length - 1) / ((st.at(-1) - st[0]) / 1000) : 0;
+      let gap = 0;
+      for (let i = 1; i < st.length; i++) gap = Math.max(gap, st[i] - st[i - 1]);
+      const since = st.length ? now - st.at(-1) : 0;
+      const cls = v => v >= 8 ? 'good' : v >= 4 ? 'warn' : 'bad';
+      const gcls = g => g < 200 ? 'good' : g < 500 ? 'warn' : 'bad';
+      const dcls = d => d < 5 ? 'good' : d < 20 ? 'warn' : 'bad';
+      const wsState = (typeof ws !== 'undefined' && ws)
+        ? ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][ws.readyState] : 'none';
+      if (perfHud.min) {
+        el.className = 'min';
+        el.innerHTML = `<span class="${cls(hz)}">${hz.toFixed(1)}Hz</span>`;
+        return;
+      }
+      el.className = '';
+      el.innerHTML =
+        `<b>rx</b>   <span class="${cls(hz)}">${hz.toFixed(1)} Hz</span>  (${state.packetsReceived})\n` +
+        `<b>gap</b>  <span class="${gcls(gap)}">${gap.toFixed(0)} ms</span> max, ${since.toFixed(0)} since\n` +
+        `<b>draw</b> <span class="${dcls(perfHud.draw)}">${perfHud.draw.toFixed(1)} ms</span> now, ` +
+        `${perfHud.drawMax.toFixed(0)} peak\n` +
+        `<b>ws</b>   ${wsState}`;
+    }
+
+    function perfToggle() {
+      perfHud.min = !perfHud.min;
+      perfHud.drawMax = 0;              // clicking also resets the peak
+      perfPaint(performance.now());
+    }
+
+    function panelVisible(name) {
+      const el = document.getElementById('panel-' + name);
+      return !!el && el.classList.contains('active');
+    }
+
     function switchTab(name) {
       document.querySelectorAll('.tab').forEach(t =>
         t.classList.toggle('active', t.dataset.tab === name));
@@ -3132,6 +3765,12 @@
         if (p.id === 'panel-graph') {
           p.style.display = '';
           if (match) rebuildPlots();
+      // The per-panel updates skip work when hidden, so give the tab you just
+      // switched to an immediate draw instead of leaving it stale for a packet.
+      try {
+        if (name === 'rc') updateRC();
+        if (name === 'debug' && lastTelemetry) updateDebug(lastTelemetry);
+      } catch (e) { /* a switch can precede any telemetry */ }
         }
       });
     }
@@ -3267,12 +3906,19 @@
     document.querySelectorAll('.tab').forEach(t =>
       t.addEventListener('click', () => switchTab(t.dataset.tab)));
 
+    try { tuneRenderRuns(); } catch (e) { console.warn('tune: run list', e); }
+
 
     // ════════════════════════════════════════════════════════════════════════════
     // Debug
     // ════════════════════════════════════════════════════════════════════════════
     function updateDebug(d) {
+      // Always keep the raw object, so Copy/Export work from any tab and hand
+      // over exactly what arrived rather than re-serialising the DOM.
+      lastTelemetry = d;
+      if (!panelVisible('debug')) return;   // the expensive part, only if shown
       document.getElementById('debug-pkt').textContent = `${state.packetsReceived} packets`;
+      if (debugHold) return;                // frozen: leave the packet alone
       document.getElementById('debug-out').innerHTML = syntaxHL(JSON.stringify(d, null, 2));
     }
 
