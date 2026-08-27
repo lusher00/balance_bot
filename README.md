@@ -119,7 +119,7 @@ a transmitter left out of trim cannot command movement the instant it links.
 | `tools/trim_from_log.py` | Balance trim from measured drift, not by eye |
 | `tools/check_link.sh` | Finds undefined symbols without linking |
 | `tools/bbot_watch.py` | 1 Hz system recorder for diagnosing lockups |
-| `tools/ls_aliases.sh` | Shell aliases, optional |
+| `config/bashrc` | The shell environment: aliases, service control, `bhelp` / `ahelp`. Install with `./config/install_bashrc.sh --apply` |
 
 ---
 

@@ -1,11 +1,12 @@
-# /etc/default/bbb-oled — options for bbb-oled.service
+# /etc/default/bbb_oled — options for bbb_oled.service
 #
 # Installed by install.sh only if the file does not already exist, so local
-# edits survive a reinstall. Run `systemctl restart bbb-oled` after changing.
+# edits survive a reinstall. Run `systemctl restart bbb_oled` after changing.
 #
 # Everything bbb_oled.py accepts is valid here; see `bbb_oled.py --help`.
 #
-#   --i2c-port N        bus number (the Blue's only external I2C is i2c-1)
+#   --i2c-port N        bus number; run oled_check.py to see which bus the
+#                       panel is actually on (it sweeps all of them)
 #   --i2c-addr 0x3C     panel address; some modules are 0x3D
 #   --height 32         for 128x32 panels; layout adapts
 #   --service NAME      which unit the BBOT line and heartbeat track

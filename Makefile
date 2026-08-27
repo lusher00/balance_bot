@@ -89,7 +89,7 @@ ROBOT_CONF = robot.conf
 # That is the whole point of it — it is what tells you the board is alive when
 # the robot is not.
 OLED_DIR = oled-utils
-OLED_SERVICE = bbb-oled.service
+OLED_SERVICE = bbb_oled.service
 
 # ── Machine state ────────────────────────────────────────────────────────────
 # Files that live outside the repo but are expensive to recreate. The IMU
@@ -178,7 +178,7 @@ install: $(BINDIR)/$(TARGET) install-units
 # do badly: it import-checks as the user the service actually runs as (not as
 # root, whose site-packages differ), adds that user to the i2c group, warns if
 # /dev/i2c-N is absent, and runs systemd-analyze verify before enabling. It also
-# never clobbers an existing /etc/default/bbb-oled.
+# never clobbers an existing /etc/default/bbb_oled.
 #
 # It cds to its own directory, so it works from here without one.
 install-oled:
@@ -192,7 +192,7 @@ uninstall:
 	sudo rm -f /usr/local/bin/$(TARGET)
 	@echo "Uninstalled $(TARGET)"
 
-# Remove the OLED display. Leaves /etc/default/bbb-oled alone — that file holds
+# Remove the OLED display. Leaves /etc/default/bbb_oled alone — that file holds
 # your panel options, and install.sh will not overwrite it on a reinstall either.
 uninstall-oled:
 	sudo $(OLED_DIR)/install.sh --uninstall
@@ -210,7 +210,7 @@ help:
 	@echo "  make install  - Stop service, install to /usr/local/bin, restart service"
 	@echo "                  (also installs the OLED display; non-fatal if it fails)"
 	@echo "  make install-oled   - Install/enable the OLED status display only"
-	@echo "  make uninstall-oled - Remove the OLED display (keeps /etc/default/bbb-oled)"
+	@echo "  make uninstall-oled - Remove the OLED display (keeps /etc/default/bbb_oled)"
 	@echo "  make clean    - Remove build artifacts"
 	@echo "  make uninstall- Stop service and remove from system"
 	@echo "  make test     - Test build only"

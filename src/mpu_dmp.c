@@ -65,6 +65,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <time.h>
 #include <pthread.h>
 #include <sys/ioctl.h>
 #include <linux/i2c-dev.h>
@@ -190,6 +191,9 @@ static int g_i2c_addr = 0x68;
 static int g_dmp_en = 0;
 static int g_packet_len = 0;
 static volatile int g_running = 0;
+/* DMP output period in microseconds, from the rate passed to _mpu_dmp_open().
+   The poll loop schedules against this instead of guessing. */
+static int g_period_us = 10000;
 static pthread_t g_thread;
 
 typedef void (*_mpu_cb_t)(void);
@@ -779,26 +783,49 @@ static int read_dmp_fifo(rc_mpu_data_t *data, uint16_t fifo_count)
     }
 
     if (fifo_count == 0)
-    {
         return -1;
-    }
-    else if (fifo_count % (uint16_t)g_packet_len == 0)
+
+    /* A count that is NOT a multiple of packet_len is the normal case, not
+     * corruption. It means the DMP was partway through writing the next packet
+     * when we read the count register. Every count seen on this board on
+     * 2026-08-24 — 33, 36, 40, 44, 48, 56, 58, 60, 80 — is exactly "N whole
+     * packets plus a partial next one":
+     *
+     *     count 44 = 1 whole packet + 12 bytes of the next
+     *     count 80 = 2 whole packets + 16 bytes of the next
+     *
+     * The old code called this "true overflow or corruption" and ran
+     * mpu_reset_fifo(), which discards EVERY buffered sample. On a balancing
+     * robot that is dropped IMU data at the control rate, and it was happening
+     * several times a second. Take the whole packets and leave the partial one
+     * where it is; it will be complete by the next poll. */
+    if (fifo_count > MAX_FIFO_BUFFER)
     {
-        /* Drain all but the last packet — keeps us current without resetting */
-        i = fifo_count - g_packet_len;
-    }
-    else
-    {
-        /* Non-aligned count — true overflow or corruption, reset */
+        /* This one IS worth resetting for. More bytes than raw[] holds means
+         * we are at least MAX_FIFO_BUFFER/packet_len samples behind — a stall
+         * or a real overflow — and the backlog is stale anyway.
+         *
+         * It also used to be a stack smash: the read below asked for
+         * fifo_count bytes into a MAX_FIFO_BUFFER (%d) buffer, so any aligned
+         * count above that — 192, 256, 512 are all reachable — overflowed it.
+         * The non-aligned reset masked it; with that gone, the guard is load
+         * bearing. */
         if (!first_run)
-            fprintf(stderr, "mpu_dmp: unexpected FIFO count %d (packet_len=%d), resetting\n",
-                    fifo_count, g_packet_len);
+            fprintf(stderr, "mpu_dmp: FIFO backlog %u > %d, resetting\n",
+                    (unsigned)fifo_count, MAX_FIFO_BUFFER);
         mpu_reset_fifo();
         return -1;
     }
 
+    int packets = fifo_count / g_packet_len;
+    if (packets < 1)
+        return -1; /* not a whole packet yet — wait, do not reset */
+
+    uint16_t to_read = (uint16_t)(packets * g_packet_len);
+    i = to_read - g_packet_len; /* index of the newest complete packet */
+
     memset(raw, 0, sizeof(raw));
-    if (i2c_read_bytes(MPU_FIFO_R_W, fifo_count, raw) != (int)fifo_count)
+    if (i2c_read_bytes(MPU_FIFO_R_W, to_read, raw) != (int)to_read)
     {
         fprintf(stderr, "mpu_dmp: FIFO read failed\n");
         return -1;
@@ -885,7 +912,66 @@ static int read_dmp_fifo(rc_mpu_data_t *data, uint16_t fifo_count)
 
 /* ── Background thread ──────────────────────────────────────────────────── */
 
-/* Poll FIFO. Check for overflow via INT_STATUS since a full FIFO reports count=0. */
+static uint64_t mono_us(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
+}
+
+static void sleep_until_us(uint64_t deadline_us)
+{
+    struct timespec ts = {
+        .tv_sec  = (time_t)(deadline_us / 1000000ULL),
+        .tv_nsec = (long)((deadline_us % 1000000ULL) * 1000ULL),
+    };
+    /* Absolute deadline: no drift from accumulated wake latency, and no
+       re-reading the clock between the decision and the sleep. */
+    while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL) == EINTR)
+        ;
+}
+
+/*
+ * Read the DMP FIFO, scheduled against the DMP's own output period.
+ *
+ * This loop used to poll INT_STATUS every 2 ms and only read the FIFO when it
+ * announced data. At a 100 Hz DMP rate that is 500 spins/s to collect 100
+ * packets: 400 of every 500 register reads existed only to be told "not yet".
+ *
+ * That was not free. Every register read here is one I2C_RDWR ioctl carrying
+ * TWO i2c messages (write the register address, then read it back), and the
+ * calling thread blocks on each one. Measured on the board with
+ * tools/cpu_top.py --threads, the cost was:
+ *
+ *     irq/32-4819c000.i2c        1972 wakes/s     7.2% cpu
+ *     balance_bot (dmp thread)   2110 switches/s  9.7% cpu
+ *
+ * ~4100 of the board's 6137 context switches/s, to move 100 packets. For
+ * scale, the SBUS read()-per-byte bug that previously made this board unusable
+ * measured 6983/s. Same fault, different device: a thread waking far more
+ * often than the data arrives.
+ *
+ * A stubbed-i2c harness over this exact loop, at a simulated 100 Hz:
+ *
+ *     old loop   758 ioctl/s   (562 of them INT_STATUS)   98 packets/s
+ *     this loop  254 ioctl/s   (0 INT_STATUS in steady state)  98 packets/s
+ *
+ * Same packets delivered, a third of the bus traffic. Two changes, both of
+ * which only remove work:
+ *
+ *   1. Sleep until the next packet is actually DUE (phase-locked to the last
+ *      successful read) instead of waking every 2 ms to ask.
+ *   2. Read FIFO_COUNT directly in the fast path. INT_STATUS told us nothing
+ *      FIFO_COUNT does not, except overflow -- and overflow is not a
+ *      per-sample concern.
+ *
+ * Overflow is still handled, just not paid for on every pass. A FULL fifo on
+ * this part reports count 0, which is indistinguishable from "no data yet", so
+ * an empty read is ambiguous. The tie is broken by frequency: genuinely-early
+ * reads resolve within a nudge or two, so only after several consecutive empty
+ * reads is INT_STATUS worth an ioctl. If the DMP has stopped, that path costs
+ * about what the old loop cost all the time -- and only while broken.
+ */
 static void *mpu_thread(void *arg)
 {
     (void)arg;
@@ -893,41 +979,61 @@ static void *mpu_thread(void *arg)
     mpu_reset_fifo(); /* drain anything accumulated during settle */
     usleep(20000);    /* brief pause after reset before polling */
 
+    const int period_us = (g_period_us > 0) ? g_period_us : 10000;
+    /* Wake a hair early so jitter costs a 500 us nudge, not a whole period. */
+    const int lead_us  = (period_us / 20) > 200 ? (period_us / 20) : 200;
+    const int nudge_us = 500;
+    const int empty_before_int_check = 8;
+
+    int empty_polls = 0;
+    uint64_t next_due = mono_us() + period_us;
+
     while (g_running)
     {
-        /* Check INT_STATUS first — bit 4 = FIFO overflow, bit 1 = DMP interrupt */
-        uint8_t int_status = 0;
-        i2c_read_byte(MPU_INT_STATUS, &int_status);
-
-        if (int_status & 0x10) /* FIFO overflow */
+        uint64_t now = mono_us();
+        if (next_due > now)
         {
-            mpu_reset_fifo();
-            usleep(20000);
-            continue;
-        }
-
-        if (!(int_status & 0x02)) /* DMP interrupt not set — no data yet */
-        {
-            usleep(2000);
-            continue;
+            /* Guard against a nonsense deadline (suspend, clock step) rather
+               than sleeping for an unbounded time and stalling the IMU. */
+            if (next_due - now > (uint64_t)period_us * 4)
+                next_due = now + period_us;
+            sleep_until_us(next_due);
         }
 
         uint16_t fifo_count = 0;
         if (i2c_read_word(MPU_FIFO_COUNTH, &fifo_count) < 0)
         {
-            usleep(1000);
+            next_due = mono_us() + nudge_us;
             continue;
         }
+
         if (fifo_count >= (uint16_t)g_packet_len)
         {
-            if (read_dmp_fifo(g_data, fifo_count) == 0 && g_callback)
+            empty_polls = 0;
+            int ok = (read_dmp_fifo(g_data, fifo_count) == 0);
+            /* Re-lock the phase to the data itself, so the loop tracks the
+               DMP's real rate rather than our idea of it. */
+            next_due = mono_us() + period_us - lead_us;
+            if (ok && g_callback)
                 g_callback();
-            else
-                usleep(2000);
+            continue;
         }
-        else
+
+        /* Early. Nudge forward; this is always a real sleep, never a spin. */
+        empty_polls++;
+        next_due = mono_us() + nudge_us;
+
+        if (empty_polls >= empty_before_int_check)
         {
-            usleep(2000);
+            empty_polls = 0;
+            uint8_t int_status = 0;
+            if (i2c_read_byte(MPU_INT_STATUS, &int_status) == 0 &&
+                (int_status & 0x10)) /* bit 4 = FIFO overflow */
+            {
+                mpu_reset_fifo();
+                usleep(20000);
+            }
+            next_due = mono_us() + period_us - lead_us;
         }
     }
     return NULL;
@@ -1017,6 +1123,10 @@ int _mpu_dmp_open(int i2c_bus, int i2c_addr, int sample_rate_hz)
     }
 
     /* Set FIFO rate to requested sample rate */
+    /* The poll loop schedules against this, so it must match what the DMP was
+       actually told -- not SAMPLE_RATE_HZ, which the caller may have clamped. */
+    g_period_us = (sample_rate_hz > 0) ? (1000000 / sample_rate_hz) : 10000;
+
     if (dmp_set_fifo_rate((unsigned short)sample_rate_hz) < 0)
     {
         fprintf(stderr, "mpu_dmp: set_fifo_rate failed\n");

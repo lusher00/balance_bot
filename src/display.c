@@ -76,6 +76,24 @@
 #define LOG_LINE_LEN  256       /* max chars per log line              */
 #define LOG_FILE      "/tmp/balance_bot.log"
 
+/* Hard ceiling on the log, and how many lines may sit in the buffer.
+ *
+ * /tmp is NOT a tmpfs on this image -- there is no /tmp line in /proc/mounts,
+ * so this file lives on the SD card. On 2026-08-24 it was recovered at
+ * 577,657,108 bytes / 3,452,153 lines, accumulated across 154 boots with
+ * nothing rotating or clearing it, and 87% of it was three messages that were
+ * meant to be throttled and were not.
+ *
+ * Two separate mistakes made that possible and both are fixed here. The file
+ * had no ceiling, so any logging bug anywhere became a filesystem problem.
+ * And every line was followed by fflush(), so each message was its own
+ * synchronous write to the card -- hundreds a second at loop rate.
+ *
+ * 16 MB holds hours of normal operation. Warnings and errors still flush
+ * immediately: those are the lines someone opens this file to find. */
+#define LOG_FILE_MAX_BYTES  (16L * 1024 * 1024)
+#define LOG_FLUSH_EVERY     64
+
 /* ── colour pairs ───────────────────────────────────────────────── */
 enum {
     CP_TITLE = 1, CP_HDR, CP_VAL, CP_POS, CP_NEG,
@@ -103,6 +121,44 @@ static FILE *g_logfile     = NULL;
 static pthread_t g_collector_thread;
 static volatile int g_collector_running = 0;
 
+static long g_log_bytes       = 0;   /* bytes in LOG_FILE right now      */
+static int  g_log_since_flush = 0;
+
+/**
+ * @brief Append one line to LOG_FILE, bounded and batched.
+ *
+ * Wraps rather than grows: when the cap is reached the file is truncated and
+ * started again. The recent past is what anyone actually reads out of it, and
+ * an unbounded log on the same card the robot boots from is how you end up
+ * with half a gigabyte of one repeated warning.
+ */
+static void log_file_write(const char *line)
+{
+    if (!g_logfile) return;
+
+    int n = fprintf(g_logfile, "%s\n", line);
+    if (n > 0) g_log_bytes += n;
+
+    if (g_log_bytes >= LOG_FILE_MAX_BYTES) {
+        fflush(g_logfile);
+        if (freopen(LOG_FILE, "w", g_logfile)) {
+            g_log_bytes = 0;
+            g_log_since_flush = 0;
+            fprintf(g_logfile, "[log wrapped at %ld bytes]\n",
+                    (long)LOG_FILE_MAX_BYTES);
+            fflush(g_logfile);
+        }
+        return;
+    }
+
+    g_log_since_flush++;
+    if (g_log_since_flush >= LOG_FLUSH_EVERY ||
+        strstr(line, "[WARN]") || strstr(line, "[ERR")) {
+        fflush(g_logfile);
+        g_log_since_flush = 0;
+    }
+}
+
 static void *collector_thread(void *arg)
 {
     (void)arg;
@@ -127,14 +183,14 @@ static void *collector_thread(void *arg)
                 line[line_pos] = '\0';
                 if (line_pos > 0) {
                     log_append(line);
-                    if (g_logfile) { fprintf(g_logfile, "%s\n", line); fflush(g_logfile); }
+                    log_file_write(line);
                 }
                 line_pos = 0;
             } else if (c == '\r') {
                 line[line_pos] = '\0';
                 if (line_pos > 0) {
                     log_append(line);
-                    if (g_logfile) { fprintf(g_logfile, "%s\n", line); fflush(g_logfile); }
+                    log_file_write(line);
                     line_pos = 0;
                 }
             } else {
@@ -144,7 +200,7 @@ static void *collector_thread(void *arg)
                 if (line_pos == LOG_LINE_LEN - 1) {
                     line[line_pos] = '\0';
                     log_append(line);
-                    if (g_logfile) { fprintf(g_logfile, "%s\n", line); fflush(g_logfile); }
+                    log_file_write(line);
                     line_pos = 0;
                 }
             }
@@ -161,7 +217,7 @@ static void *collector_thread(void *arg)
             if (p <= 0) {
                 line[line_pos] = '\0';
                 log_append(line);
-                if (g_logfile) { fprintf(g_logfile, "%s\n", line); fflush(g_logfile); }
+                log_file_write(line);
                 line_pos = 0;
             } else {
                 /* got more data — put it back by processing it now */
@@ -181,6 +237,22 @@ static void redirect_output(void)
     fcntl(g_pipe_fds[0], F_SETFL, O_NONBLOCK);
 
     g_logfile = fopen(LOG_FILE, "a");
+    if (g_logfile) {
+        /* A 32 KB buffer, so LOG_FLUSH_EVERY actually batches instead of
+         * being defeated by stdio's default line buffering on a pipe. */
+        static char logbuf[32768];
+        setvbuf(g_logfile, logbuf, _IOFBF, sizeof logbuf);
+
+        /* The cap has to apply to what is ALREADY on disk, not just to what
+         * this run appends -- 154 boots each appending politely is how the
+         * file reached 577 MB. Start a fresh one if we inherit a full one. */
+        fseek(g_logfile, 0, SEEK_END);
+        long pos = ftell(g_logfile);
+        g_log_bytes = (pos > 0) ? pos : 0;
+        if (g_log_bytes >= LOG_FILE_MAX_BYTES) {
+            if (freopen(LOG_FILE, "w", g_logfile)) g_log_bytes = 0;
+        }
+    }
 
     /* save originals */
     g_stdout_saved = dup(STDOUT_FILENO);

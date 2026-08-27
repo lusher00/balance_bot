@@ -1675,7 +1675,7 @@
       cat: null,
       pit: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
       // position is a zone-based position hold, not a PID — different shape on purpose.
-      pos: { enabled: false, encTarget: 0, encPos: 0, encError: 0, encVel: 0, posCorr: 0, velDamp: 0, thetaAdj: 0, activeScale: 0, maxCorrection: 0 },
+      pos: { enabled: false, encTarget: 0, encPos: 0, encError: 0, encVel: 0, encVelRaw: 0, encVelMid: 0, encVelLong: 0, posCorr: 0, velDamp: 0, thetaAdj: 0, activeScale: 0, maxCorrection: 0 },
       yaw: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
       // Commanded wheel duty as sent to the RoboClaw — not a controller.
       mot: { leftDuty: 0, rightDuty: 0 },
@@ -1739,7 +1739,18 @@
     // ════════════════════════════════════════════════════════════════════════════
 
     let windowSec = 15;  // adjustable from toolbar
-    const MAX_PTS = 600;
+    // Points are trimmed by TIME against windowSec -- that is the real bound.
+    // This count is only a runaway guard for the case where timestamps stop
+    // advancing (so the time trim never fires) and must therefore be large
+    // enough that it NEVER clips a legitimate window.
+    //
+    // It used to be a flat 600, which was exactly 60s at the old 10 Hz
+    // telemetry rate. When telemetry moved to 20 Hz the same 600 became a 30s
+    // cap, so selecting the 60s timebase drew a half-empty graph: the count
+    // trim was silently overriding the time trim. Never encode a rate in a
+    // point count -- derive it.
+    const MAX_TELEM_HZ = 100;   // control-loop ceiling; telemetry cannot exceed it
+    const ptsGuard = () => windowSec * MAX_TELEM_HZ;
     const LEFT_PAD = 48;
     const RIGHT_PAD = 8;
     const BOTTOM_PAD = 20;
@@ -1759,6 +1770,9 @@
       encPos: '#00e676',
       encError: '#ff9500',
       encVel: '#64ffda',
+      encVelRaw: '#8d6e63',
+      encVelMid: '#a1887f',
+      encVelLong: '#bcaaa4',
       posCorr: '#b388ff',
       velDamp: '#00e5ff',
       thetaAdj: '#ff3d3d',
@@ -1774,7 +1788,7 @@
     // set so that nothing (graphs, legends, CSV headers) can present its
     // signals as P/I/D terms. Do not collapse these back into one list.
     const PID_KEYS = ['setpoint', 'measurement', 'error', 'pTerm', 'iTerm', 'dTerm', 'output'];
-    const DRIVE_KEYS = ['encTarget', 'encPos', 'encError', 'encVel', 'posCorr', 'velDamp', 'thetaAdj', 'activeScale'];
+    const DRIVE_KEYS = ['encTarget', 'encPos', 'encError', 'encVel', 'encVelRaw', 'encVelMid', 'encVelLong', 'posCorr', 'velDamp', 'thetaAdj', 'activeScale'];
     // MOT is not a controller — it is what actually reached the RoboClaw. Kept
     // as its own group so a left/right asymmetry is visible rather than hidden
     // behind balance's single scalar output.
@@ -1795,6 +1809,9 @@
       encPos: 'Pos (ticks)',
       encError: 'Err (ticks)',
       encVel: 'Tick vel',
+      encVelRaw: 'Tick vel (LSQ 6)',
+      encVelMid: 'Tick vel (LSQ 12)',
+      encVelLong: 'Tick vel (LSQ 20)',
       posCorr: 'Pos corr (°)',
       velDamp: 'Vel damp (°)',
       thetaAdj: 'θ_ref adj (°)',
@@ -1831,7 +1848,8 @@
       function add(key, val) {
         buf[key].push({ t, v: val });
         while (buf[key].length && buf[key][0].t < cutoff) buf[key].shift();
-        if (buf[key].length > MAX_PTS) buf[key].splice(0, buf[key].length - MAX_PTS);
+        const guard = ptsGuard();
+        if (buf[key].length > guard) buf[key].splice(0, buf[key].length - guard);
       }
       if (ctrlIdx === 3) {
         // MOT — commanded wheel duty, not a controller.
@@ -1844,6 +1862,9 @@
         add('encPos', s.encPos || 0);
         add('encError', s.encError || 0);
         add('encVel', s.encVel || 0);
+        add('encVelRaw', s.encVelRaw || 0);
+        add('encVelMid', s.encVelMid || 0);
+        add('encVelLong', s.encVelLong || 0);
         add('posCorr', s.posCorr || 0);
         add('velDamp', s.velDamp || 0);
         add('thetaAdj', s.thetaAdj || 0);
@@ -2799,6 +2820,9 @@
         encPos: raw.enc_pos ?? 0,
         encError: raw.enc_error ?? 0,
         encVel: raw.enc_velocity ?? 0,
+        encVelRaw: raw.enc_velocity_raw ?? 0,
+        encVelMid: raw.enc_vel_mid ?? 0,
+        encVelLong: raw.enc_vel_long ?? 0,
         posCorr: raw.pos_correction ?? 0,
         velDamp: raw.vel_damp ?? 0,
         thetaAdj: raw.theta_ref_adj ?? 0,
@@ -2841,6 +2865,20 @@
         // will help. Straight angular segments in a trace are what this looks
         // like on screen.
         state.txDrops = d.system.tx_drops ?? null;
+        // Board health, 1 Hz from the bot. Kept on state so the HUD can paint
+        // it on its own schedule rather than on packet arrival.
+        state.board = {
+            cpu: d.system.cpu, botCpu: d.system.bot_cpu, load1: d.system.load1,
+            memAvail: d.system.mem_avail_kb, memTotal: d.system.mem_total_kb,
+            temp: d.system.sys_temp, ctxt: d.system.ctxt, procsR: d.system.procs_r,
+            nodeUp: d.system.node_up, nodeCpu: d.system.node_cpu,
+            oledUp: d.system.oled_up, oledCpu: d.system.oled_cpu,
+            battUp: d.system.batt_up, battCpu: d.system.batt_cpu,
+            wifiIf: d.system.wifi_if, wifiSig: d.system.wifi_sig,
+            wifiNoise: d.system.wifi_noise, wifiLink: d.system.wifi_link,
+            wifiRetry: d.system.wifi_retry, wifiTxErr: d.system.wifi_txerr,
+            wifiRxDrop: d.system.wifi_rxdrop,
+        };
         state.battVoltage = d.system.batt_voltage ?? null;
         state.battStatus = d.system.batt_status ?? null;
         state.clawVoltage = (d.system.claw_voltage > 0) ? d.system.claw_voltage : null;
@@ -3317,12 +3355,28 @@
         const plotW = W - LEFT_PAD - RIGHT_PAD;
         const plotH = H - TOP_PAD - BOTTOM_PAD;
         const last = pi === plots.length - 1;
-        // Autoscale Y to visible series in this window
-        let allVals = [];
-        plot.series.forEach(({ ctrl, key }) =>
-          (graphBufs[ctrl][key] || []).filter(p => p.t >= tMin).forEach(p => allVals.push(p.v)));
-        const rawMin = allVals.length ? Math.min(...allVals) : -1;
-        const rawMax = allVals.length ? Math.max(...allVals) : 1;
+        // Autoscale Y to visible series in this window.
+        //
+        // Single reverse pass per series, no intermediate array. The previous
+        // form was .filter().forEach(push) into one big array and then
+        // Math.min(...allVals) -- which allocates two arrays per series per
+        // frame at 30fps, and, more seriously, SPREADS the result. Once the
+        // buffer cap is sized for a 60s window at high telemetry rates that
+        // argument list can exceed the engine's limit and throw RangeError,
+        // so raising the cap without fixing this would break the graphs
+        // outright rather than merely make them slow.
+        let rawMin = Infinity, rawMax = -Infinity, nSeen = 0;
+        plot.series.forEach(({ ctrl, key }) => {
+          const arr = graphBufs[ctrl][key] || [];
+          for (let i = arr.length - 1; i >= 0; i--) {
+            if (arr[i].t < tMin) break;   // time-ordered: stop at the window edge
+            const v = arr[i].v;
+            if (v < rawMin) rawMin = v;
+            if (v > rawMax) rawMax = v;
+            nSeen++;
+          }
+        });
+        if (!nSeen) { rawMin = -1; rawMax = 1; }
         const span = Math.max(rawMax - rawMin, 1.0);
         const yMin = rawMin - span * 0.12;
         const yMax = rawMax + span * 0.12;
@@ -3360,15 +3414,52 @@
         ctx.strokeStyle = 'rgba(93,122,150,.3)'; ctx.lineWidth = 0.5;
         ctx.strokeRect(LEFT_PAD, TOP_PAD, plotW, plotH);
         // Series lines
+        //
+        // Decimated to at most one column per pixel. There is no point issuing
+        // more lineTo calls than the canvas has columns, and without this the
+        // cost scales with the buffer: a 60s window at 20 Hz across 4 plots is
+        // ~14k lineTo per frame at 30fps, which is exactly the jank the buffer
+        // cap was accidentally protecting against.
+        //
+        // Decimation is min/max per column, not stride. Striding an error or
+        // output trace drops single-sample spikes, which on a PID plot are the
+        // whole reason you are looking at it. Drawing each column as a short
+        // vertical segment between its min and max keeps every excursion
+        // visible at any zoom.
         plot.series.forEach(({ ctrl, key }) => {
-          const pts = (graphBufs[ctrl][key] || []).filter(p => p.t >= tMin - 0.1);
-          if (pts.length < 2) return;
+          const all = graphBufs[ctrl][key] || [];
+          // First visible sample. Buffer is time-ordered, so scan, don't filter.
+          let i0 = 0;
+          while (i0 < all.length && all[i0].t < tMin - 0.1) i0++;
+          const n = all.length - i0;
+          if (n < 2) return;
+          const cols = Math.max(1, Math.floor(plotW));
           ctx.beginPath();
           let started = false;
-          pts.forEach(p => {
-            const x = px(p.t), y = cy(py(p.v));
-            if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
-          });
+          if (n <= cols * 2) {
+            for (let i = i0; i < all.length; i++) {
+              const x = px(all[i].t), y = cy(py(all[i].v));
+              if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+            }
+          } else {
+            const step = n / cols;
+            for (let c = 0; c < cols; c++) {
+              const lo_i = i0 + Math.floor(c * step);
+              const hi_i = Math.min(all.length, i0 + Math.floor((c + 1) * step));
+              if (hi_i <= lo_i) continue;
+              let vLo = all[lo_i].v, vHi = all[lo_i].v;
+              for (let i = lo_i + 1; i < hi_i; i++) {
+                const v = all[i].v;
+                if (v < vLo) vLo = v;
+                if (v > vHi) vHi = v;
+              }
+              const x = px(all[lo_i].t);
+              const yTop = cy(py(vHi)), yBot = cy(py(vLo));
+              if (!started) { ctx.moveTo(x, yTop); started = true; }
+              else ctx.lineTo(x, yTop);
+              if (yBot !== yTop) ctx.lineTo(x, yBot);
+            }
+          }
           ctx.strokeStyle = SERIES_COLORS[key];
           ctx.lineWidth = (key === 'error' || key === 'output') ? 2 : 1.5;
           ctx.setLineDash(CTRL_DASH[ctrl]); ctx.stroke(); ctx.setLineDash([]);
@@ -3880,24 +3971,135 @@
       const wsState = (typeof ws !== 'undefined' && ws)
         ? ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][ws.readyState] : 'none';
       if (perfHud.min) {
+        // Collapsed, but never hide a bad board number behind a healthy rx —
+        // "packets are arriving" was exactly the reassuring-but-wrong summary
+        // that sent us looking at the renderer three times.
+        const bb = state.board || {};
+        const worst = [];
+        if (bb.cpu > 85) worst.push(`cpu ${bb.cpu.toFixed(0)}%`);
+        if (bb.ctxt > 6000) worst.push(`ctxt ${(bb.ctxt / 1000).toFixed(1)}k`);
+        if (bb.temp > 80) worst.push(`${bb.temp.toFixed(0)}°C`);
+        if (state.loopHz && state.loopHz < 80) worst.push(`loop ${state.loopHz.toFixed(0)}`);
+        if (state.txDrops) worst.push(`drop ${state.txDrops}`);
         el.className = 'min';
-        el.innerHTML = `<span class="${cls(hz)}">${hz.toFixed(1)}Hz</span>`;
+        el.innerHTML = worst.length
+          ? `<span class="bad">${worst.join(' ')}</span>`
+          : `<span class="${cls(hz)}">${hz.toFixed(1)}Hz</span>`;
         return;
       }
       const rst = perfHud.rcStamps;
       const rcHz = rst.length > 1 ? (rst.length - 1) / ((rst.at(-1) - rst[0]) / 1000) : 0;
-      // The RC stream is meant to run ~5x the telemetry rate. Judge it against
-      // that, not against the 8 Hz bar that makes sense for telemetry.
-      const rcls = v => v >= 35 ? 'good' : v >= 15 ? 'warn' : 'bad';
+      const rcls = v => v >= 15 ? 'good' : v >= 8 ? 'warn' : 'bad';
+
+      // ── board health ────────────────────────────────────────────────────
+      // Thresholds come from what this board actually does, not round numbers.
+      // The SBUS byte-at-a-time bug ran ~7000 ctxt/s with 60%+ IDLE cpu and made
+      // ssh unusable, so ctxt is judged on its own scale and a low cpu% is
+      // explicitly NOT read as "fine". Load is judged against 1.0 because this
+      // is a SINGLE core: above that, the run queue never empties.
+      const b = state.board || {};
+      const ccls = v => v == null ? '' : v < 60 ? 'good' : v < 85 ? 'warn' : 'bad';
+      const lcls = v => v == null ? '' : v < 0.9 ? 'good' : v < 1.5 ? 'warn' : 'bad';
+      const xcls = v => v == null ? '' : v < 3000 ? 'good' : v < 6000 ? 'warn' : 'bad';
+      const tcls = v => v == null ? '' : v < 60 ? 'good' : v < 80 ? 'warn' : 'bad';
+      const mcls = v => v == null ? '' : v > 25 ? 'good' : v > 10 ? 'warn' : 'bad';
+      const num  = v => (v === undefined || v === null || !isFinite(v)) ? null : v;
+      const memPct = (num(b.memAvail) && num(b.memTotal)) ? 100 * b.memAvail / b.memTotal : null;
+
+      // svc: a service line. Down is red whether or not it is meant to be up --
+      // "active but costing 36% of the core" and "not running at all" are both
+      // things you want to see without opening another window.
+      const svc = (label, up, cpu) => {
+        if (up === undefined) return '';
+        return `\n  <span class="${up ? ccls(cpu) : 'bad'}">${label.padEnd(5)}` +
+               `${up ? (cpu ?? 0).toFixed(0).padStart(3) + '%' : ' down'}</span>`;
+      };
+
+      let board = '';
+      if (num(b.cpu) != null) {
+        board =
+          `\n<b>── board ──</b>` +
+          `\n  cpu   <span class="${ccls(b.cpu)}">${b.cpu.toFixed(0)}%</span>` +
+          `   load <span class="${lcls(b.load1)}">${(b.load1 ?? 0).toFixed(2)}</span>` +
+          `  <span style="opacity:.55">(1 core)</span>` +
+          `\n  ctxt  <span class="${xcls(b.ctxt)}">${(b.ctxt ?? 0).toLocaleString()}/s</span>` +
+          `   run <span class="${b.procsR > 3 ? 'warn' : 'good'}">${b.procsR ?? 0}</span>` +
+          `\n  mem   <span class="${mcls(memPct)}">${memPct == null ? '--' : memPct.toFixed(0) + '% free'}</span>` +
+          `   temp <span class="${tcls(b.temp)}">${(b.temp ?? 0).toFixed(0)}°C</span>` +
+          `\n<b>── services (cpu) ──</b>` +
+          svc('bot', true, b.botCpu) +
+          svc('node', b.nodeUp, b.nodeCpu) +
+          svc('oled', b.oledUp, b.oledCpu) +
+          svc('batt', b.battUp, b.battCpu);
+      }
+
+      // ── radio ────────────────────────────────────────────────────────────
+      // This exists to make one specific failure visible: a 2.4 GHz RC
+      // transmitter powered up beside the 2.4 GHz wifi dongle. It does not
+      // drop the link, so `ws` stays "open", `loop` stays at 98 and the bot's
+      // own socket keeps emitting perfectly even 20 Hz packets -- while ssh
+      // echoes with seconds of latency and this dashboard starves. Retries
+      // are what move, so they get the thresholds.
+      //
+      // Signal thresholds are the usual 802.11 rules of thumb: better than
+      // -60 dBm is strong, -70 is workable, past -80 throughput falls apart.
+      // SNR is more honest than raw signal when the noise floor is being
+      // lifted by an interferer, so it is shown whenever the driver reports a
+      // noise figure (many report 0, which means "no idea", not "silent").
+      let radio = '';
+      if (b.wifiIf) {
+        const sig = num(b.wifiSig), noise = num(b.wifiNoise);
+        const scls = s2 => s2 == null ? '' : s2 > -60 ? 'good' : s2 > -75 ? 'warn' : 'bad';
+        const retry = num(b.wifiRetry) ?? 0;
+        // A healthy link retries a little; tens per second is a degraded link
+        // and hundreds means something is sitting on the channel.
+        const ycls = r => r < 10 ? 'good' : r < 100 ? 'warn' : 'bad';
+        const snr = (sig != null && noise != null && noise !== 0) ? sig - noise : null;
+        radio =
+          `\n<b>── radio (${b.wifiIf}) ──</b>` +
+          `\n  sig   <span class="${scls(sig)}">${sig == null ? '--' : sig + ' dBm'}</span>` +
+          (snr != null ? `   snr <span class="${snr > 25 ? 'good' : snr > 15 ? 'warn' : 'bad'}">${snr} dB</span>`
+                       : `   link <span style="opacity:.55">${(num(b.wifiLink) ?? 0).toFixed(0)}</span>`) +
+          `\n  retry <span class="${ycls(retry)}">${retry.toLocaleString()}/s</span>` +
+          `   txerr <span class="${(num(b.wifiTxErr) ?? 0) > 0 ? 'warn' : 'good'}">${(num(b.wifiTxErr) ?? 0).toLocaleString()}</span>` +
+          `\n  rxdrop <span class="${(num(b.wifiRxDrop) ?? 0) > 0 ? 'warn' : 'good'}">${(num(b.wifiRxDrop) ?? 0).toLocaleString()}/s</span>`;
+      }
+
       el.className = '';
+      el.title =
+        'rx    telemetry packets/s arriving in this browser\n' +
+        'rc    RC (SBUS) packets/s — a separate, faster stream\n' +
+        'gap   worst delay between telemetry packets in the last 2 s\n' +
+        'draw  ms of browser time spent handling one packet\n' +
+        'loop  the bot control loop rate, target 100 Hz\n' +
+        'ws    websocket state\n' +
+        'drop  telemetry packets the BOT could not hand to the bridge\n' +
+        'cpu   whole-board CPU busy (iowait counts as busy)\n' +
+        'load  1-minute load average — this board has ONE core\n' +
+        'ctxt  context switches/s; >6000 has made this board unusable before\n' +
+        'run   processes in the run queue\n' +
+        'services: each process and its share of the core\n' +
+        'sig   wifi signal on the interface holding the default route\n' +
+        'snr   signal minus noise floor; <15 dB is where throughput dies\n' +
+        'retry wifi retransmissions/s — THE number that moves when a 2.4 GHz\n' +
+        '      RC transmitter is powered up next to the dongle\n' +
+        'txerr/rxdrop  interface error counters, per second';
+
       el.innerHTML =
-        `<b>rx</b>   <span class="${cls(hz)}">${hz.toFixed(1)} Hz</span>  (${state.packetsReceived})\n` +
-        `<b>rc</b>   <span class="${rcls(rcHz)}">${rcHz.toFixed(1)} Hz</span>\n` +
-        `<b>gap</b>  <span class="${gcls(gap)}">${gap.toFixed(0)} ms</span> max, ${since.toFixed(0)} since\n` +
-        `<b>draw</b> <span class="${dcls(perfHud.draw)}">${perfHud.draw.toFixed(1)} ms</span> now, ` +
-        `${perfHud.drawMax.toFixed(0)} peak\n` +
-        `<b>ws</b>   ${wsState}` +
-        (state.txDrops ? `\n<b>drop</b> <span class="bad">${state.txDrops} bot-side</span>` : '');
+        `<b>── link ──</b>` +
+        `\n  rx    <span class="${cls(hz)}">${hz.toFixed(1)} Hz</span>` +
+        `  <span style="opacity:.55">telemetry, ${state.packetsReceived} total</span>` +
+        `\n  rc    <span class="${rcls(rcHz)}">${rcHz.toFixed(1)} Hz</span>` +
+        `  <span style="opacity:.55">sbus</span>` +
+        `\n  gap   <span class="${gcls(gap)}">${gap.toFixed(0)} ms</span> worst` +
+        `, ${since.toFixed(0)} since` +
+        `\n  draw  <span class="${dcls(perfHud.draw)}">${perfHud.draw.toFixed(1)} ms</span>` +
+        `  <span style="opacity:.55">peak ${perfHud.drawMax.toFixed(0)}</span>` +
+        `\n  loop  <span class="${state.loopHz >= 95 ? 'good' : state.loopHz >= 80 ? 'warn' : 'bad'}">` +
+        `${state.loopHz.toFixed(0)} Hz</span>  <span style="opacity:.55">target 100</span>` +
+        `\n  ws    ${wsState}` +
+        (state.txDrops ? `\n  drop  <span class="bad">${state.txDrops} bot-side</span>` : '') +
+        board + radio;
     }
 
     function perfToggle() {

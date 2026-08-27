@@ -54,6 +54,8 @@
 #include "rc_compat.h"
 #include "motor_hal.h"
 #include <math.h>
+#include <unistd.h>   /* sysconf(_SC_CLK_TCK) for CPU accounting */
+#include <dirent.h>   /* scanning /proc for the other bot processes */
 
 // Global telemetry data (shared with IPC server)
 telemetry_data_t g_telemetry_data = {0};
@@ -185,6 +187,9 @@ static void update_pid_telemetry(void)
     // directions, which is exactly as misleading as the old p_term aliases.
     g_telemetry_data.position.enc_error = state.enc_pos_target - state.enc_pos;
     g_telemetry_data.position.enc_velocity = state.enc_velocity;
+    g_telemetry_data.position.enc_velocity_raw = state.enc_velocity_raw;
+    g_telemetry_data.position.enc_vel_lsq_mid  = state.enc_vel_lsq_mid;
+    g_telemetry_data.position.enc_vel_lsq_long = state.enc_vel_lsq_long;
     g_telemetry_data.position.pos_correction = state.pos_correction;
     g_telemetry_data.position.vel_damp = state.pos_vel_damp;
     g_telemetry_data.position.theta_ref_adj = state.pos_output;
@@ -233,6 +238,267 @@ static void update_ext_input_telemetry(void)
     g_telemetry_data.ext_input.x = state.ext_input.x;
     g_telemetry_data.ext_input.y = state.ext_input.y;
     g_telemetry_data.ext_input.confidence = state.ext_input.confidence;
+}
+
+/**
+ * @brief CPU share of another process, found by command line, sampled at 1 Hz.
+ *
+ * Matching on /proc/<pid>/cmdline rather than comm, because the interesting
+ * processes are interpreters: comm is "node" or "python3" for several unrelated
+ * things, and the argument is what identifies them.
+ *
+ * The PID is cached and revalidated with a single read; a full /proc scan only
+ * happens when the cached one stops matching. Scanning all of /proc three times
+ * a second to re-find three processes that restart maybe twice a day was
+ * measured elsewhere in this project at ~60x more work than needed.
+ */
+typedef struct
+{
+    const char *needle;      /* substring to look for in cmdline */
+    pid_t pid;               /* cached */
+    unsigned long long prev_jiffies;
+    bool alive;
+    float cpu_pct;
+} proc_watch_t;
+
+static bool proc_cmdline_matches(pid_t pid, const char *needle)
+{
+    char path[64], buf[512];
+    snprintf(path, sizeof(path), "/proc/%d/cmdline", (int)pid);
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return false;
+    /* cmdline is NUL-separated; turn it into one searchable string. */
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    if (n == 0)
+        return false;
+    for (size_t i = 0; i + 1 < n; i++)
+        if (buf[i] == '\0')
+            buf[i] = ' ';
+    buf[n] = '\0';
+    return strstr(buf, needle) != NULL;
+}
+
+static unsigned long long proc_jiffies(pid_t pid)
+{
+    char path[64], buf[1024];
+    snprintf(path, sizeof(path), "/proc/%d/stat", (int)pid);
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return 0;
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    if (n == 0)
+        return 0;
+    buf[n] = '\0';
+    char *p = strrchr(buf, ')');
+    if (!p)
+        return 0;
+    unsigned long long ut = 0, st = 0;
+    int field = 2;
+    for (p++; *p && field < 14; p++)
+        if (*p == ' ')
+            field++;
+    if (sscanf(p, "%llu %llu", &ut, &st) != 2)
+        return 0;
+    return ut + st;
+}
+
+static void proc_watch_sample(proc_watch_t *w, double dt, long hz)
+{
+    if (w->pid <= 0 || !proc_cmdline_matches(w->pid, w->needle))
+    {
+        w->pid = 0;
+        DIR *d = opendir("/proc");
+        if (d)
+        {
+            struct dirent *e;
+            while ((e = readdir(d)))
+            {
+                if (e->d_name[0] < '0' || e->d_name[0] > '9')
+                    continue;
+                pid_t cand = (pid_t)atoi(e->d_name);
+                if (proc_cmdline_matches(cand, w->needle))
+                {
+                    w->pid = cand;
+                    w->prev_jiffies = 0;   /* restart the delta */
+                    break;
+                }
+            }
+            closedir(d);
+        }
+    }
+
+    if (w->pid <= 0)
+    {
+        w->alive = false;
+        w->cpu_pct = 0.0f;
+        w->prev_jiffies = 0;
+        return;
+    }
+
+    w->alive = true;
+    unsigned long long j = proc_jiffies(w->pid);
+    if (w->prev_jiffies && dt > 0.0 && j >= w->prev_jiffies && hz > 0)
+        w->cpu_pct = 100.0f * (float)(j - w->prev_jiffies) / (float)hz / (float)dt;
+    w->prev_jiffies = j;
+}
+
+/**
+ * @brief Sample board health from /proc, at 1 Hz.
+ *
+ * Everything here is a delta against the previous sample, because the absolute
+ * counters in /proc are meaningless on their own -- /proc/stat's jiffies are
+ * cumulative since boot, so a single read tells you nothing about right now.
+ *
+ * Cost: five small reads from procfs once a second, on a control loop that
+ * ticks a hundred times a second. Deliberately NOT sampled per tick: these are
+ * board-scale numbers that do not move meaningfully at 100 Hz, and reading them
+ * that often would make this the very load it is meant to detect.
+ */
+static void update_board_health(void)
+{
+    static uint64_t last_us = 0;
+    static unsigned long long prev_busy = 0, prev_total = 0;
+    static unsigned long long prev_ctxt = 0;
+    static unsigned long long prev_self = 0;
+    static long hz = 0;
+
+    uint64_t now_us = rc_nanos_since_boot() / 1000;
+    if (last_us != 0 && (now_us - last_us) < 1000000ULL)
+        return;
+    double dt = last_us ? (now_us - last_us) / 1000000.0 : 0.0;
+    last_us = now_us;
+
+    if (hz == 0)
+        hz = sysconf(_SC_CLK_TCK);
+
+    FILE *f;
+
+    /* /proc/stat: whole-board CPU, context switches, runnable processes */
+    if ((f = fopen("/proc/stat", "r")))
+    {
+        char line[512];
+        while (fgets(line, sizeof(line), f))
+        {
+            if (strncmp(line, "cpu ", 4) == 0)
+            {
+                unsigned long long v[10] = {0};
+                int n = sscanf(line + 4,
+                               "%llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
+                               &v[0], &v[1], &v[2], &v[3], &v[4],
+                               &v[5], &v[6], &v[7], &v[8], &v[9]);
+                unsigned long long total = 0;
+                for (int i = 0; i < n; i++)
+                    total += v[i];
+                /* idle = idle + iowait. iowait counts as not-busy on purpose:
+                 * a board blocked on the SD card is a different fault from one
+                 * that is compute-bound, and lumping them together hides the
+                 * fsync-storm signature entirely. */
+                unsigned long long idle = v[3] + v[4];
+                unsigned long long busy = total - idle;
+                if (prev_total && total > prev_total)
+                    g_telemetry_data.system.cpu_pct =
+                        100.0f * (float)(busy - prev_busy) / (float)(total - prev_total);
+                prev_busy = busy;
+                prev_total = total;
+            }
+            else if (strncmp(line, "ctxt ", 5) == 0)
+            {
+                unsigned long long c = strtoull(line + 5, NULL, 10);
+                if (prev_ctxt && dt > 0.0 && c >= prev_ctxt)
+                    g_telemetry_data.system.ctxt_per_s =
+                        (uint32_t)((c - prev_ctxt) / dt);
+                prev_ctxt = c;
+            }
+            else if (strncmp(line, "procs_running ", 14) == 0)
+                g_telemetry_data.system.procs_running =
+                    (uint32_t)strtoul(line + 14, NULL, 10);
+        }
+        fclose(f);
+    }
+
+    /* this process's own CPU share */
+    if ((f = fopen("/proc/self/stat", "r")))
+    {
+        char buf[1024];
+        if (fgets(buf, sizeof(buf), f))
+        {
+            /* Field 14 (utime) and 15 (stime), 1-indexed. comm (field 2) can
+             * contain spaces and parentheses, so start counting after the LAST
+             * ')' rather than tokenising from the beginning. */
+            char *p = strrchr(buf, ')');
+            if (p)
+            {
+                unsigned long long ut = 0, st = 0;
+                int field = 2;
+                for (p++; *p && field < 14; p++)
+                    if (*p == ' ')
+                        field++;
+                if (sscanf(p, "%llu %llu", &ut, &st) == 2 && hz > 0)
+                {
+                    unsigned long long self = ut + st;
+                    if (prev_self && dt > 0.0 && self >= prev_self)
+                        g_telemetry_data.system.bot_cpu_pct =
+                            100.0f * (float)(self - prev_self) / (float)hz / (float)dt;
+                    prev_self = self;
+                }
+            }
+        }
+        fclose(f);
+    }
+
+    if ((f = fopen("/proc/loadavg", "r")))
+    {
+        float l1 = 0.0f;
+        if (fscanf(f, "%f", &l1) == 1)
+            g_telemetry_data.system.load1 = l1;
+        fclose(f);
+    }
+
+    if ((f = fopen("/proc/meminfo", "r")))
+    {
+        char line[256];
+        unsigned long kb;
+        while (fgets(line, sizeof(line), f))
+        {
+            if (sscanf(line, "MemTotal: %lu kB", &kb) == 1)
+                g_telemetry_data.system.mem_total_kb = (uint32_t)kb;
+            else if (sscanf(line, "MemAvailable: %lu kB", &kb) == 1)
+            {
+                g_telemetry_data.system.mem_avail_kb = (uint32_t)kb;
+                break;      /* MemAvailable follows MemTotal; nothing else needed */
+            }
+        }
+        fclose(f);
+    }
+
+    if ((f = fopen("/sys/class/thermal/thermal_zone0/temp", "r")))
+    {
+        long milli = 0;
+        if (fscanf(f, "%ld", &milli) == 1)
+            g_telemetry_data.system.sys_temp_c = milli / 1000.0f;
+        fclose(f);
+    }
+
+    /* The other bot processes. Matching on cmdline: "node" alone would match
+     * any node process, and "python3" matches the OLED, serve_web.py and
+     * anything else you happen to be running. */
+    {
+        static proc_watch_t w_node = {.needle = "server/server.js"};
+        static proc_watch_t w_oled = {.needle = "bbb_oled.py"};
+        static proc_watch_t w_batt = {.needle = "batt_monitor"};
+        proc_watch_sample(&w_node, dt, hz);
+        proc_watch_sample(&w_oled, dt, hz);
+        proc_watch_sample(&w_batt, dt, hz);
+        g_telemetry_data.system.node_alive = w_node.alive;
+        g_telemetry_data.system.node_cpu_pct = w_node.cpu_pct;
+        g_telemetry_data.system.oled_alive = w_oled.alive;
+        g_telemetry_data.system.oled_cpu_pct = w_oled.cpu_pct;
+        g_telemetry_data.system.batt_alive = w_batt.alive;
+        g_telemetry_data.system.batt_cpu_pct = w_batt.cpu_pct;
+    }
 }
 
 /**
@@ -287,6 +553,9 @@ static void update_system_telemetry(void)
 
     // Uptime
     g_telemetry_data.system.uptime_sec = (uint32_t)(rc_nanos_since_boot() / 1000000000ULL);
+
+    // Board health (CPU, load, memory, temperature, context switches) — 1 Hz
+    update_board_health();
 
     // RoboClaw main battery voltage + temperature — polled at 1 Hz
     {

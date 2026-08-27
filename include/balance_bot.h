@@ -131,6 +131,24 @@
 // One serial round-trip per poll. If loop_hz drops below ~100, raise this.
 #define POS_VEL_PERIOD_MS 40
 
+/* Encoder velocity: least-squares slope of enc_pos over a sliding window,
+ * computed every control tick. Three windows are evaluated simultaneously so a
+ * single run picks the winner from data instead of from a simulation -- the
+ * first attempt at this was chosen by simulation, and the simulation modelled
+ * the incumbent as far worse than it is. See the comment in robot.c.
+ *
+ * Approximate lag is (win-1)/2 control ticks: 25 ms, 55 ms, 95 ms.
+ * The RoboClaw incumbent measured 50-100 ms BEHIND the 6-tick estimate. */
+#define POS_VEL_WIN_SHORT 6
+#define POS_VEL_WIN_MID   12
+#define POS_VEL_WIN_LONG  20
+#define POS_VEL_WIN_MAX   20    /* must be >= the largest of the three */
+
+/* 0 = RoboClaw speed registers control the loop (known good, default)
+ * 1 = short window controls, 2 = mid, 3 = long
+ * All candidates are computed and logged regardless. */
+#define POS_VEL_USE_LSQ 0
+
 /**
  * @brief Runtime-tunable parameters for the position hold (hold/drive) controller.
  *
@@ -348,7 +366,9 @@ typedef struct
     int32_t enc_pos;        // Sum of left+right encoder ticks (position)
     int32_t enc_pos_target; // Target tick position (held when stick is centered)
     float enc_velocity;     // Tick velocity (ticks per 100 ms window)
-    float enc_velocity_raw; // Raw delta before the stopped-check
+    float enc_velocity_raw; // The candidate NOT in control (see robot.c)
+    float enc_vel_lsq_mid;  // candidate: mid window,  logged only
+    float enc_vel_lsq_long; // candidate: long window, logged only
     int enc_vel_reset;      // Set to 1 by ipc_server after zero_encoders; cleared by robot.c
 
     // Legacy degree-based position (kept for telemetry)

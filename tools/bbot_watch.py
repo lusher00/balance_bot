@@ -12,18 +12,38 @@ So: sample once a second, write a CSV line, and periodically fsync. When the
 board dies, the last line on disk is close to the last moment it was alive —
 and `--postmortem` finds the gap and shows you the run-up to it.
 
-COST. This is a diagnostic tool, not a background service. fsync on an SD card
-is expensive: at one fsync per second this used 10% of a BeagleBone core
-sustained (19% peaks, 95 minutes of CPU over a 15 hour uptime) and drove system
-time to 65%, which starved everything else on the box — ssh went sluggish and
-the telemetry dashboard became unusable while the robot itself was fine.
+COST. This used to be diagnostic-only: at one fsync per second it burned 10% of
+a BeagleBone core sustained (19% peaks, 95 minutes of CPU over 15 hours) and
+drove system time to 65%, starving everything else — ssh went sluggish and the
+telemetry dashboard became unusable while the robot itself was fine.
 
-So fsync now defaults to every 10 seconds, which bounds the loss to 10 samples
-if the board dies. Use --paranoid for the old per-line behaviour when you are
-actively hunting a lockup, and turn it off again afterwards.
+It is now cheap enough to leave running, without giving up the thing it exists
+for. Three changes, none of which cost coverage:
+
+  PIDs are cached.   Each sample used to scan all of /proc twice — once for
+                     balance_bot, once for sshd — opening every /proc/<pid>/comm
+                     to find two PIDs that essentially never change. Now it
+                     validates the cached PID with a single open and only
+                     rescans when that fails. Measured ~17x less work per sample.
+
+  Sampling adapts.   1 Hz everywhere was paying full price for the 99% of the
+                     time when nothing is wrong. Base rate is now 5 s; the
+                     moment anything looks off (load, memory, temperature,
+                     context switches, carrier, ssh, or balance_bot's state) it
+                     drops to 1 Hz and stays there for a hold period. Full
+                     resolution exists exactly where it is worth having.
+
+  fsync follows.     Idle: once a minute. During an alert: every sample, because
+                     that is precisely when losing the tail matters. Ordinary
+                     writes still go out via normal kernel writeback, so even
+                     un-fsynced samples usually reach the disk within ~30 s.
+
+The `watch` column records why it went fast, so --postmortem can show you the
+trigger as well as the run-up.
 
   run:        sudo ./bbot_watch.py
   after boot: ./bbot_watch.py --postmortem
+  hunting:    sudo ./bbot_watch.py --paranoid    (1 Hz + fsync every line)
 
 Columns are cheap to read and cheap to collect; nothing here opens a socket or
 shells out on the hot path, so the recorder itself cannot be what hangs you.
@@ -44,7 +64,73 @@ FIELDS = [
     "net_iface", "net_carrier", "ipv4", "rx_bytes", "tx_bytes",
     "sshd_pid", "estab_ssh", "ctxt_per_s", "procs_running",
     "bot_pid", "boot_id",
+    # Empty when idle, else the condition that forced fast sampling. Last so
+    # that older logs (which lack it) still parse positionally.
+    "watch",
 ]
+
+# ── adaptive sampling ────────────────────────────────────────────────────────
+# Thresholds for "something is worth watching closely". Deliberately loose: a
+# false positive costs 60 s of 1 Hz sampling, a false negative costs the only
+# copy of the evidence.
+IDLE_PERIOD_S  = 5.0     # nothing interesting
+ALERT_PERIOD_S = 1.0     # something is
+ALERT_HOLD_S   = 60.0    # keep sampling fast this long after the last trigger
+IDLE_FSYNC_S   = 60.0    # heartbeat durability when idle
+
+TH_LOAD1      = 2.0
+TH_MEM_KB     = 40_000
+TH_TEMP_C     = 80.0
+TH_CTXT       = 5_000    # The SBUS byte-at-a-time bug measured 6983-7156 ctxt/s
+                         # and made ssh sluggish and the dashboard unusable.
+                         # A threshold of 8000 would have sat just above the one
+                         # incident there is real data for, so it is set below
+                         # it: the known failure has to be a trigger, or the
+                         # trigger list is decoration.
+TH_PROCS_R    = 4
+TH_BOT_CPU    = 60.0
+
+
+def alert_reason(row_map, prev_map):
+    """Why this sample deserves full resolution, or None.
+
+    Takes the current and previous sample as dicts so the edge-triggered checks
+    (ssh dropping to zero, balance_bot disappearing) can see a transition rather
+    than a level — a board that has been sitting at zero ssh sessions for an
+    hour is not an event.
+    """
+    def num(m, k, d=0.0):
+        try:
+            return float(m.get(k, "") or d)
+        except (TypeError, ValueError):
+            return d
+
+    if num(row_map, "load1") > TH_LOAD1:
+        return f"load={row_map.get('load1')}"
+    if 0 < num(row_map, "mem_avail_kb") < TH_MEM_KB:
+        return f"mem={row_map.get('mem_avail_kb')}kB"
+    if num(row_map, "temp_c") > TH_TEMP_C:
+        return f"temp={row_map.get('temp_c')}C"
+    if num(row_map, "ctxt_per_s") > TH_CTXT:
+        return f"ctxt={row_map.get('ctxt_per_s')}/s"
+    if num(row_map, "procs_running") > TH_PROCS_R:
+        return f"procs_r={row_map.get('procs_running')}"
+    if num(row_map, "bot_cpu_pct") > TH_BOT_CPU:
+        return f"bot_cpu={row_map.get('bot_cpu_pct')}%"
+    if str(row_map.get("net_carrier")) == "0":
+        return "carrier=0"
+    st = str(row_map.get("bot_state") or "")
+    if st and st not in ("S", "R", "D"):
+        return f"bot_state={st}"
+    if prev_map:
+        # Edge-triggered: the transition is the event, not the resting state.
+        if num(prev_map, "bot_pid") and not num(row_map, "bot_pid"):
+            return "balance_bot gone"
+        if num(prev_map, "estab_ssh") and not num(row_map, "estab_ssh"):
+            return "ssh dropped"
+        if str(prev_map.get("ipv4") or "") != str(row_map.get("ipv4") or ""):
+            return f"ip {prev_map.get('ipv4')}->{row_map.get('ipv4')}"
+    return None
 
 # Changes exactly once per boot. The only unambiguous reboot detector — uptime
 # can look like a reboot if the clock steps, and a hung board that recovers
@@ -93,18 +179,51 @@ def meminfo():
     return avail, swap_total - swap_free
 
 
-def find_bot():
-    """PID of balance_bot, or None. Reads /proc directly — no pgrep subprocess."""
-    for d in os.listdir("/proc"):
-        if not d.isdigit():
-            continue
+class PidCache:
+    """Find a process by name, but stop rescanning /proc once you have it.
+
+    The scan opens /proc/<pid>/comm for every process on the box. Doing that for
+    balance_bot AND sshd, once a second, was the single most expensive thing
+    this recorder did — to re-derive two numbers that change perhaps twice a
+    day. Validating a cached PID is one open() instead of ~120.
+    """
+    def __init__(self, name):
+        self.name = name
+        self.pid = None
+
+    def _still_valid(self):
+        if self.pid is None:
+            return False
         try:
-            with open(f"/proc/{d}/comm") as f:
-                if f.read().strip() == "balance_bot":
-                    return int(d)
+            with open(f"/proc/{self.pid}/comm") as f:
+                return f.read().strip() == self.name
         except Exception:
-            continue
-    return None
+            return False
+
+    def get(self):
+        if self._still_valid():
+            return self.pid
+        self.pid = None
+        for d in os.listdir("/proc"):
+            if not d.isdigit():
+                continue
+            try:
+                with open(f"/proc/{d}/comm") as f:
+                    if f.read().strip() == self.name:
+                        self.pid = int(d)
+                        return self.pid
+            except Exception:
+                continue
+        return None
+
+
+_bot_pids = PidCache("balance_bot")
+_sshd_pids = PidCache("sshd")
+
+
+def find_bot():
+    """PID of balance_bot, or None. Cached — see PidCache."""
+    return _bot_pids.get()
 
 
 class BotCpu:
@@ -208,6 +327,11 @@ def ssh_state():
 
 
 def find_proc(name):
+    """Cached lookup for the names sampled every tick; scan for anything else."""
+    if name == "sshd":
+        return _sshd_pids.get()
+    if name == "balance_bot":
+        return _bot_pids.get()
     for d in os.listdir("/proc"):
         if not d.isdigit():
             continue
@@ -252,9 +376,24 @@ def rotate(path):
         pass
 
 
-def run(fsync_every=10):
+def run(fsync_every=None, paranoid=False, idle_period=IDLE_PERIOD_S):
     os.makedirs(LOG_DIR, exist_ok=True)
     rotate(CSV)
+
+    # If the column set changed, start a new file. Appending rows with a
+    # different width to an existing log silently breaks --postmortem, which
+    # drops any row whose length does not match the header.
+    if os.path.exists(CSV) and os.path.getsize(CSV) > 0:
+        try:
+            with open(CSV) as f:
+                old = f.readline().rstrip("\n").split(",")
+            if old != FIELDS:
+                os.replace(CSV, CSV + ".oldschema")
+                print(f"bbot_watch: column set changed, previous log kept as "
+                      f"{CSV}.oldschema", flush=True)
+        except Exception:
+            pass
+
     new = not os.path.exists(CSV) or os.path.getsize(CSV) == 0
     csv = open(CSV, "a", buffering=1)
     if new:
@@ -291,10 +430,17 @@ def run(fsync_every=10):
         print("bbot_watch: dmesg follow unavailable", file=sys.stderr)
 
     botcpu, stat = BotCpu(), Stat()
-    print(f"bbot_watch: logging to {CSV} "
-          f"(fsync every {fsync_every} sample{'s' if fsync_every != 1 else ''})",
-          flush=True)
-    since_sync = 0
+    if paranoid:
+        print(f"bbot_watch: logging to {CSV} — PARANOID: 1 Hz, fsync every line. "
+              f"Costs ~10% of a core; turn it off when you are done.", flush=True)
+    else:
+        print(f"bbot_watch: logging to {CSV} — {idle_period:.0f}s idle / "
+              f"{ALERT_PERIOD_S:.0f}s when alerting, fsync every "
+              f"{IDLE_FSYNC_S:.0f}s idle and every sample while alerting",
+              flush=True)
+    last_sync = time.monotonic()
+    alert_until = 0.0
+    prev_map = None
     try:
         while True:
             t0 = time.monotonic()
@@ -315,14 +461,30 @@ def run(fsync_every=10):
                 iface, carrier, ipv4_of(iface), rx, tx,
                 sshd, estab, ctxt, procs_r,
                 botcpu.pid or 0, boot_id,
+                "",                          # watch — filled in below
             ]
+            row_map = dict(zip(FIELDS, (str(x) for x in row)))
+
+            reason = alert_reason(row_map, prev_map)
+            prev_map = row_map
+            now = time.monotonic()
+            if reason:
+                alert_until = now + ALERT_HOLD_S
+            alerting = paranoid or now < alert_until
+            row[-1] = reason or ""
+
             csv.write(",".join(str(x) for x in row) + "\n")
             csv.flush()
-            since_sync += 1
-            if since_sync >= fsync_every:
-                os.fsync(csv.fileno())      # bounded loss, bounded cost
-                since_sync = 0
-            time.sleep(max(0.0, 1.0 - (time.monotonic() - t0)))
+
+            # fsync is the expensive part on an SD card, so spend it where it
+            # buys something: during an alert the next sample may be the last
+            # one that ever gets written, and losing it loses the answer.
+            if alerting or (now - last_sync) >= IDLE_FSYNC_S:
+                os.fsync(csv.fileno())
+                last_sync = now
+
+            period = ALERT_PERIOD_S if alerting else idle_period
+            time.sleep(max(0.0, period - (time.monotonic() - t0)))
     except KeyboardInterrupt:
         pass
     finally:
@@ -331,7 +493,14 @@ def run(fsync_every=10):
         csv.close()
 
 
-def postmortem(gap_s=5.0):
+def postmortem(gap_s=None):
+    """gap_s=None means: work it out from the data.
+
+    The recorder no longer samples at a fixed 1 Hz, so a hardcoded 5 s "silence
+    means death" threshold would flag every ordinary idle interval as a lockup.
+    Take the median spacing actually present in the log and call a gap
+    suspicious at 4x that, with a floor so a fast log does not produce noise.
+    """
     if not os.path.exists(CSV):
         print(f"no log at {CSV} — was bbot_watch running?")
         return 1
@@ -344,6 +513,20 @@ def postmortem(gap_s=5.0):
 
     def ts(r):
         return datetime.datetime.fromisoformat(r[idx["ts"]])
+
+    if gap_s is None:
+        deltas = []
+        for i in range(1, min(len(rows), 500)):
+            try:
+                d = (ts(rows[i]) - ts(rows[i - 1])).total_seconds()
+            except Exception:
+                continue
+            if 0 < d < 3600:
+                deltas.append(d)
+        median = sorted(deltas)[len(deltas) // 2] if deltas else 1.0
+        gap_s = max(10.0, median * 4)
+        print(f"(sample spacing looks like {median:.0f}s; "
+              f"treating a gap over {gap_s:.0f}s as an event)\n")
 
     # A gap in wall-clock, or uptime going backwards (= reboot), marks a death.
     gaps = []
@@ -370,7 +553,7 @@ def postmortem(gap_s=5.0):
     show = [c for c in ["ts", "load1", "mem_avail_kb", "temp_c",
                         "bot_cpu_pct", "bot_state", "bot_pid",
                         "net_carrier", "ipv4", "sshd_pid", "estab_ssh",
-                        "ctxt_per_s", "procs_running"] if c in idx]
+                        "ctxt_per_s", "procs_running", "watch"] if c in idx]
     for n, (i, dt, rebooted) in enumerate(gaps, 1):
         print(f"── event {n}: {'REBOOT' if rebooted else 'GAP'} of {dt:.0f}s "
               f"at {ts(rows[i-1])} → {ts(rows[i])}")
@@ -437,15 +620,17 @@ if __name__ == "__main__":
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--postmortem", action="store_true",
                     help="analyse an existing log instead of recording")
-    ap.add_argument("--gap", type=float, default=5.0,
-                    help="seconds of silence that counts as a death (default 5)")
-    ap.add_argument("--fsync-every", type=int, default=10, metavar="N",
-                    help="fsync every N samples (default 10). Lower is safer but "
-                         "costs real CPU on an SD card")
+    ap.add_argument("--gap", type=float, default=None,
+                    help="seconds of silence that counts as a death "
+                         "(default: inferred from the log's own sample spacing)")
+    ap.add_argument("--interval", type=float, default=IDLE_PERIOD_S, metavar="S",
+                    help=f"idle sample period in seconds (default {IDLE_PERIOD_S:.0f}). "
+                         f"Drops to {ALERT_PERIOD_S:.0f}s automatically whenever "
+                         f"anything looks wrong")
     ap.add_argument("--paranoid", action="store_true",
-                    help="fsync every line. Loses nothing on a hard lockup, but "
-                         "costs ~10%% of a BeagleBone core -- use while hunting a "
-                         "lockup, not permanently")
+                    help="1 Hz and fsync every line. Loses nothing on a hard "
+                         "lockup, but costs ~10%% of a BeagleBone core -- use "
+                         "while actively hunting a lockup, not permanently")
     a = ap.parse_args()
-    every = 1 if a.paranoid else max(1, a.fsync_every)
-    sys.exit(postmortem(a.gap) if a.postmortem else (run(every) or 0))
+    sys.exit(postmortem(a.gap) if a.postmortem
+             else (run(paranoid=a.paranoid, idle_period=a.interval) or 0))

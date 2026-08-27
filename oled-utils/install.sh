@@ -7,29 +7,44 @@
 #   ./install.sh                 install, enable and start
 #   ./install.sh --no-start      install only
 #   ./install.sh --skip-deps     install even if the Python imports are missing
-#   ./install.sh --uninstall     remove everything except /etc/default/bbb-oled
+#   ./install.sh --uninstall     remove everything except /etc/default/bbb_oled
 #
-# Safe to re-run. /etc/default/bbb-oled is never overwritten once it exists.
+# Safe to re-run. /etc/default/bbb_oled is never overwritten once it exists.
+
+
+# ── refuse to be sourced ──────────────────────────────────────────────────
+# This script calls exit() on error. When a script is SOURCED, exit terminates
+# the calling shell -- over ssh that drops the connection, which is a hard way
+# to find out you typed `source` instead of `./`. It also breaks $0: sourced,
+# $0 is "-bash", so `dirname "$0"` fails with "invalid option -- b".
+#
+# `(return 0 2>/dev/null)` succeeds only inside a sourced file, which is the
+# portable way to detect it.
+if (return 0 2>/dev/null); then
+    printf 'This is a script, not something to source. Run it:\n    %s%s\n' \
+        "sudo " "${BASH_SOURCE[0]}" >&2
+    return 1
+fi
 
 set -euo pipefail
 
 SCRIPT_SRC="bbb_oled.py"
-UNIT_SRC="bbb-oled.service"
-DEFAULT_SRC="bbb-oled.default.example"
+UNIT_SRC="bbb_oled.service"
+DEFAULT_SRC="bbb_oled.default.example"
 
 SCRIPT_DST="/usr/local/bin/bbb_oled.py"
-UNIT_DST="/etc/systemd/system/bbb-oled.service"
-DEFAULT_DST="/etc/default/bbb-oled"
-SERVICE="bbb-oled"
+UNIT_DST="/etc/systemd/system/bbb_oled.service"
+DEFAULT_DST="/etc/default/bbb_oled"
+SERVICE="bbb_oled"
 
-cd "$(dirname "$0")"
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
 say()  { printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m==> %s\033[0m\n' "$*" >&2; }
 die()  { printf '\033[31m==> %s\033[0m\n' "$*" >&2; exit 1; }
 
 need_root() {
-    [ "$(id -u)" -eq 0 ] || die "run with sudo: sudo $0 $*"
+    [ "$(id -u)" -eq 0 ] || die "run with sudo: sudo ${BASH_SOURCE[0]} $*"
 }
 
 do_uninstall() {
@@ -50,7 +65,7 @@ for arg in "$@"; do
         --uninstall) do_uninstall "$@" ;;
         --no-start)  START=0 ;;
         --skip-deps) SKIP_DEPS=1 ;;
-        -h|--help)   sed -n '4,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)   sed -n '4,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)           die "unknown option: $arg" ;;
     esac
 done
@@ -60,6 +75,35 @@ need_root "$@"
 for f in "$SCRIPT_SRC" "$UNIT_SRC" "$DEFAULT_SRC"; do
     [ -f "$f" ] || die "missing $f — run this from the oled-utils directory"
 done
+
+# ── migrate from the old hyphenated name ─────────────────────────────────
+# The service used to be bbb-oled; every other bot service uses an underscore
+# (balance_bot, balance_bot_server, batt_monitor), so it was renamed. Without
+# this the old unit stays installed AND enabled, and you end up with two
+# daemons driving one I2C display -- which looks exactly like "the service is
+# running but the screen is dead", because they fight over the bus.
+OLD_UNIT="/etc/systemd/system/bbb-oled.service"
+OLD_DEFAULT="/etc/default/bbb-oled"
+if [ -f "$OLD_UNIT" ]; then
+    warn "found the old bbb-oled.service — stopping, disabling and removing it"
+    systemctl disable --now bbb-oled 2>/dev/null || true
+    rm -f "$OLD_UNIT"
+    systemctl daemon-reload
+fi
+if [ -f "$OLD_DEFAULT" ] && [ ! -f "$DEFAULT_DST" ]; then
+    say "migrating $OLD_DEFAULT -> $DEFAULT_DST (keeping your options)"
+    mv "$OLD_DEFAULT" "$DEFAULT_DST"
+elif [ -f "$OLD_DEFAULT" ]; then
+    warn "$OLD_DEFAULT still exists but $DEFAULT_DST is already there;"
+    warn "leaving both — delete the old one by hand once you have compared them"
+fi
+
+# NOTE ON ORDERING: this runs BEFORE the dependency preflight below, which can
+# die(). Cleaning up the old unit must not be conditional on the new one
+# installing successfully -- if it were, a missing Python module would leave the
+# board with the old bbb-oled still enabled AND the new bbb_oled absent, which
+# is worse than either alone.
+
 
 # ── preflight ───────────────────────────────────────────────────────
 # Check things that otherwise fail later as confusing runtime errors.
@@ -72,38 +116,58 @@ if ! id "$RUN_USER" >/dev/null 2>&1; then
     die "unit runs as '$RUN_USER' but that user does not exist"
 fi
 
-# Import-check as the user the SERVICE runs as, not as root.
+# Import-check the way the SERVICE will resolve it, not the way your shell does.
 #
-# This script needs sudo to write to /usr/local/bin and /etc, so a bare
-# `python3 -c` here runs as root. Packages installed with `pip3 install --user`
-# live in ~/.local and are invisible to root, so checking as root reports them
-# missing for a setup that would have started fine. Check the account that will
-# actually do the importing.
+# This has now been wrong in both directions, so it is worth being precise.
+#
+# v1 asked "can debian import luma?" via runuser. That passed while the service
+# died on ImportError every 5s, because `pip3 install --user` puts the modules
+# in ~/.local and the unit sets ProtectHome=yes, which hands the service an
+# empty /home.
+#
+# v2 then rejected any module resolving under /home. That FAILED INSTALLS THAT
+# WOULD HAVE WORKED: if a package is installed both system-wide and in
+# ~/.local, the user site shadows the system copy, so find_spec run as debian
+# reports the /home path -- while systemd, with /home emptied, happily falls
+# back to the system copy. Observed here: this check refused to install while
+# the running service was importing luma without complaint.
+#
+# The question is not "where does the login user find it" but "can it still be
+# found with ~/.local removed from sys.path". PYTHONNOUSERSITE=1 does exactly
+# that, and is a faithful stand-in for what ProtectHome=yes leaves visible.
 DEPCHECK='
-import sys
+import sys, importlib.util as u
 missing = []
 for mod, pkg in (("luma.oled", "luma.oled"), ("PIL", "pillow")):
     try:
-        __import__(mod)
-    except ImportError:
+        s = u.find_spec(mod)
+    except Exception:
+        s = None
+    if s is None:
         missing.append(pkg)
-print("  interpreter: " + sys.executable)
+        print("    %-10s MISSING" % mod)
+        continue
+    p = s.origin
+    if not p and s.submodule_search_locations:
+        p = list(s.submodule_search_locations)[0]
+    print("    %-10s %s" % (mod, p or "(namespace package)"))
 if missing:
-    print("  MISSING: " + ", ".join(missing))
+    print("    MISSING: " + ", ".join(missing))
     sys.exit(1)
-print("  luma.oled and pillow present")
 '
-echo "  checking as user: $RUN_USER"
-if ! runuser -u "$RUN_USER" -- python3 -c "$DEPCHECK" 2>/dev/null \
-     && ! sudo -u "$RUN_USER" python3 -c "$DEPCHECK"; then
+echo "  your shell's view (as $RUN_USER, ~/.local included):"
+runuser -u "$RUN_USER" -- python3 -c "$DEPCHECK" || true
+echo "  the service's view (~/.local removed, as ProtectHome=yes leaves it):"
+SVC_RC=0
+runuser -u "$RUN_USER" -- env PYTHONNOUSERSITE=1 python3 -c "$DEPCHECK" || SVC_RC=$?
+if [ "$SVC_RC" -ne 0 ]; then
     echo
-    warn "Dependencies missing for '$RUN_USER' — the user the service runs as."
-    echo "  Install for that user only:"
-    echo "      sudo -u $RUN_USER pip3 install --user --break-system-packages luma.oled pillow"
-    echo "  Or system-wide (also covers root and any other user):"
+    warn "The modules are not resolvable with ~/.local excluded, so systemd will"
+    warn "not find them either -- the unit sets ProtectHome=yes."
+    echo "  Install them system-wide:"
     echo "      sudo pip3 install --break-system-packages luma.oled pillow"
     echo
-    echo "  On Debian you may prefer the packaged build, which avoids pip entirely:"
+    echo "  On Debian you may prefer the packaged build for PIL:"
     echo "      sudo apt install python3-pil"
     echo "      sudo pip3 install --break-system-packages luma.oled"
     echo
@@ -111,29 +175,38 @@ if ! runuser -u "$RUN_USER" -- python3 -c "$DEPCHECK" 2>/dev/null \
         warn "--skip-deps given; installing anyway. The service will fail to start"
         warn "until the imports resolve."
     else
-        die "missing Python dependencies (re-run with --skip-deps to install regardless)"
+        die "dependencies not visible to the service (re-run with --skip-deps to install regardless)"
     fi
 fi
 
-if getent group i2c >/dev/null; then
-    if id -nG "$RUN_USER" | tr ' ' '\n' | grep -qx i2c; then
-        echo "  $RUN_USER is in the i2c group"
+# Which bus? Read it from the options file BEFORE the group check, because the
+# group check needs to stat the right device node. This used to sit further
+# down, so the group lookup silently assumed bus 1.
+PORT="1"
+[ -f "$DEFAULT_DST" ] && PORT="$(sed -n 's/.*--i2c-port \([0-9]\+\).*/\1/p' "$DEFAULT_DST" | head -1)"
+PORT="${PORT:-1}"
+
+# Add the user to the group that ACTUALLY owns the bus node, not a hardcoded
+# "i2c". This image ships /dev/i2c-* as root:gpio, and adding the user to a
+# group that does not own the device achieves nothing while looking like it did.
+BUS_DEV="/dev/i2c-$PORT"
+DEV_GROUP="$(stat -c %G "$BUS_DEV" 2>/dev/null || echo i2c)"
+if getent group "$DEV_GROUP" >/dev/null; then
+    if id -nG "$RUN_USER" | tr ' ' '\n' | grep -qx "$DEV_GROUP"; then
+        echo "  $RUN_USER is in the '$DEV_GROUP' group (owner of $BUS_DEV)"
     else
-        say "Adding $RUN_USER to the i2c group"
-        usermod -aG i2c "$RUN_USER"
-        warn "$RUN_USER was just added to 'i2c'. The service picks this up via"
+        say "Adding $RUN_USER to the '$DEV_GROUP' group (owner of $BUS_DEV)"
+        usermod -aG "$DEV_GROUP" "$RUN_USER"
+        warn "$RUN_USER was just added to '$DEV_GROUP'. The service picks this up via"
         warn "SupplementaryGroups= immediately, but that user's existing login"
         warn "shells will not until they log out and back in."
     fi
 else
-    warn "no 'i2c' group on this system; relying on the device node's mode"
+    warn "no '$DEV_GROUP' group on this system; relying on the device node's mode"
 fi
 
 # The unit has ConditionPathExists=/dev/i2c-1, so a missing bus shows up as
 # "condition failed" rather than a crash loop. Still worth saying now.
-PORT="1"
-[ -f "$DEFAULT_DST" ] && PORT="$(sed -n 's/.*--i2c-port \([0-9]\+\).*/\1/p' "$DEFAULT_DST" | head -1)"
-PORT="${PORT:-1}"
 if [ ! -e "/dev/i2c-$PORT" ]; then
     warn "/dev/i2c-$PORT does not exist — the service will not start until it does."
     warn "On the Blue that usually means the I2C1 overlay is not enabled in /boot/uEnv.txt."

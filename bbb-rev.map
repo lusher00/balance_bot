@@ -1,0 +1,21 @@
+# Mapfile. Created by GNU ddrescue version 1.30
+# Command line: ddrescue -b 512 -i 650MiB -s 50MiB -r3 /dev/rdisk4 /Users/rlush/bbb-sd.img /Users/rlush/bbb-rev.map
+# Start time:   2026-08-27 15:46:05
+# Current time: 2026-08-27 15:46:11
+# Scraping failed blocks... (forwards)
+# current_pos  current_status  current_pass
+0x291F0400     /               1
+#      pos        size  status
+0x00000000  0x291F0000  +
+0x291F0000  0x00000400  -
+0x291F0400  0x00002A00  /
+0x291F2E00  0x00000200  -
+0x291F3000  0x00065000  +
+0x29258000  0x00000200  -
+0x29258200  0x00003C00  /
+0x2925BE00  0x00000200  -
+0x2925C000  0xBCE18000  +
+0xE6074000  0x00000200  -
+0xE6074200  0x0001BE00  *
+0xE6090000  0x2CF8F0000  +
+0x3B5980000  0x7FFFFFFC4A67FFFF  ?

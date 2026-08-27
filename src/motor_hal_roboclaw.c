@@ -108,7 +108,10 @@ static int refresh_encoders(void)
     pthread_mutex_unlock(&g_rc_mutex);
     if (ret != ROBOCLAW_OK)
     {
-        LOG_WARN("motor_hal_roboclaw: encoder read failed (%d)", ret);
+        /* 100 Hz path, x2 for both wheels. A RoboClaw that fails one read
+         * fails the next as well, so this is a ~200 Hz writer exactly when
+         * the link is already in trouble. */
+        LOG_WARN_EVERY(2000, "motor_hal_roboclaw: encoder read failed (%d)", ret);
         return -1;
     }
     // Apply per-motor encoder polarity from motor_config (runtime tunable via IPC)
@@ -222,7 +225,8 @@ int motor_hal_set_both(float left, float right)
         int32_t spd_l = (int32_t)(pol_l * left * (float)qpps_max);
         ret = roboclaw_speed_accel_m1m2(g_rc, RC_ADDRESS, spd_r, spd_l, accel);
         if (ret != ROBOCLAW_OK)
-            LOG_WARN("motor_hal_roboclaw: speed_accel command failed (%d)", ret);
+            /* Written once per control tick while driving. */
+            LOG_WARN_EVERY(2000, "motor_hal_roboclaw: speed_accel command failed (%d)", ret);
     }
     else if (mode == MOTOR_HAL_MODE_VELOCITY)
     {
@@ -231,7 +235,9 @@ int motor_hal_set_both(float left, float right)
         int32_t spd_l = (int32_t)(pol_l * left * (float)qpps_max);
         ret = roboclaw_speed_m1m2(g_rc, RC_ADDRESS, spd_r, spd_l);
         if (ret != ROBOCLAW_OK)
-            LOG_WARN("motor_hal_roboclaw: speed command failed (%d)", ret);
+            /* Per control tick in velocity mode — throttled for the same
+             * reason as speed_accel above. */
+            LOG_WARN_EVERY(2000, "motor_hal_roboclaw: speed command failed (%d)", ret);
     }
     else
     {
@@ -240,7 +246,8 @@ int motor_hal_set_both(float left, float right)
         int16_t d2 = (int16_t)(pol_l * left * (float)DUTY_MAX);
         ret = roboclaw_duty_m1m2(g_rc, RC_ADDRESS, d1, d2);
         if (ret != ROBOCLAW_OK)
-            LOG_WARN("motor_hal_roboclaw: duty command failed (%d)", ret);
+            /* Per control tick in duty mode. */
+            LOG_WARN_EVERY(2000, "motor_hal_roboclaw: duty command failed (%d)", ret);
     }
 
     pthread_mutex_unlock(&g_rc_mutex);

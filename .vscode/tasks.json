@@ -2,13 +2,17 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "build and install  (\u2325\u21e7\u2318I)",
+            "label": "sync and build",
+            "detail": "⌃⌥B — rsync to the bot, then make && make install",
             "type": "shell",
-            "command": "ssh boneblue-0 'cd ~/balance_bot && make && make install'",
-            "group": "build",
+            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
             },
             "problemMatcher": {
                 "owner": "c",
@@ -27,14 +31,15 @@
             }
         },
         {
-            "label": "build  (\u2325\u21e7\u2318K)",
+            "label": "clean sync and build",
+            "detail": "⌃⌥⇧B — make clean on the bot, then sync, build and install",
             "type": "shell",
-            "command": "ssh boneblue-0 'cd ~/balance_bot && make'",
-            "group": "build",
+            "command": "ssh boneblue-0 'cd ~/balance_bot && make clean' && rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
             },
+            "group": "build",
             "problemMatcher": {
                 "owner": "c",
                 "fileLocation": [
@@ -52,87 +57,104 @@
             }
         },
         {
-            "label": "clean  (\u2325\u21e7\u2318C)",
+            "label": "sync",
+            "detail": "⌃⌥S — rsync to the bot only, no build",
             "type": "shell",
-            "command": "ssh boneblue-0 'cd ~/balance_bot && make clean'",
+            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
             },
+            "group": "build",
             "problemMatcher": []
         },
         {
-            "label": "install  (\u2325\u21e7\u2318P)",
+            "label": "build",
+            "detail": "⌃⌥K — make on the bot (no sync, no install)",
+            "type": "shell",
+            "command": "ssh boneblue-0 'cd ~/balance_bot && make'",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "group": "build",
+            "problemMatcher": {
+                "owner": "c",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "message": 5
+                }
+            }
+        },
+        {
+            "label": "build and install",
+            "detail": "⌃⌥I — make && make install on the bot (no sync)",
+            "type": "shell",
+            "command": "ssh boneblue-0 'cd ~/balance_bot && make && make install'",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "group": "build",
+            "problemMatcher": {
+                "owner": "c",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "message": 5
+                }
+            }
+        },
+        {
+            "label": "install",
+            "detail": "⌃⌥P — make install on the bot",
             "type": "shell",
             "command": "ssh boneblue-0 'cd ~/balance_bot && make install'",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
             },
-            "problemMatcher": []
-        },
-        {
-            "label": "sync only  (\u2325\u21e7\u2318S)",
-            "type": "shell",
-            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/",
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "sync and build  (\u21e7\u2318B)",
-            "type": "shell",
-            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared"
-            },
-            "problemMatcher": {
-                "owner": "c",
-                "fileLocation": [
-                    "relative",
-                    "${workspaceFolder}"
-                ],
-                "pattern": {
-                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
-                    "file": 1,
-                    "line": 2,
-                    "column": 3,
-                    "severity": 4,
-                    "message": 5
-                }
-            }
-        },
-        {
-            "label": "clean sync and build  (\u2325\u21e7\u2318B)",
-            "type": "shell",
-            "command": "ssh boneblue-0 'cd ~/balance_bot && make clean' && rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "clean",
+            "detail": "⌃⌥C — make clean on the bot",
+            "type": "shell",
+            "command": "ssh boneblue-0 'cd ~/balance_bot && make clean'",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
             },
-            "problemMatcher": {
-                "owner": "c",
-                "fileLocation": [
-                    "relative",
-                    "${workspaceFolder}"
-                ],
-                "pattern": {
-                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
-                    "file": 1,
-                    "line": 2,
-                    "column": 3,
-                    "severity": 4,
-                    "message": 5
-                }
-            }
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "install oled",
+            "detail": "make install-oled on the bot (OLED status display only)",
+            "type": "shell",
+            "command": "ssh boneblue-0 'cd ~/balance_bot && make install-oled'",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "group": "build",
+            "problemMatcher": []
         }
     ]
 }

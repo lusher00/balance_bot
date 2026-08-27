@@ -196,27 +196,13 @@ class Display:
 
         So the address gets tested before luma is involved at all, using
         smbus2 directly, with the descriptor in a local we close in `finally`.
-        NOT write_quick(). A zero-data write is the probe i2cdetect uses and
-        it is the obvious choice, but it cannot work on this SoC: the AM335x
-        OMAP adapter declares I2C_AQ_NO_ZERO_LEN, so the i2c core rejects the
-        transfer before it reaches the wire. This probe therefore failed 100%
-        of the time, panel present or not, and the kernel logged
-
-            i2c i2c-1: adapter quirk: no zero length (addr 0x003c, size 0, write)
-
-        once per attempt -- 189 times in one boot of the log captured during
-        the 2026-08-23 read-only event, at exactly this retry loop's 30 s
-        back-off cadence.
-
-        A one-byte write is not zero-length, so it passes the quirk check.
-        0x00 is an SSD1306 command-mode control byte (Co=0, D/C#=0) with no
-        command following it: a real panel accepts it and does nothing, and an
-        absent one still raises OSError(EREMOTEIO), which is all this needs.
+        write_quick() is a zero-data write -- the same probe i2cdetect uses --
+        so it ACK-tests without sending the panel a stray command byte.
         """
         from smbus2 import SMBus
         bus = SMBus(self.port)
         try:
-            bus.write_byte(self.addr, 0x00)
+            bus.write_quick(self.addr)
         finally:
             bus.close()
 
@@ -375,10 +361,6 @@ def parse_args(argv=None):
     p.add_argument("--font-size", type=int, default=9, help="font size (default: 9)")
     p.add_argument("--retry", type=float, default=2.0,
                    help="reconnect delay after an I2C error (default: 2.0)")
-    p.add_argument("--give-up-after", type=float, default=15.0,
-                   help="exit non-zero if the panel has never been reached "
-                        "within this many seconds (default: 15, 0 = never "
-                        "give up and keep retrying forever)")
     p.add_argument("--once", action="store_true",
                    help="draw a single frame and exit (for testing)")
     p.add_argument("--list-fonts", action="store_true",
@@ -426,8 +408,6 @@ def main(argv=None):
     svc = "unknown"
     next_status = 0.0
     deadline = time.monotonic()
-    started_at = time.monotonic()
-    ever_connected = False
 
     try:
         while not stopping:
@@ -439,48 +419,11 @@ def main(argv=None):
             if not display.ensure():
                 if args.once:
                     return 1
-
-                # Do not sit here forever pretending to be a status display.
-                #
-                # With no panel this process used to run happily until the end
-                # of time: `systemctl status bbb_oled` showed a green
-                # "active (running)", hours of uptime and real CPU consumed,
-                # while it had never once talked to a display. That is the same
-                # lie netconsole told when it printed "network logging started"
-                # with zero live targets, and it hid a dark panel for weeks.
-                # A component that cannot do its job should say so where
-                # someone will see it -- `systemctl --failed`.
-                #
-                # THE DEFAULT IS 15 s FOR AN ARITHMETIC REASON. The unit sets
-                # StartLimitIntervalSec=120, StartLimitBurst=5, RestartSec=5,
-                # so systemd only gives up if five starts fit inside 120 s:
-                # 5 x (15 + 5) = 100 s, which does. Raise this much above ~19 s
-                # and each attempt lasts long enough that the burst never
-                # trips, systemd restarts forever, and the unit never shows as
-                # failed -- exactly the behaviour this is meant to end. If you
-                # want a longer grace period, raise StartLimitIntervalSec to
-                # match rather than only changing this.
-                if (not ever_connected and args.give_up_after > 0
-                        and now - started_at >= args.give_up_after):
-                    LOG.error(
-                        "no panel at i2c-%d 0x%02X after %.0fs — exiting non-zero "
-                        "rather than reporting healthy with nothing attached. "
-                        "Check the wiring, then: sudo i2cget -y %d 0x%02X  "
-                        "(errno 121 = bus fine, nobody home; 110 = a line is "
-                        "held down). To retry after plugging it in: "
-                        "sudo systemctl reset-failed bbb_oled && "
-                        "sudo systemctl restart bbb_oled",
-                        args.i2c_port, args.i2c_addr, now - started_at,
-                        args.i2c_port, args.i2c_addr)
-                    return 1
-
                 # Back off while the panel is absent instead of reprobing at
                 # the draw rate -- see Display.connect() for what that cost.
                 time.sleep(display.backoff(args.retry))
                 deadline = time.monotonic()
                 continue
-
-            ever_connected = True
 
             batt = get_battery_voltage(args.batt_path)
             rows = [

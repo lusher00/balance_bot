@@ -933,7 +933,70 @@ static int parse_json_command(const char *json_cmd)
         return 0;
     }
 
-    LOG_WARN("Unknown command type");
+    /* {"type":"set_rates","telemetry":20,"rc":20}
+     *
+     * Runtime control of the two outbound stream rates. This exists because
+     * getting them wrong made the whole board unresponsive -- ssh included --
+     * and the only way back was to cross-compile, rsync and reinstall, on a
+     * board that was too busy to accept the ssh session that would do it.
+     * A knob that can be turned from the dashboard is the difference between
+     * a five-second recovery and a bricked afternoon.
+     *
+     * Clamped, not rejected: a bad value from a slider should land somewhere
+     * sane rather than leave the operator with no telemetry at all. */
+    if (strstr(json_cmd, "\"type\":\"set_rates\""))
+    {
+        const char *p;
+        int changed = 0;
+
+        if ((p = strstr(json_cmd, "\"telemetry\":")))
+        {
+            int hz = 0;
+            if (sscanf(p + strlen("\"telemetry\":"), "%d", &hz) == 1)
+            {
+                if (hz < 1) hz = 1;
+                if (hz > SAMPLE_RATE_HZ) hz = SAMPLE_RATE_HZ;
+                g_debug_config.rates.pid_states = hz;
+                g_debug_config.rates.full_telemetry = hz;
+                changed = 1;
+            }
+        }
+        if ((p = strstr(json_cmd, "\"rc\":")))
+        {
+            int hz = 0;
+            if (sscanf(p + strlen("\"rc\":"), "%d", &hz) == 1)
+            {
+                if (hz < 1) hz = 1;
+                if (hz > SAMPLE_RATE_HZ) hz = SAMPLE_RATE_HZ;
+                g_debug_config.rates.rc = hz;
+                changed = 1;
+            }
+        }
+        if (!changed)
+        {
+            LOG_WARN("set_rates: no usable telemetry/rc value in: %s", json_cmd);
+            return -1;
+        }
+        LOG_INFO("set_rates: telemetry=%d Hz rc=%d Hz (%d msg/s through the bridge)",
+                 g_debug_config.rates.pid_states, g_debug_config.rates.rc,
+                 g_debug_config.rates.pid_states + g_debug_config.rates.rc);
+        return 0;
+    }
+
+    /* The bridge's keepalive. server.js sends {"type":"ping"} every second or
+     * two; balance_bot never knew about it, so every one produced an "unknown
+     * command" warning about our own software talking to itself. Recognised
+     * and ignored — no reply is expected, the bridge only needs the write to
+     * succeed. */
+    if (strstr(json_cmd, "\"type\":\"ping\""))
+        return 0;
+
+    /* Throttled, and it says what it rejected. This was a bare
+     * LOG_WARN("Unknown command type") -- no rate limit and no clue which
+     * command -- and it was ~30 MB of the 551 MB log recovered on 2026-08-24.
+     * A rejection that does not name what it rejected costs a debugging
+     * session; one that repeats at loop rate costs the card. */
+    LOG_WARN_EVERY(2000, "ipc: unknown command type, ignoring: %.80s", json_cmd);
     return -1;
 }
 
@@ -991,7 +1054,21 @@ static void build_telemetry_json(char *buffer, size_t size)
                          * client was not draining. Non-zero means holes in the
                          * graphs, and it means the bridge or the link is behind
                          * -- not the renderer. */
-                        "\"tx_drops\":%lu},",
+                        "\"tx_drops\":%lu,"
+                        /* Board health, 1 Hz. On a single-core board the
+                         * control loop, the node bridge and sshd share one CPU,
+                         * so these answer "is the robot fine but the box
+                         * overloaded?" without needing an ssh session -- which
+                         * is exactly what is unusable when it matters. */
+                        "\"cpu\":%.1f,\"bot_cpu\":%.1f,\"load1\":%.2f,"
+                        "\"mem_avail_kb\":%u,\"mem_total_kb\":%u,"
+                        "\"sys_temp\":%.1f,\"ctxt\":%u,\"procs_r\":%u,"
+                        /* The other bot processes: up/down and what each costs.
+                         * A service being active is not the same as it being
+                         * affordable on a single core. */
+                        "\"node_up\":%s,\"node_cpu\":%.1f,"
+                        "\"oled_up\":%s,\"oled_cpu\":%.1f,"
+                        "\"batt_up\":%s,\"batt_cpu\":%.1f},",
                         g_telemetry_data.system.battery_voltage,
                         g_telemetry_data.system.armed ? "true" : "false",
                         g_telemetry_data.system.mode,
@@ -1002,7 +1079,21 @@ static void build_telemetry_json(char *buffer, size_t size)
                         (int)g_telemetry_data.system.batt_status,
                         g_telemetry_data.system.claw_voltage,
                         g_telemetry_data.system.claw_temp,
-                        ipc_get_tx_drops());
+                        ipc_get_tx_drops(),
+                        g_telemetry_data.system.cpu_pct,
+                        g_telemetry_data.system.bot_cpu_pct,
+                        g_telemetry_data.system.load1,
+                        g_telemetry_data.system.mem_avail_kb,
+                        g_telemetry_data.system.mem_total_kb,
+                        g_telemetry_data.system.sys_temp_c,
+                        g_telemetry_data.system.ctxt_per_s,
+                        g_telemetry_data.system.procs_running,
+                        g_telemetry_data.system.node_alive ? "true" : "false",
+                        g_telemetry_data.system.node_cpu_pct,
+                        g_telemetry_data.system.oled_alive ? "true" : "false",
+                        g_telemetry_data.system.oled_cpu_pct,
+                        g_telemetry_data.system.batt_alive ? "true" : "false",
+                        g_telemetry_data.system.batt_cpu_pct);
     }
 
     /* motor_config / pos_config / sbus_config used to be rebuilt and appended
@@ -1088,7 +1179,9 @@ static void build_telemetry_json(char *buffer, size_t size)
         pos = json_append(buffer, pos, size,
                         "\"position\":{\"enabled\":%s,\"kind\":\"zone_position_hold\","
                         "\"enc_pos_target\":%d,\"enc_pos\":%d,\"enc_error\":%d,"
-                        "\"enc_velocity\":%.3f,\"pos_correction\":%.4f,\"vel_damp\":%.4f,"
+                        "\"enc_velocity\":%.3f,\"enc_velocity_raw\":%.3f,"
+                        "\"enc_vel_mid\":%.3f,\"enc_vel_long\":%.3f,"
+                        "\"pos_correction\":%.4f,\"vel_damp\":%.4f,"
                         "\"theta_ref_adj\":%.4f,\"active_scale\":%.4f,"
                         "\"max_correction\":%.4f},",
                         g_telemetry_data.position.enabled ? "true" : "false",
@@ -1096,6 +1189,9 @@ static void build_telemetry_json(char *buffer, size_t size)
                         (int)g_telemetry_data.position.enc_pos,
                         (int)g_telemetry_data.position.enc_error,
                         g_telemetry_data.position.enc_velocity,
+                        g_telemetry_data.position.enc_velocity_raw,
+                        g_telemetry_data.position.enc_vel_lsq_mid,
+                        g_telemetry_data.position.enc_vel_lsq_long,
                         g_telemetry_data.position.pos_correction,
                         g_telemetry_data.position.vel_damp,
                         g_telemetry_data.position.theta_ref_adj,

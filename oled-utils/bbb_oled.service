@@ -16,14 +16,23 @@ StartLimitBurst=5
 [Service]
 Type=simple
 User=debian
-# The i2c group owns /dev/i2c-*. Without this the service dies on a permission
-# error that reads like a missing device.
-SupplementaryGroups=i2c
+# Whichever group owns /dev/i2c-*, the service must be in it or it dies on a
+# permission error that reads like a missing device.
+#
+# BOTH names are listed on purpose. Most distributions ship /dev/i2c-* as
+# root:i2c, but this BeagleBone image ships it as root:gpio -- and a unit that
+# granted only 'i2c' started fine, then exited 1 on the first bus access, which
+# systemd reported as a restart loop with no hint of a permission problem.
+# Listing a group that does not exist on a given image is harmless.
+#
+# Note that `usermod -aG` on the user is NOT sufficient: systemd starts the
+# service with exactly the groups named here.
+SupplementaryGroups=i2c gpio
 # -u so print/logging reach the journal immediately instead of sitting in a
 # pipe buffer until the process exits.
 ExecStart=/usr/bin/python3 -u /usr/local/bin/bbb_oled.py $OLED_ARGS
 # Options live here so they can be changed without editing the unit.
-EnvironmentFile=-/etc/default/bbb-oled
+EnvironmentFile=-/etc/default/bbb_oled
 Restart=always
 RestartSec=5
 

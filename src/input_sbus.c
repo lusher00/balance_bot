@@ -459,6 +459,10 @@ int sbus_init(const char *device) {
  *          0  no complete frame yet (normal, call again next cycle)
  *         -1  UART error / not connected
  */
+/* Tracks whether the failsafe warning has already been emitted for the
+ * current outage, so it is logged on the edge rather than every frame. */
+static bool sbus_failsafe_logged = false;
+
 int sbus_update(void) {
     if (!sbus.connected || sbus.fd < 0) return -1;
 
@@ -502,7 +506,17 @@ int sbus_update(void) {
                 sbus_decode_frame(sbus.buf);
 
                 if (sbus.failsafe) {
-                    LOG_WARN("SBUS: FAILSAFE active — forcing kill");
+                    /* Edge-triggered. Failsafe is a STATE, not an event: while
+                     * the link is down every one of the ~143 frames per second
+                     * sets it, and logging each one told you nothing the first
+                     * line had not, while writing a few hundred journal lines a
+                     * second to the SD card. Log entering it, and log leaving
+                     * it (below), which is the transition you actually want to
+                     * see in a log. */
+                    if (!sbus_failsafe_logged) {
+                        sbus_failsafe_logged = true;
+                        LOG_WARN("SBUS: FAILSAFE active — forcing kill");
+                    }
                     /* Re-arm the interlock: after a link loss we cannot know where
                      * the stick is, and the operator must re-centre it. */
                     sbus.drive_centered = false;
@@ -516,6 +530,10 @@ int sbus_update(void) {
                     // Single lost frame — hold last values, don't kill yet
                     LOG_DEBUG("SBUS: frame lost flag set");
                 } else {
+                    if (sbus_failsafe_logged) {
+                        sbus_failsafe_logged = false;
+                        LOG_INFO("SBUS: failsafe cleared — link restored");
+                    }
                     sbus_decode_channels();
                 }
 

@@ -1,10 +1,23 @@
-# DIAGNOSTIC ONLY -- do not 'systemctl enable' this.
+# Safe to leave enabled.
 #
-# Left running permanently it costs ~10% of the BeagleBone's single core
-# and pushes system time to 65% through fsync on the SD card, which starves
-# ssh and the telemetry bridge. Start it when you are chasing a lockup:
+# This used to be diagnostic-only: at 1 Hz with a per-second fsync it cost ~10%
+# of the BeagleBone's single core and pushed system time to 65%, starving ssh
+# and the telemetry bridge. Three things changed, none of which give up
+# coverage -- see the header of tools/bbot_watch.py:
 #
-#   sudo systemctl start bbot-watch     (then stop it again)
+#   * PIDs are cached instead of rescanning all of /proc twice a second
+#     (measured ~62x cheaper per sample)
+#   * idle sampling is 5 s, dropping to 1 s automatically the moment anything
+#     looks wrong, and holding there for a minute
+#   * fsync is once a minute when idle, every sample while alerting
+#
+# So it now spends effort only when there is something to record. To go back to
+# the old always-on-full-detail behaviour while actively hunting a lockup:
+#
+#   sudo systemctl stop bbot-watch
+#   sudo ./tools/bbot_watch.py --paranoid     (then Ctrl-C and start the unit again)
+#
+# After a lockup:  ./tools/bbot_watch.py --postmortem
 #
 [Unit]
 Description=Balance Bot system recorder (lockup / SSH-drop diagnosis)
@@ -24,7 +37,7 @@ Nice=10
 IOSchedulingClass=idle
 CPUWeight=10
 
-# It fsyncs every second by design; that is the point, not an accident.
+# Adaptive: cheap when idle, full resolution when something is wrong.
 Restart=always
 RestartSec=2
 

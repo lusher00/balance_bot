@@ -146,6 +146,12 @@ typedef struct
                             // drive forward). Same sign as the err the zone logic
                             // divides, and as balance/steering's (setpoint - measurement).
     float enc_velocity;     // Tick velocity (ticks per 100 ms window)
+    /* The RoboClaw's own speed reading, same units. Carried ONLY so the new
+     * 100 Hz least-squares estimate can be compared against the 25 Hz staircase
+     * it replaced, in the same log. Nothing controls off this. */
+    float enc_velocity_raw;
+    float enc_vel_lsq_mid;   /* candidate: mid window,  logged only */
+    float enc_vel_lsq_long;  /* candidate: long window, logged only */
     float pos_correction;   // Zone-scheduled correction, pre-limit (deg)
     float vel_damp;         // Velocity damping applied (deg)
     float theta_ref_adj;    // Final rate-limited, clamped value written to theta_ref (deg)
@@ -196,6 +202,41 @@ typedef struct
     batt_status_t batt_status;
     float claw_voltage; // RoboClaw main battery voltage (V), 0 if unavailable
     float claw_temp;    // RoboClaw board temperature (°C), 0 if unavailable
+
+    /* ── board health ─────────────────────────────────────────────────────
+     * Sampled at 1 Hz from /proc and the thermal zone. On a single-core
+     * 1 GHz board the control loop, the node bridge, sshd and this process
+     * all share one CPU, so "is the robot fine but the box overloaded?" is a
+     * question that comes up constantly -- and answering it has meant sshing
+     * in and running top, at exactly the moment ssh is the thing that is
+     * sluggish. These put the answer on the dashboard instead.
+     *
+     * ctxt_per_s earns its place specifically: the SBUS byte-at-a-time bug
+     * showed 60%+ idle CPU while ssh crawled, and the context-switch rate was
+     * the only number that showed it. */
+    float cpu_pct;       // whole-board CPU busy, 0-100
+    float bot_cpu_pct;   // this process's share, 0-100
+    float load1;         // 1-minute load average
+    uint32_t mem_avail_kb;
+    uint32_t mem_total_kb;
+    float sys_temp_c;    // SoC temperature
+    uint32_t ctxt_per_s; // context switches/sec
+    uint32_t procs_running;
+
+    /* ── the other bot processes ──────────────────────────────────────────
+     * Whether each is alive, and what share of the core it is taking.
+     *
+     * This exists because the node bridge was measured at 36% of a single
+     * core and nothing on the dashboard said so -- the only way to find out
+     * was to ssh in and run htop, at exactly the moment ssh was unusable
+     * BECAUSE of that load. A service being up is not the same as it being
+     * affordable, and the dashboard should show both. */
+    bool node_alive;      // balance_bot_server (the websocket bridge)
+    float node_cpu_pct;
+    bool oled_alive;      // bbb_oled.py
+    float oled_cpu_pct;
+    bool batt_alive;      // batt_monitor
+    float batt_cpu_pct;
 } system_telemetry_t;
 
 /**
@@ -393,6 +434,60 @@ extern telemetry_data_t g_telemetry_data;
         }                                                                                                                        \
     } while (0)
 
+/* ── rate-limited logging for hot paths ──────────────────────────────────────
+ *
+ * An unthrottled LOG_WARN in a path that runs at loop rate (100 Hz) or SBUS
+ * frame rate (~143 Hz) is not a log line. It is a several-hundred-hertz writer
+ * to stderr, which systemd hands to journald, which -- if the journal is
+ * persistent -- writes it to the SD card. That is enough to make the whole
+ * board unresponsive and, sustained, to fail a write and trip
+ * ext4 errors=remount-ro.
+ *
+ * The failure modes these logs report are exactly the ones that repeat: a
+ * RoboClaw that times out once times out again 10 ms later, and a receiver in
+ * failsafe is in failsafe for every frame until the link returns. So the log
+ * volume is highest precisely when the board can least afford it.
+ *
+ * Logs at most once per `ms`, and reports how many it swallowed, so a storm is
+ * still visible as a storm rather than silently thinned.
+ *
+ * Each call site gets its own counters (function-static inside the macro), so
+ * two different throttled messages do not suppress each other.
+ *
+ * The "primed" flag is not decoration. This used to test `_lwe_last == 0` to
+ * mean "has never fired", which is also a legitimate value of the clock: if
+ * rc_nanos_since_boot() ever returns 0 -- on error, or on a first call inside
+ * the first millisecond -- _lwe_last stays 0 and that branch is taken every
+ * single time. The signature is distinctive: every occurrence logged, and
+ * _lwe_skipped never incremented, so "[+N more suppressed]" never appears at
+ * all. That is exactly what 577 MB of /tmp/balance_bot.log showed on
+ * 2026-08-24 -- 3.45 M lines across 154 boots, zero suppression notices.
+ * Never overload a sentinel onto a value the source can legitimately produce.
+ */
+#define LOG_WARN_EVERY(ms, fmt, ...)                                            \
+    do                                                                          \
+    {                                                                           \
+        static uint64_t _lwe_last = 0;                                          \
+        static bool _lwe_primed = false;                                        \
+        static unsigned long _lwe_skipped = 0;                                  \
+        uint64_t _lwe_now = rc_nanos_since_boot() / 1000000ULL;                 \
+        if (!_lwe_primed || (_lwe_now - _lwe_last) >= (uint64_t)(ms))           \
+        {                                                                       \
+            if (_lwe_skipped)                                                   \
+                LOG_WARN(fmt " [+%lu more suppressed]", ##__VA_ARGS__,          \
+                         _lwe_skipped);                                         \
+            else                                                                \
+                LOG_WARN(fmt, ##__VA_ARGS__);                                   \
+            _lwe_last = _lwe_now;                                               \
+            _lwe_primed = true;                                                 \
+            _lwe_skipped = 0;                                                   \
+        }                                                                       \
+        else                                                                    \
+        {                                                                       \
+            _lwe_skipped++;                                                     \
+        }                                                                       \
+    } while (0)
+
 #define LOG_ERROR(fmt, ...)                                                                                                       \
     do                                                                                                                            \
     {                                                                                                                             \
@@ -436,9 +531,39 @@ static inline debug_config_t get_default_debug_config(void)
         .overlays = {.crosshair = true, .stats = false},
         .rates = {
             .system_status = 1,   // 1 Hz
-            .pid_states = 10,     // 10 Hz
-            .full_telemetry = 10, // 10 Hz
-            .rc = 30              // 30 Hz — see telemetry_rates_t.rc
+            /* 25 Hz, was 10. The control loop runs at 100 Hz, so 10 Hz sampled a
+             * moving signal 10 times a second: with the transmitter off nothing
+             * moves and the traces look smooth, but drive the bot and the graph
+             * turns into angular steps. That is aliasing, not packet loss --
+             * measurement showed telemetry arriving exactly on time at 10 Hz
+             * while the graphs looked broken.
+             *
+             * 25 divides the 10 ms loop tick exactly (40 ms), so spacing is
+             * perfectly even -- which matters for anything plotted -- and it
+             * lines up with POS_VEL_PERIOD_MS, so the encoder velocity in each
+             * packet is fresh rather than repeated. Costs ~25 KB/s. */
+            /* 20 Hz, was 25, was originally 10.
+             *
+             * 25 telemetry + 50 rc = 75 messages/s through the node bridge, and
+             * htop on the bot measured node at 36% of the single core with a
+             * load average of 1.46 -- the run queue never emptying. That is
+             * what made ssh crawl and the board unresponsive, and it is
+             * transmitter-independent because the RC stream is emitted whether
+             * or not a transmitter is on. Which is precisely why turning the TX
+             * off never actually helped.
+             *
+             * 20 Hz still divides the 10 ms loop tick exactly (50 ms), so
+             * spacing stays even, and still gives twice the graph sample
+             * density of the original 10 Hz. Change at runtime with the
+             * set_rates IPC command -- no rebuild -- and watch the HUD. */
+            .pid_states = 20,     // 20 Hz
+            .full_telemetry = 20, // 20 Hz
+            /* 20 Hz, was 50. See pid_states above: 50 Hz of RC on top of the
+             * telemetry stream is most of what saturated the bridge. 20 Hz is
+             * still double the fidelity RC had before it was split out, and it
+             * divides the tick exactly (50 ms). Raise it with set_rates once
+             * the board is proven to have headroom. */
+            .rc = 20              // 20 Hz — see telemetry_rates_t.rc
         },
         .logging = {.level = LOG_LEVEL_INFO, .console = true, .file = false, .timestamps = true},
         .display = {

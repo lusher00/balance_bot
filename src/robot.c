@@ -84,8 +84,11 @@ debug_config_t g_debug_config;
 
 // Telemetry counters
 static uint64_t telemetry_counter = 0;
-static uint64_t last_telemetry_broadcast = 0;
-static uint64_t last_rc_broadcast = 0;
+/* Absolute due-times (microseconds since boot) for the two outbound streams.
+ * Advanced by exactly one period per send so the average rate is correct even
+ * when the period is not a whole number of loop ticks -- see the control loop. */
+static uint64_t next_telemetry_us = 0;
+static uint64_t next_rc_us = 0;
 
 // Motor duty tracking (for telemetry)
 static float last_left_duty = 0.0f;
@@ -355,36 +358,113 @@ void robot_run(void)
         // ── Encoder position + velocity ───────────────────────────────────
         state.enc_pos = left_ticks + right_ticks;
         {
-            /* Hardware speed from RoboClaw (GETM1SPEED/GETM2SPEED, cmds 18/19).
-             * Throttled to POS_VEL_PERIOD_MS so downstream D2 math still
-             * operates on the same ~100 ms window it was tuned against.
-             * Divide sum by 10 to convert QPPS (pulses/s) → ticks/100ms so
-             * vel_scale_stop values remain in the same range as before.       */
+            /* Encoder velocity: least-squares slope of enc_pos over the last
+             * POS_VEL_WINDOW control ticks, recomputed EVERY tick.
+             *
+             * This replaces reading the RoboClaw's speed registers every
+             * POS_VEL_PERIOD_MS, which produced a 25 Hz staircase in a 100 Hz
+             * loop. See POS_VEL_WINDOW in balance_bot.h for why that mattered:
+             * vel_damp is applied after the position rate limiter, so every
+             * staircase step hit theta_ref instantly, and the damping needed to
+             * kill the loop's ~0.55 Hz ring could not be turned up without
+             * the steps themselves becoming the disturbance.
+             *
+             * Units are unchanged -- ticks/100ms -- so existing
+             * vel_scale_stop / vel_scale_move values keep their meaning.
+             *
+             * A plain tick-to-tick difference was tried before and rejected
+             * because it truncates to zero: at 100 Hz consecutive reads often
+             * differ by 0 ticks. A least-squares slope over a window does not
+             * have that problem -- it fits through the quantisation rather
+             * than differencing across it.
+             */
+            /* Velocity candidates, all computed every tick from the same
+             * position history, so one recorded run compares them directly.
+             *
+             * History so far, for whoever reads this next:
+             *   - The RoboClaw speed registers (the incumbent) are read every
+             *     POS_VEL_PERIOD_MS and held. That was assumed to be a crude
+             *     staircase. It is not -- measured against a 6-tick
+             *     least-squares slope it is 1.79x SMOOTHER, because the
+             *     RoboClaw filters internally. The staircase theory was wrong.
+             *   - What the RoboClaw actually costs is LAG: measured at 50-100 ms
+             *     behind the least-squares estimate. That, not step kicks, is
+             *     what makes high damping unstable -- vel_scale_stop=3.5 rang
+             *     because of phase lag, not because of discontinuities.
+             *   - So a longer window is the interesting region: still less lag
+             *     than the RoboClaw, but smoother than w=6. Hence three
+             *     candidates rather than one guess.
+             *
+             * Delete the extra candidates once a window has been chosen. */
+            static int32_t vel_hist[POS_VEL_WIN_MAX];
+            static int vel_head = 0;   /* next write slot == oldest sample */
+            static int vel_fill = 0;
+
+            /* ticks-per-control-tick -> ticks/100ms */
+            const float VEL_UNIT = 0.1f * (float)SAMPLE_RATE_HZ;
+
             static uint64_t last_vel_us = 0;
+            static float vel_claw = 0.0f;
             uint64_t now_us = rc_nanos_since_boot() / 1000;
 
             if (state.enc_vel_reset)
             {
-                state.enc_velocity = 0;
-                state.enc_velocity_raw = 0;
+                vel_fill = 0;
+                vel_head = 0;
+                vel_claw = 0.0f;
+                state.enc_velocity = 0.0f;
+                state.enc_velocity_raw = 0.0f;
+                state.enc_vel_lsq_mid = 0.0f;
+                state.enc_vel_lsq_long = 0.0f;
                 last_vel_us = now_us;
                 state.enc_vel_reset = 0;
             }
-            else if ((now_us - last_vel_us) >= (POS_VEL_PERIOD_MS * 1000ULL))
+            else
             {
-                int32_t m1 = 0, m2 = 0;
-                if (motor_hal_read_encoder_speeds(&m1, &m2) == 0)
+                vel_hist[vel_head] = state.enc_pos;
+                vel_head = (vel_head + 1) % POS_VEL_WIN_MAX;
+                if (vel_fill < POS_VEL_WIN_MAX)
+                    vel_fill++;
+
+                /* Least-squares slope over the newest `win` samples.
+                 * slope = sum((k - kbar) * y_k) / (N(N^2-1)/12), oldest first. */
+                float lsq[3] = {0.0f, 0.0f, 0.0f};
+                const int wins[3] = {POS_VEL_WIN_SHORT, POS_VEL_WIN_MID, POS_VEL_WIN_LONG};
+                for (int c = 0; c < 3; c++)
                 {
-                    /* Sum both motors (same convention as enc_pos = L + R),
-                     * scale to ticks/100ms for backward-compat with vel_scale */
-                    state.enc_velocity_raw = (float)(m1 + m2);
-                    /* 10.0f not 10: m1/m2 are int32_t, so integer division here
-                     * would quantize to whole ticks/100ms BEFORE the assignment and
-                     * the float field would gain nothing. At vel_scale_stop=5 each
-                     * lost tick was 0.2 deg of theta_ref. */
-                    state.enc_velocity = (float)(m1 + m2) / 10.0f;
+                    int win = wins[c];
+                    if (vel_fill < win)
+                        continue;
+                    const float kbar = (win - 1) * 0.5f;
+                    const float den = (float)win * ((float)win * win - 1.0f) / 12.0f;
+                    float num = 0.0f;
+                    for (int k = 0; k < win; k++)
+                    {
+                        /* newest `win` samples: walk back from the newest */
+                        int idx = (vel_head - win + k + 2 * POS_VEL_WIN_MAX) % POS_VEL_WIN_MAX;
+                        num += ((float)k - kbar) * (float)vel_hist[idx];
+                    }
+                    lsq[c] = (num / den) * VEL_UNIT;
                 }
-                last_vel_us = now_us;
+
+                if ((now_us - last_vel_us) >= (POS_VEL_PERIOD_MS * 1000ULL))
+                {
+                    int32_t m1 = 0, m2 = 0;
+                    if (motor_hal_read_encoder_speeds(&m1, &m2) == 0)
+                        vel_claw = (float)(m1 + m2) / 10.0f;
+                    last_vel_us = now_us;
+                }
+
+                /* Only one of these controls. The rest are evidence. */
+#if POS_VEL_USE_LSQ
+                state.enc_velocity     = lsq[POS_VEL_USE_LSQ - 1];
+                state.enc_velocity_raw = vel_claw;
+#else
+                state.enc_velocity     = vel_claw;
+                state.enc_velocity_raw = lsq[0];
+#endif
+                state.enc_vel_lsq_mid  = lsq[1];
+                state.enc_vel_lsq_long = lsq[2];
             }
         }
 
@@ -896,39 +976,69 @@ void robot_run(void)
         g_telemetry_data.motors.left_duty = last_left_duty;
         g_telemetry_data.motors.right_duty = last_right_duty;
 
-        uint64_t now = rc_nanos_since_boot() / 1000000; // ms
+        uint64_t now_sched_us = rc_nanos_since_boot() / 1000;   // microseconds
 
-        /* Guard the divisions: a zero rate from a bad config would be a
-         * divide-by-zero here, and the old code divided unguarded. */
+        /* Scheduling in MICROSECONDS with a phase accumulator, not milliseconds
+         * with a "have we waited long enough" test.
+         *
+         * The old form was
+         *     interval = 1000 / hz;                 // integer ms
+         *     if (now_ms - last_ms >= interval) { ...; last_ms = now_ms; }
+         * and it silently delivered the wrong rate. Two compounding errors:
+         *
+         *   1. 1000/30 truncates to 33 ms.
+         *   2. last_ms is reset to the tick that noticed, not to when the packet
+         *      was due, so the period is rounded UP to a whole loop tick. With a
+         *      10 ms tick a 33 ms interval fires every 40 ms.
+         *
+         * Asking for 30 Hz therefore produced 25 Hz -- measured on the bot as
+         * 24.4 Hz, alongside a correct 10 Hz telemetry stream, which is what put
+         * us onto this. Only rates that divide the loop period came out right,
+         * so 30/40/60 were all quietly wrong while 10/20/50 were fine.
+         *
+         * Advancing a due-time by the exact period keeps the AVERAGE rate right
+         * even when the period is not a multiple of the tick: 30 Hz becomes an
+         * alternating 30/40 ms, which averages 33.3 ms. Rates that do divide the
+         * tick (25, 50) stay perfectly even, which is why they make better
+         * defaults for anything being graphed. */
         {
             int tel_hz = g_debug_config.rates.pid_states;
             if (tel_hz < 1) tel_hz = 1;
-            uint64_t telemetry_interval = 1000 / (uint64_t)tel_hz;
+            if (tel_hz > SAMPLE_RATE_HZ) tel_hz = SAMPLE_RATE_HZ;
+            uint64_t period_us = 1000000ULL / (uint64_t)tel_hz;
 
-            if (now - last_telemetry_broadcast >= telemetry_interval)
+            if (now_sched_us >= next_telemetry_us)
             {
                 ipc_broadcast_telemetry();
-                last_telemetry_broadcast = now;
                 telemetry_counter++;
+                /* Resync rather than burst-catch-up if we fell far behind (a
+                 * long stall, or first pass when next_ is 0). Firing three
+                 * packets back to back to "make up" lost time would just push a
+                 * spike into a client that is already struggling. */
+                next_telemetry_us = (now_sched_us - next_telemetry_us > period_us)
+                                        ? now_sched_us + period_us
+                                        : next_telemetry_us + period_us;
             }
         }
 
-        /* RC on its own, much faster clock. Separate from telemetry because the
-         * SBUS frame rate (~143 Hz) is an order of magnitude above the telemetry
+        /* RC on its own, faster clock. Separate from telemetry because the SBUS
+         * frame rate (~143 Hz) is an order of magnitude above the telemetry
          * rate: bundled into the 10 Hz packet, 13 of every 14 receiver frames
          * were thrown away before they ever left the board. The packet is small
-         * (~270 bytes) so this is cheaper than it sounds. */
+         * (~280 bytes) so this is cheaper than it sounds. */
         {
             int rc_hz = g_debug_config.rates.rc;
             if (rc_hz < 1) rc_hz = 1;
-            if (rc_hz > 100) rc_hz = 100;   /* control loop rate — above this we
-                                             * would just resend identical data */
-            uint64_t rc_interval = 1000 / (uint64_t)rc_hz;
+            if (rc_hz > SAMPLE_RATE_HZ) rc_hz = SAMPLE_RATE_HZ; /* above the loop
+                                             * rate we would resend identical data */
+            uint64_t period_us = 1000000ULL / (uint64_t)rc_hz;
 
-            if (now - last_rc_broadcast >= rc_interval)
+            if (now_sched_us >= next_rc_us)
             {
                 ipc_broadcast_rc();
-                last_rc_broadcast = now;
+                next_rc_us = (now_sched_us - next_rc_us > period_us)
+                                 ? now_sched_us + period_us
+                                 : next_rc_us + period_us;
             }
         }
 
