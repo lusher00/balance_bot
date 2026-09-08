@@ -1,3 +1,14 @@
+<!--
+  balance_bot dashboard
+  Copyright (c) 2025-2026 Ryan Lush <ryan.lush@gmail.com>
+
+  SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  Licensed under the PolyForm Noncommercial License 1.0.0. You may use,
+  study, modify, and share this file for any noncommercial purpose.
+  Commercial use requires a separate license -- contact ryan.lush@gmail.com.
+  Full license text: see the LICENSE file in the project root, or
+  https://polyformproject.org/licenses/noncommercial/1.0.0/
+-->
 <!DOCTYPE html>
 <html lang="en">
 
@@ -271,6 +282,113 @@
       margin-bottom: 10px;
     }
 
+    /* RoboClaw readback: what the BOT says it has, next to what the UI thinks
+       it sent. Without this the Claw tab is write-only -- you press a polarity
+       button and nothing anywhere confirms the firmware took it. */
+    /* Typed entry, not sliders. A slider cannot express "390" on purpose, it
+       fires a command per pixel of travel, and its position tells you nothing
+       you can read off. These rows are a label, a field you type in, and the
+       value in units that mean something. */
+    .num-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+      flex-wrap: nowrap;
+    }
+
+    .num-k {
+      flex: 0 0 88px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--txt2);
+    }
+
+    .num-in {
+      flex: 0 0 76px;
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      padding: 6px 8px;
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 700;
+      text-align: right;
+      outline: none;
+    }
+
+    .num-in:focus {
+      border-color: var(--accent);
+    }
+
+    /* Typed but not yet committed. Removes any doubt about whether the number
+       under the cursor is the number the bot has. */
+    .num-in.dirty {
+      border-color: var(--orange);
+      color: var(--orange);
+    }
+
+    /* The firmware is running a different value than this box shows. Not the
+       same thing as .dirty: dirty means you typed and have not committed, drift
+       means what you are looking at is not what the robot has. */
+    .num-in.drift {
+      border-color: var(--red, #ff3b30);
+      color: var(--red, #ff3b30);
+    }
+
+    .num-hint {
+      flex: 1;
+      font-size: 10px;
+      font-family: var(--mono);
+      color: var(--txt3);
+      line-height: 1.35;
+    }
+
+    .claw-rb {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+      gap: 6px;
+    }
+
+    .rb-item {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 5px 6px;
+    }
+
+    .rb-k {
+      font-size: 8px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--txt3);
+    }
+
+    .rb-v {
+      font-size: 13px;
+      font-weight: 700;
+      margin-top: 1px;
+    }
+
+    /* UI and bot disagree: the value you are looking at is not the value that
+       is running. */
+    .rb-item.drift {
+      border-color: var(--orange);
+    }
+
+    .rb-item.drift .rb-v {
+      color: var(--orange);
+    }
+
+    .rb-ui {
+      font-size: 9px;
+      color: var(--orange);
+      margin-top: 1px;
+    }
+
     .stat-box {
       flex: 1;
       background: var(--bg3);
@@ -420,12 +538,15 @@
     }
 
     /* PID Slider row */
+    /* Two columns now, not three -- the middle column held the slider. The
+     * control block is pushed to the right edge so the value boxes stay in a
+     * straight line down the panel. */
     .pid-row {
       display: grid;
-      grid-template-columns: 80px 1fr 90px;
+      grid-template-columns: 80px 1fr;
       align-items: center;
       gap: 8px;
-      margin-bottom: 8px;
+      margin-bottom: 10px;
     }
 
     .pid-label {
@@ -433,17 +554,53 @@
       color: var(--txt2);
     }
 
-    .pid-slider {
-      width: 100%;
-      accent-color: var(--accent);
-      height: 3px;
-      cursor: pointer;
-    }
-
     .pid-ctrl {
       display: flex;
       align-items: center;
       gap: 4px;
+    }
+
+    /* +/- row and its resolution picker, stacked. The picker sits UNDER the
+     * buttons it modifies so the step size is read in the same glance as the
+     * value it will move. */
+    .pid-ctrl-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      align-items: flex-end;
+      justify-self: end;
+    }
+
+    .res-sel {
+      display: flex;
+      gap: 2px;
+    }
+
+    .res-btn {
+      padding: 1px 4px;
+      border: 1px solid var(--border);
+      background: transparent;
+      border-radius: 3px;
+      color: var(--txt3);
+      font-family: var(--mono);
+      font-size: 8px;
+      line-height: 1.4;
+      cursor: pointer;
+      opacity: .65;
+      transition: opacity .1s, color .1s;
+    }
+
+    .res-btn:hover { opacity: 1; }
+
+    .res-btn.active {
+      color: var(--txt2);
+      border-color: var(--border2);
+      opacity: 1;
+    }
+
+    .val-box.dirty {
+      border-color: var(--orange);
+      color: var(--orange);
     }
 
     .pid-ctrl .step-btn {
@@ -467,14 +624,16 @@
     }
 
     .pid-ctrl .val-box {
-      width: 64px;
+      /* 76px fitted about 7 mono chars, which clipped once values gained a
+       * fourth decimal: "-0.0005" only just fit and "-12.3456" did not. */
+      width: 92px;
       background: var(--bg3);
       border: 1px solid var(--border2);
       border-radius: 4px;
-      padding: 3px 6px;
+      padding: 6px 6px;
       color: var(--accent);
       font-family: var(--mono);
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 700;
       text-align: center;
       outline: none;
@@ -482,11 +641,6 @@
 
     .pid-ctrl .val-box:focus {
       border-color: var(--accent);
-    }
-
-    .mult-sel {
-      display: flex;
-      gap: 2px;
     }
 
     .mult-btn {
@@ -773,6 +927,14 @@
       color: #fff;
     }
 
+    /* Armed state for the two-step Reset Layout button. */
+    .g-btn.armed {
+      background: var(--orange);
+      border-color: var(--orange);
+      color: #04121c;
+      font-weight: 700;
+    }
+
     .g-btn {
       padding: 4px 8px;
       background: var(--bg3);
@@ -1020,6 +1182,7 @@
     <div class="sep"></div>
     <div id="conn-dot" class="off"></div>
     <span id="conn-label">Offline</span>
+    <span id="build-stamp" style="font-size:9px;color:var(--txt3);margin-left:8px;font-family:var(--mono)"></span>
     <div class="sep"></div>
     <div class="stat">
       <span class="label">Batt</span>
@@ -1043,12 +1206,11 @@
   <!-- ── Tab bar ────────────────────────────────────────────────────────────── -->
   <div id="tabs">
     <div class="tab active" data-tab="control">Control</div>
-    <div class="tab" data-tab="pid">PID</div>
+    <div class="tab" data-tab="pid">Tuning</div>
     <div class="tab" data-tab="graph">Graph</div>
     <div class="tab" data-tab="claw">Claw</div>
     <div class="tab" data-tab="rc">RC</div>
     <div class="tab" data-tab="debug">Debug</div>
-    <div class="tab" data-tab="tune">Tune</div>
     <div class="tab" data-tab="settings">Settings</div>
   </div>
 
@@ -1058,31 +1220,6 @@
     <!-- CONTROL -->
     <div id="perf-hud" onclick="perfToggle()" title="click to collapse">starting…</div>
     <div class="panel active" id="panel-control">
-      <div id="video-wrap">
-        <img id="video-feed" alt="">
-        <canvas id="cat-canvas"></canvas>
-        <div id="video-no">No video feed configured</div>
-      </div>
-
-      <div class="stat-row">
-        <div class="stat-box">
-          <div class="s-label">Battery</div>
-          <div class="s-val" id="c-batt" style="color:var(--txt3)">––</div>
-        </div>
-        <div class="stat-box">
-          <div class="s-label">Claw V</div>
-          <div class="s-val" id="c-claw-v" style="color:var(--txt3)">––</div>
-        </div>
-        <div class="stat-box">
-          <div class="s-label">Angle</div>
-          <div class="s-val" id="c-angle" style="color:var(--txt3)">––°</div>
-        </div>
-        <div class="stat-box">
-          <div class="s-label">Loop Hz</div>
-          <div class="s-val" id="c-loop" style="color:var(--txt3)">––</div>
-        </div>
-      </div>
-
       <div id="cat-badge" class="card">
         <span class="cat-icon">🐱</span>
         <div>
@@ -1130,6 +1267,66 @@
         </div>
       </div>
 
+      <div class="card" id="ctl-live-card">
+        <div class="row spaced" style="margin-bottom:10px">
+          <div class="card-title" style="margin:0">Live Status</div>
+          <button class="g-btn rec" id="ctl-rec-btn" onclick="toggleRecord()">&#9210; Rec</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div>
+            <div class="row spaced" style="margin-bottom:6px">
+              <span class="sub-label" style="margin:0">Pitch</span>
+              <button class="enable-btn off" id="ctl-pit-en" onclick="toggleCtrl('pitch','pit')">OFF</button>
+            </div>
+            <div class="row" style="gap:10px;margin-bottom:4px">
+              <div><span style="color:var(--txt3);font-size:9px">SP</span><br><span id="ctl-pit-sp"
+                  style="font-size:12px">0.000</span></div>
+              <div><span style="color:var(--txt3);font-size:9px">ERR</span><br><span id="ctl-pit-err"
+                  style="font-size:12px;color:var(--orange)">0.000</span></div>
+              <div><span style="color:var(--txt3);font-size:9px">OUT</span><br><span id="ctl-pit-out"
+                  style="font-size:12px;color:var(--accent)">0.000</span></div>
+            </div>
+            <div class="err-bar-wrap">
+              <div id="ctl-pit-bar" class="err-bar" style="width:0%;background:var(--accent)"></div>
+            </div>
+          </div>
+          <div>
+            <div class="row spaced" style="margin-bottom:6px">
+              <span class="sub-label" style="margin:0">Position</span>
+              <button class="enable-btn off" id="ctl-pos-en" onclick="toggleCtrl('position','pos')">OFF</button>
+            </div>
+            <div class="row" style="gap:10px;margin-bottom:4px">
+              <div><span style="color:var(--txt3);font-size:9px">TGT</span><br><span id="ctl-pos-sp"
+                  style="font-size:12px">0</span></div>
+              <div><span style="color:var(--txt3);font-size:9px">POS</span><br><span id="ctl-pos-meas"
+                  style="font-size:12px">0</span></div>
+              <div><span style="color:var(--txt3);font-size:9px">ERR</span><br><span id="ctl-pos-err"
+                  style="font-size:12px;color:var(--orange)">0</span></div>
+            </div>
+            <div class="err-bar-wrap">
+              <div id="ctl-pos-bar" class="err-bar" style="width:0%;background:var(--green)"></div>
+            </div>
+          </div>
+          <div>
+            <div class="row spaced" style="margin-bottom:6px">
+              <span class="sub-label" style="margin:0">Yaw</span>
+              <button class="enable-btn off" id="ctl-yaw-en" onclick="toggleCtrl('yaw','yaw')">OFF</button>
+            </div>
+            <div class="row" style="gap:10px;margin-bottom:4px">
+              <div><span style="color:var(--txt3);font-size:9px">SP</span><br><span id="ctl-yaw-sp"
+                  style="font-size:12px">0.000</span></div>
+              <div><span style="color:var(--txt3);font-size:9px">ERR</span><br><span id="ctl-yaw-err"
+                  style="font-size:12px;color:var(--orange)">0.000</span></div>
+              <div><span style="color:var(--txt3);font-size:9px">OUT</span><br><span id="ctl-yaw-out"
+                  style="font-size:12px;color:var(--accent)">0.000</span></div>
+            </div>
+            <div class="err-bar-wrap">
+              <div id="ctl-yaw-bar" class="err-bar" style="width:0%;background:var(--accent)"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="card">
         <span class="sub-label">Robot Mode</span>
         <div class="seg-group" id="mode-seg">
@@ -1167,16 +1364,21 @@
         </div>
       </div>
 
+      <div id="video-wrap">
+        <img id="video-feed" alt="">
+        <canvas id="cat-canvas"></canvas>
+        <div id="video-no">No video feed configured</div>
+      </div>
+
     </div>
 
     <!-- PID -->
     <div class="panel" id="panel-pid">
+      <!-- No controller sub-picker. The position hold writes theta_ref for
+           pitch and yaw shares the same wheels, so all three are one system;
+           hiding two while tuning the third meant tab-flipping to see effects. -->
       <div class="row spaced" style="margin-bottom:10px">
-        <div class="g-picker" id="pid-ctrl-picker">
-          <button class="g-seg active" data-pidctrl="pit" onclick="selectPIDCtrl('pit')">Pitch</button>
-          <button class="g-seg" data-pidctrl="pos" onclick="selectPIDCtrl('pos')">Position</button>
-          <button class="g-seg" data-pidctrl="yaw" onclick="selectPIDCtrl('yaw')">Yaw</button>
-        </div>
+        <div class="card-title" style="margin:0">Controllers</div>
         <div class="row" style="gap:6px">
           <button class="g-btn" onclick="sendCmd({type:'get_config'})">↻ Refresh</button>
           <button class="g-btn save-pid" onclick="sendCmd({type:'save_pid'})"
@@ -1197,43 +1399,44 @@
         <div id="pid-pit-gains">
           <div class="pid-row">
             <span class="pid-label">Kp</span>
-            <input type="range" class="pid-slider" id="sl-pit-kp" min="-200" max="200" step="0.1"
-              oninput="onPIDSlider('pit','kp',this.value)">
-            <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('pit','kp',-1)">−</button>
-              <input class="val-box" id="vb-pit-kp" value="40" onchange="onPIDValBox('pit','kp',this.value)"
-                onblur="onPIDValBox('pit','kp',this.value)">
-              <button class="step-btn" onclick="stepPID('pit','kp',1)">+</button>
+            <div class="pid-ctrl-wrap">
+              <div class="pid-ctrl">
+                <button class="step-btn" onclick="stepPID('pit','kp',-1)">−</button>
+                <input class="val-box" id="vb-pit-kp" value="40" inputmode="decimal"
+                  oninput="markDirty(this)"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+                  onchange="onPIDValBox('pit','kp',this.value)">
+                <button class="step-btn" onclick="stepPID('pit','kp',1)">+</button>
+              </div>
+              <div class="res-sel" id="res-pit-kp"></div>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Ki</span>
-            <input type="range" class="pid-slider" id="sl-pit-ki" min="-10" max="10" step="0.01"
-              oninput="onPIDSlider('pit','ki',this.value)">
-            <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('pit','ki',-1)">−</button>
-              <input class="val-box" id="vb-pit-ki" value="0" onchange="onPIDValBox('pit','ki',this.value)"
-                onblur="onPIDValBox('pit','ki',this.value)">
-              <button class="step-btn" onclick="stepPID('pit','ki',1)">+</button>
+            <div class="pid-ctrl-wrap">
+              <div class="pid-ctrl">
+                <button class="step-btn" onclick="stepPID('pit','ki',-1)">−</button>
+                <input class="val-box" id="vb-pit-ki" value="0" inputmode="decimal"
+                  oninput="markDirty(this)"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+                  onchange="onPIDValBox('pit','ki',this.value)">
+                <button class="step-btn" onclick="stepPID('pit','ki',1)">+</button>
+              </div>
+              <div class="res-sel" id="res-pit-ki"></div>
             </div>
           </div>
           <div class="pid-row">
             <span class="pid-label">Kd</span>
-            <input type="range" class="pid-slider" id="sl-pit-kd" min="-50" max="50" step="0.1"
-              oninput="onPIDSlider('pit','kd',this.value)">
-            <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('pit','kd',-1)">−</button>
-              <input class="val-box" id="vb-pit-kd" value="5" onchange="onPIDValBox('pit','kd',this.value)"
-                onblur="onPIDValBox('pit','kd',this.value)">
-              <button class="step-btn" onclick="stepPID('pit','kd',1)">+</button>
-            </div>
-          </div>
-          <div class="row" style="margin-top:6px;gap:6px">
-            <span style="font-size:9px;color:var(--txt3)">Step ×</span>
-            <div class="mult-sel" id="mult-bal">
-              <button class="mult-btn active" data-m="1" onclick="setMult('pit',1)">1</button>
-              <button class="mult-btn" data-m="10" onclick="setMult('pit',10)">10</button>
-              <button class="mult-btn" data-m="100" onclick="setMult('pit',100)">100</button>
+            <div class="pid-ctrl-wrap">
+              <div class="pid-ctrl">
+                <button class="step-btn" onclick="stepPID('pit','kd',-1)">−</button>
+                <input class="val-box" id="vb-pit-kd" value="5" inputmode="decimal"
+                  oninput="markDirty(this)"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+                  onchange="onPIDValBox('pit','kd',this.value)">
+                <button class="step-btn" onclick="stepPID('pit','kd',1)">+</button>
+              </div>
+              <div class="res-sel" id="res-pit-kd"></div>
             </div>
           </div>
         </div>
@@ -1241,84 +1444,22 @@
         <div id="pid-pit-live">
           <span class="sub-label">Live Status</span>
           <div class="row" style="gap:16px;margin-bottom:4px">
-            <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="bal-err"
+            <div><span style="color:var(--txt3);font-size:9px">SETPOINT</span><br><span id="pit-sp"
+                style="font-size:13px">0.000</span></div>
+            <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="pit-err"
                 style="font-size:13px;color:var(--orange)">0.000</span></div>
-            <div><span style="color:var(--txt3);font-size:9px">OUTPUT</span><br><span id="bal-out"
+            <div><span style="color:var(--txt3);font-size:9px">OUTPUT</span><br><span id="pit-out"
                 style="font-size:13px;color:var(--accent)">0.000</span></div>
           </div>
           <div class="err-bar-wrap">
-            <div id="bal-bar" class="err-bar" style="width:0%;background:var(--accent)"></div>
+            <div id="pit-bar" class="err-bar" style="width:0%;background:var(--accent)"></div>
           </div>
         </div>
       </div>
 
       <!-- steering (hidden when position selected) -->
-      <div id="pid-yaw-card" class="card" style="display:none">
-        <div class="row spaced" style="margin-bottom:10px">
-          <div>
-            <div class="card-title">Yaw</div>
-            <div style="font-size:9px;color:var(--txt3)">Yaw → Motor differential · Turns left/right</div>
-          </div>
-          <button class="enable-btn off" id="pid-yaw-en" onclick="toggleCtrl('yaw','yaw')">OFF</button>
-        </div>
-        <div id="pid-yaw-gains">
-          <div class="pid-row">
-            <span class="pid-label">Kp</span>
-            <input type="range" class="pid-slider" id="sl-yaw-kp" min="-200" max="200" step="0.1"
-              oninput="onPIDSlider('yaw','kp',this.value)">
-            <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('yaw','kp',-1)">−</button>
-              <input class="val-box" id="vb-yaw-kp" value="15" onchange="onPIDValBox('yaw','kp',this.value)"
-                onblur="onPIDValBox('yaw','kp',this.value)">
-              <button class="step-btn" onclick="stepPID('yaw','kp',1)">+</button>
-            </div>
-          </div>
-          <div class="pid-row">
-            <span class="pid-label">Ki</span>
-            <input type="range" class="pid-slider" id="sl-yaw-ki" min="-10" max="10" step="0.01"
-              oninput="onPIDSlider('yaw','ki',this.value)">
-            <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('yaw','ki',-1)">−</button>
-              <input class="val-box" id="vb-yaw-ki" value="0" onchange="onPIDValBox('yaw','ki',this.value)"
-                onblur="onPIDValBox('yaw','ki',this.value)">
-              <button class="step-btn" onclick="stepPID('yaw','ki',1)">+</button>
-            </div>
-          </div>
-          <div class="pid-row">
-            <span class="pid-label">Kd</span>
-            <input type="range" class="pid-slider" id="sl-yaw-kd" min="-50" max="50" step="0.1"
-              oninput="onPIDSlider('yaw','kd',this.value)">
-            <div class="pid-ctrl">
-              <button class="step-btn" onclick="stepPID('yaw','kd',-1)">−</button>
-              <input class="val-box" id="vb-yaw-kd" value="1.5" onchange="onPIDValBox('yaw','kd',this.value)"
-                onblur="onPIDValBox('yaw','kd',this.value)">
-              <button class="step-btn" onclick="stepPID('yaw','kd',1)">+</button>
-            </div>
-          </div>
-          <div class="row" style="margin-top:6px;gap:6px">
-            <span style="font-size:9px;color:var(--txt3)">Step ×</span>
-            <div class="mult-sel" id="mult-str">
-              <button class="mult-btn active" data-m="1" onclick="setMult('yaw',1)">1</button>
-              <button class="mult-btn" data-m="10" onclick="setMult('yaw',10)">10</button>
-              <button class="mult-btn" data-m="100" onclick="setMult('yaw',100)">100</button>
-            </div>
-          </div>
-        </div>
-        <div class="divider"></div>
-        <span class="sub-label">Live Status</span>
-        <div class="row" style="gap:16px;margin-bottom:4px">
-          <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="str-err"
-              style="font-size:13px;color:var(--orange)">0.000</span></div>
-          <div><span style="color:var(--txt3);font-size:9px">OUTPUT</span><br><span id="str-out"
-              style="font-size:13px;color:var(--accent)">0.000</span></div>
-        </div>
-        <div class="err-bar-wrap">
-          <div id="str-bar" class="err-bar" style="width:0%;background:var(--accent)"></div>
-        </div>
-      </div>
-
       <!-- position PosConfig card -->
-      <div id="pid-pos-card" class="card" style="display:none">
+      <div id="pid-pos-card" class="card">
         <div class="row spaced" style="margin-bottom:10px">
           <div>
             <div class="card-title">Position Hold</div>
@@ -1351,6 +1492,105 @@
           <div id="pos-bar" class="err-bar" style="width:0%;background:var(--green)"></div>
         </div>
       </div>
+      <div id="pid-yaw-card" class="card">
+        <div class="row spaced" style="margin-bottom:10px">
+          <div>
+            <div class="card-title">Yaw</div>
+            <div style="font-size:9px;color:var(--txt3)">Yaw → Motor differential · Turns left/right</div>
+          </div>
+          <button class="enable-btn off" id="pid-yaw-en" onclick="toggleCtrl('yaw','yaw')">OFF</button>
+        </div>
+        <div id="pid-yaw-gains">
+          <div class="pid-row">
+            <span class="pid-label">Kp</span>
+            <div class="pid-ctrl-wrap">
+              <div class="pid-ctrl">
+                <button class="step-btn" onclick="stepPID('yaw','kp',-1)">−</button>
+                <input class="val-box" id="vb-yaw-kp" value="15" inputmode="decimal"
+                  oninput="markDirty(this)"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+                  onchange="onPIDValBox('yaw','kp',this.value)">
+                <button class="step-btn" onclick="stepPID('yaw','kp',1)">+</button>
+              </div>
+              <div class="res-sel" id="res-yaw-kp"></div>
+            </div>
+          </div>
+          <div class="pid-row">
+            <span class="pid-label">Ki</span>
+            <div class="pid-ctrl-wrap">
+              <div class="pid-ctrl">
+                <button class="step-btn" onclick="stepPID('yaw','ki',-1)">−</button>
+                <input class="val-box" id="vb-yaw-ki" value="0" inputmode="decimal"
+                  oninput="markDirty(this)"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+                  onchange="onPIDValBox('yaw','ki',this.value)">
+                <button class="step-btn" onclick="stepPID('yaw','ki',1)">+</button>
+              </div>
+              <div class="res-sel" id="res-yaw-ki"></div>
+            </div>
+          </div>
+          <div class="pid-row">
+            <span class="pid-label">Kd</span>
+            <div class="pid-ctrl-wrap">
+              <div class="pid-ctrl">
+                <button class="step-btn" onclick="stepPID('yaw','kd',-1)">−</button>
+                <input class="val-box" id="vb-yaw-kd" value="1.5" inputmode="decimal"
+                  oninput="markDirty(this)"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+                  onchange="onPIDValBox('yaw','kd',this.value)">
+                <button class="step-btn" onclick="stepPID('yaw','kd',1)">+</button>
+              </div>
+              <div class="res-sel" id="res-yaw-kd"></div>
+            </div>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <span class="sub-label">Live Status</span>
+        <div class="row" style="gap:16px;margin-bottom:4px">
+          <div><span style="color:var(--txt3);font-size:9px">SETPOINT</span><br><span id="yaw-sp"
+              style="font-size:13px">0.000</span></div>
+          <div><span style="color:var(--txt3);font-size:9px">ERROR</span><br><span id="yaw-err"
+              style="font-size:13px;color:var(--orange)">0.000</span></div>
+          <div><span style="color:var(--txt3);font-size:9px">OUTPUT</span><br><span id="yaw-out"
+              style="font-size:13px;color:var(--accent)">0.000</span></div>
+        </div>
+        <div class="err-bar-wrap">
+          <div id="yaw-bar" class="err-bar" style="width:0%;background:var(--accent)"></div>
+        </div>
+      </div>
+
+
+      <div class="divider" style="margin:18px 0 12px"></div>
+      <span class="sub-label">Run Quality</span>
+      <div style="font-size:9px;color:var(--txt3);margin:-2px 0 10px">
+        Scores the last recording against the controls above &mdash; press
+        &#9210;&nbsp;Rec on the Graph tab, let it hold 30s, press it again.
+      </div>
+
+      <div class="card">
+        <div class="card-title">Tune quality
+          <span class="tune-sub">from the last recording &mdash; press Rec on the Graph tab, fly 30s, press Stop</span>
+        </div>
+        <div id="tune-report" class="tune-rep">
+          <div style="opacity:.5;padding:8px 0">
+            No run analysed yet. Record 30 seconds of balancing and this fills in.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Saved runs <span class="tune-sub">tick two to compare</span></div>
+        <div id="tune-runs"></div>
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="g-btn" onclick="tuneClearRuns()">Clear all</button>
+          <button class="g-btn" onclick="tuneExport()">Export JSON</button>
+        </div>
+      </div>
+
+      <div class="card" id="tune-cmp-card" style="display:none">
+        <div class="card-title">Comparison</div>
+        <div id="tune-compare" class="tune-rep"></div>
+      </div>
     </div>
 
     <!-- CLAW -->
@@ -1372,6 +1612,41 @@
         </div>
       </div>
 
+      <!-- What the RoboClaw itself says -->
+      <div class="card">
+        <div class="card-title">
+          RoboClaw Hardware
+          <span id="claw-hw-note" style="font-size:9px;color:var(--txt3);font-weight:400">not read yet</span>
+        </div>
+        <div style="font-size:9px;color:var(--txt3);margin-bottom:8px">
+          Read back out of the controller over serial, not from robot.conf. This is the
+          only view of settings that live in the RoboClaw's own NVM &mdash; anything set
+          in Ion Studio, including a motor or encoder inverted inside the unit.
+          Encoder mode and config are shown raw: the bit meanings move between firmware
+          revisions and a wrong label is worse than a hex byte.
+        </div>
+        <div class="claw-rb" id="claw-hw"></div>
+        <button class="icon-btn" style="width:100%;margin-top:8px"
+          onclick="sendCmd({type:'read_claw_hw'})">READ FROM ROBOCLAW</button>
+      </div>
+
+      <!-- Bot readback -->
+      <div class="card">
+        <div class="card-title">
+          Bot Reports
+          <span id="claw-rb-age" style="font-size:9px;color:var(--txt3);font-weight:400">waiting…</span>
+        </div>
+        <div style="font-size:9px;color:var(--txt3);margin-bottom:8px">
+          What balance_bot currently holds and has pushed to the RoboClaw. Re-sent
+          whenever a command changes it, so pressing a control below should turn
+          these within a round trip. Orange = the control no longer matches what is
+          running. (For the RoboClaw's own registers, read them back with roboclaw-util.)
+        </div>
+        <div class="claw-rb" id="claw-readback"></div>
+        <button class="icon-btn" id="claw-revert" style="width:100%;margin-top:8px;display:none"
+          onclick="revertClawToBot()">PULL BOT VALUES INTO CONTROLS</button>
+      </div>
+
       <!-- Drive mode + speed params -->
       <div class="card">
         <div class="card-title">Drive Mode</div>
@@ -1380,23 +1655,21 @@
           <button class="seg-btn" data-mmode="1" onclick="setClawMode(1)">Velocity</button>
           <button class="seg-btn" data-mmode="2" onclick="setClawMode(2)">Vel+Accel</button>
         </div>
-        <div class="pid-row">
-          <span class="pid-label">QPPS Max</span>
-          <input type="range" class="pid-slider" id="sl-qpps" min="100" max="6000" step="50"
-            oninput="onClawCfg('qpps_max',this.value)">
-          <div class="pid-ctrl">
-            <input class="val-box" id="vb-qpps" value="2500" onchange="onClawCfg('qpps_max',this.value)"
-              onblur="onClawCfg('qpps_max',this.value)">
-          </div>
+        <div class="num-row">
+          <label class="num-k" for="in-qpps_max">QPPS Max</label>
+          <input class="num-in" id="in-qpps_max" type="number" inputmode="decimal" step="10" min="1"
+            oninput="markDirty(this)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            onchange="commitClaw('qpps_max',this.value)">
+          <span class="num-hint" id="hint-qpps_max"></span>
         </div>
-        <div class="pid-row">
-          <span class="pid-label">Accel</span>
-          <input type="range" class="pid-slider" id="sl-accel" min="100" max="20000" step="100"
-            oninput="onClawCfg('accel_qpps',this.value)">
-          <div class="pid-ctrl">
-            <input class="val-box" id="vb-accel" value="5000" onchange="onClawCfg('accel_qpps',this.value)"
-              onblur="onClawCfg('accel_qpps',this.value)">
-          </div>
+        <div class="num-row">
+          <label class="num-k" for="in-accel_qpps">Accel</label>
+          <input class="num-in" id="in-accel_qpps" type="number" inputmode="decimal" step="100" min="1"
+            oninput="markDirty(this)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            onchange="commitClaw('accel_qpps',this.value)">
+          <span class="num-hint" id="hint-accel_qpps"></span>
         </div>
       </div>
 
@@ -1407,29 +1680,29 @@
           <div>
             <span class="sub-label">Motor L</span>
             <div class="seg-group" id="pol-l-seg">
-              <button class="seg-btn active" onclick="setPolarity('pol_l',1)">+1</button>
-              <button class="seg-btn" onclick="setPolarity('pol_l',-1)">−1</button>
+              <button class="seg-btn active" data-pol="1" onclick="setPolarity('pol_l',1)">+1</button>
+              <button class="seg-btn" data-pol="-1" onclick="setPolarity('pol_l',-1)">−1</button>
             </div>
           </div>
           <div>
             <span class="sub-label">Motor R</span>
             <div class="seg-group" id="pol-r-seg">
-              <button class="seg-btn active" onclick="setPolarity('pol_r',1)">+1</button>
-              <button class="seg-btn" onclick="setPolarity('pol_r',-1)">−1</button>
+              <button class="seg-btn active" data-pol="1" onclick="setPolarity('pol_r',1)">+1</button>
+              <button class="seg-btn" data-pol="-1" onclick="setPolarity('pol_r',-1)">−1</button>
             </div>
           </div>
           <div>
             <span class="sub-label">Encoder L</span>
             <div class="seg-group" id="enc-pol-l-seg">
-              <button class="seg-btn active" onclick="setPolarity('enc_pol_l',1)">+1</button>
-              <button class="seg-btn" onclick="setPolarity('enc_pol_l',-1)">−1</button>
+              <button class="seg-btn active" data-pol="1" onclick="setPolarity('enc_pol_l',1)">+1</button>
+              <button class="seg-btn" data-pol="-1" onclick="setPolarity('enc_pol_l',-1)">−1</button>
             </div>
           </div>
           <div>
             <span class="sub-label">Encoder R</span>
             <div class="seg-group" id="enc-pol-r-seg">
-              <button class="seg-btn active" onclick="setPolarity('enc_pol_r',1)">+1</button>
-              <button class="seg-btn" onclick="setPolarity('enc_pol_r',-1)">−1</button>
+              <button class="seg-btn active" data-pol="1" onclick="setPolarity('enc_pol_r',1)">+1</button>
+              <button class="seg-btn" data-pol="-1" onclick="setPolarity('enc_pol_r',-1)">−1</button>
             </div>
           </div>
         </div>
@@ -1439,45 +1712,29 @@
       <div class="card">
         <div class="card-title">Velocity PID <span style="font-size:9px;color:var(--txt3);font-weight:400">(modes 1
             &amp; 2 only)</span></div>
-        <div class="pid-row">
-          <span class="pid-label">Kp</span>
-          <input type="range" class="pid-slider" id="sl-claw-kp" min="0" max="10" step="0.01"
-            oninput="onClawPID('kp',this.value)">
-          <div class="pid-ctrl">
-            <button class="step-btn" onclick="stepClawPID('kp',-1)">−</button>
-            <input class="val-box" id="vb-claw-kp" value="1.000" onchange="onClawPID('kp',this.value)"
-              onblur="onClawPID('kp',this.value)">
-            <button class="step-btn" onclick="stepClawPID('kp',1)">+</button>
-          </div>
+        <div class="num-row">
+          <label class="num-k" for="in-claw-kp">Kp</label>
+          <input class="num-in" id="in-claw-kp" type="number" inputmode="decimal" step="0.1" min="0"
+            oninput="markDirty(this)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            onchange="commitClawPID('kp',this.value)">
+          <span class="num-hint" id="hint-claw-kp"></span>
         </div>
-        <div class="pid-row">
-          <span class="pid-label">Ki</span>
-          <input type="range" class="pid-slider" id="sl-claw-ki" min="0" max="5" step="0.01"
-            oninput="onClawPID('ki',this.value)">
-          <div class="pid-ctrl">
-            <button class="step-btn" onclick="stepClawPID('ki',-1)">−</button>
-            <input class="val-box" id="vb-claw-ki" value="0.500" onchange="onClawPID('ki',this.value)"
-              onblur="onClawPID('ki',this.value)">
-            <button class="step-btn" onclick="stepClawPID('ki',1)">+</button>
-          </div>
+        <div class="num-row">
+          <label class="num-k" for="in-claw-ki">Ki</label>
+          <input class="num-in" id="in-claw-ki" type="number" inputmode="decimal" step="0.01" min="0"
+            oninput="markDirty(this)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            onchange="commitClawPID('ki',this.value)">
+          <span class="num-hint" id="hint-claw-ki"></span>
         </div>
-        <div class="pid-row">
-          <span class="pid-label">Kd</span>
-          <input type="range" class="pid-slider" id="sl-claw-kd" min="0" max="5" step="0.01"
-            oninput="onClawPID('kd',this.value)">
-          <div class="pid-ctrl">
-            <button class="step-btn" onclick="stepClawPID('kd',-1)">−</button>
-            <input class="val-box" id="vb-claw-kd" value="0.250" onchange="onClawPID('kd',this.value)"
-              onblur="onClawPID('kd',this.value)">
-            <button class="step-btn" onclick="stepClawPID('kd',1)">+</button>
-          </div>
-        </div>
-        <div class="row" style="margin-top:6px;gap:6px">
-          <span style="font-size:9px;color:var(--txt3)">Step ×</span>
-          <div class="mult-sel" id="mult-claw">
-            <button class="mult-btn active" data-m="1" onclick="setMult('claw',1)">1</button>
-            <button class="mult-btn" data-m="10" onclick="setMult('claw',10)">10</button>
-          </div>
+        <div class="num-row">
+          <label class="num-k" for="in-claw-kd">Kd</label>
+          <input class="num-in" id="in-claw-kd" type="number" inputmode="decimal" step="0.01" min="0"
+            oninput="markDirty(this)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            onchange="commitClawPID('kd',this.value)">
+          <span class="num-hint" id="hint-claw-kd"></span>
         </div>
       </div>
 
@@ -1524,6 +1781,8 @@
     <div class="panel" id="panel-graph" style="padding:0;display:none;flex-direction:column">
       <div id="graph-toolbar">
         <button class="g-btn" onclick="addPlot()" id="add-plot-btn">+ Add Plot</button>
+        <button class="g-btn" onclick="resetPlots()" id="reset-plots-btn"
+          title="Restore every trace on every plot, discarding your saved layout">Reset Layout</button>
         <div class="g-picker" id="timescale-picker">
           <button class="g-seg" onclick="setTimescale(5)">5s</button>
           <button class="g-seg" onclick="setTimescale(10)">10s</button>
@@ -1532,6 +1791,15 @@
           <button class="g-seg" onclick="setTimescale(60)">60s</button>
         </div>
         <button class="g-btn rec" id="rec-btn" onclick="toggleRecord()">&#9210; Rec</button>
+        <!-- Beside Rec because it is the same action at a different rate: Rec logs
+             this 20 Hz stream from the browser, this logs all 100 Hz from the bot
+             and downloads it. Splitting them across two tabs made no sense. -->
+        <input class="g-btn" id="in-looplog" type="number" min="1" max="40" step="1" value="20"
+          title="seconds to capture at full loop rate"
+          style="width:52px;text-align:right;font-family:var(--mono)">
+        <button class="g-btn" id="btn-looplog" onclick="startLoopLog()"
+          title="Record every control-loop tick at 100 Hz and download it. The Rec button next to this one only sees 20 Hz.">&#9210; 100Hz</button>
+        <span class="g-btn" id="hint-looplog" style="pointer-events:none;background:none;border:none;font-size:10px"></span>
         <button class="g-btn" onclick="resetGraph()">Reset</button>
       </div>
       <div id="graph-plots-wrap"></div>
@@ -1598,33 +1866,6 @@
     </div>
 
     <!-- SETTINGS -->
-    <div class="panel" id="panel-tune">
-      <div class="card">
-        <div class="card-title">Tune quality
-          <span class="tune-sub">from the last recording &mdash; press Rec on the Graph tab, fly 30s, press Stop</span>
-        </div>
-        <div id="tune-report" class="tune-rep">
-          <div style="opacity:.5;padding:8px 0">
-            No run analysed yet. Record 30 seconds of balancing and this fills in.
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Saved runs <span class="tune-sub">tick two to compare</span></div>
-        <div id="tune-runs"></div>
-        <div style="margin-top:10px;display:flex;gap:8px">
-          <button class="g-btn" onclick="tuneClearRuns()">Clear all</button>
-          <button class="g-btn" onclick="tuneExport()">Export JSON</button>
-        </div>
-      </div>
-
-      <div class="card" id="tune-cmp-card" style="display:none">
-        <div class="card-title">Comparison</div>
-        <div id="tune-compare" class="tune-rep"></div>
-      </div>
-    </div>
-
     <div class="panel" id="panel-settings">
       <div class="card">
         <div class="card-title">Connection</div>
@@ -1640,6 +1881,31 @@
             placeholder="http://pi5IP:8080/video"></div>
         <button class="btn-primary connect" style="margin-bottom:0" onclick="applyVideoURL()">Apply Video URL</button>
       </div>
+      <div class="card">
+        <div class="card-title">Startup &amp; Safety</div>
+        <div style="font-size:9px;color:var(--txt3);margin-bottom:8px">
+          Persists to robot.conf immediately -- takes effect on the next
+          restart, not this session. The OOB angle cutoff below still
+          applies: armed-at-boot just means it starts trying the moment it's
+          within range, instead of waiting for you to press ARM.
+        </div>
+        <label class="s-check" style="cursor:pointer">
+          <input type="checkbox" id="chk-arm-at-boot"
+            onchange="sendCmd({type:'set_arm_at_boot',value:this.checked})">
+          <span>Arm at boot</span>
+        </label>
+        <div class="divider"></div>
+        <div class="num-row">
+          <label class="num-k" for="in-oob-angle">OOB Angle</label>
+          <input class="num-in" id="in-oob-angle" type="number" inputmode="decimal"
+            step="0.5" min="5" max="45"
+            oninput="markDirty(this)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            onchange="commitOobAngle(this.value)">
+          <span class="num-hint">deg &mdash; hard cutoff, both in the ISR and the main loop</span>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-title">Telemetry Options</div>
         <div class="row" style="gap:10px;flex-wrap:wrap">
@@ -1675,7 +1941,7 @@
       cat: null,
       pit: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
       // position is a zone-based position hold, not a PID — different shape on purpose.
-      pos: { enabled: false, encTarget: 0, encPos: 0, encError: 0, encVel: 0, encVelRaw: 0, encVelMid: 0, encVelLong: 0, posCorr: 0, velDamp: 0, thetaAdj: 0, activeScale: 0, maxCorrection: 0 },
+      pos: { enabled: false, encTarget: 0, encPos: 0, encError: 0, encVel: 0, encVelRaw: 0, encVelMid: 0, encVelLong: 0, posCorr: 0, velDamp: 0, posIterm: 0, thetaAdj: 0, activeScale: 0, maxCorrection: 0 },
       yaw: { enabled: false, setpoint: 0, measurement: 0, error: 0, pTerm: 0, iTerm: 0, dTerm: 0, output: 0 },
       // Commanded wheel duty as sent to the RoboClaw — not a controller.
       mot: { leftDuty: 0, rightDuty: 0 },
@@ -1684,11 +1950,18 @@
 
     // balance and steering only. position has no gains; see posCfg for its tuning parameters.
     const pidCfg = {
-      pit: { kp: 40, ki: 0, kd: 5, received: false },
-      yaw: { kp: 15, ki: 0, kd: 1.5, received: false },
+      pit: { kp: 40, ki: 0, kd: 5, received: false, localMs: 0 },
+      yaw: { kp: 15, ki: 0, kd: 1.5, received: false, localMs: 0 },
     };
 
-    const pidMult = { pit: 1, yaw: 1, claw: 1 };
+    /* Step resolution, per gain row. The old control was a x1/x10/x100
+     * MULTIPLIER on a hardcoded per-key base step (kp:1, ki:0.01, kd:0.1),
+     * which made "+" on Kp jump by a whole unit -- useless against a gain of
+     * 0.05. These are absolute step sizes instead: what you pick is what one
+     * press adds. Four decades below unity plus 1. */
+    const PID_RES = [0.0001, 0.001, 0.01, 0.1, 1];
+    const PID_RES_DEFAULT = 0.001;
+    const pidRes = {};   /* 'pit-kp' -> step */
 
     // Claw motor controller config (mirrors motor_config_t)
     const clawCfg = {
@@ -1698,13 +1971,22 @@
       received: false,
     };
 
+    // What the BOT reports, refreshed on every motor_config packet. clawCfg is
+    // the editable UI copy and is seeded from this exactly once -- so if the bot
+    // restarts and reloads robot.conf, or anything else retunes it, clawCfg is
+    // stale and only this tells you so.
+    let clawCfgBot = null;
+    let clawCfgBotMs = 0;
+
     // position PosConfig defaults
     const posCfg = {
       zone_a: 8000, zone_b: 4000, zone_c: 1000,
       scale_a: 600, scale_b: 800, scale_c: 1000, scale_d: 80,
       vel_scale_stop: 60, vel_scale_move: 70, vel_scale_turning: 70,
+      vel_src: 0, vel_damp_fc: 0, vel_damp_max: 0,
+      pos_ki: 0, pos_i_max: 2.0,
       stopped_vel: 0, max_correction: 0.3, max_angle_rate: 0.05,
-      back_to_spot: 1,
+      back_to_spot: 1, pos_deadband: 2,
     };
     let posCfgReceived = false;
     // Last pos_config the BOT reported, refreshed on every telemetry packet.
@@ -1722,7 +2004,23 @@
       { key: 'scale_c', label: 'Scale C', min: 10, max: 3000, step: 10, group: 'scales' },
       { key: 'scale_d', label: 'Scale D (inner, |err|<Zone C)', min: 1, max: 2000, step: 1, group: 'scales' },
       // min was 10, but the tuned value is 5 — the slider could not reach its own setting.
-      { key: 'vel_scale_stop', label: 'Stop damping', min: 1, max: 300, step: 1, group: 'vel' },
+      { key: 'vel_scale_stop', label: 'Stop damping', min: 0.1, max: 300, step: 0.1, group: 'vel' },
+      // Velocity SOURCE for the damping term. A phase choice, not a gain one --
+      // but the sources are not the same scale, so vel_scale_stop must be
+      // rescaled alongside it or the gain moves too. Hint text carries the
+      // measured factor so that is not a thing to remember.
+      { key: 'vel_src', label: 'Damping source', min: 0, max: 3, step: 1, group: 'vel' },
+      // Low-pass on the damping term. 0 = off. The knob that targets the 1.6 Hz
+      // runaway directly instead of trading it against the 0.3 Hz wander.
+      { key: 'vel_damp_fc', label: 'Damping filter (Hz)', min: 0, max: 20, step: 0.1, group: 'vel' },
+      // Hard cap on the damping term's lean authority. 0 = unlimited. Bounds
+      // excursions without touching steady-state behaviour.
+      { key: 'vel_damp_max', label: 'Damping cap (deg)', min: 0, max: 6, step: 0.1, group: 'vel' },
+      // Integral on the position hold. Its own group: it is the only term that
+      // removes a STANDING offset, which is a different job from the
+      // proportional and damping terms.
+      { key: 'pos_ki', label: 'Integral gain', min: 0, max: 0.05, step: 0.0005, group: 'integ' },
+      { key: 'pos_i_max', label: 'Integral cap (deg)', min: 0, max: 6, step: 0.1, group: 'integ' },
       { key: 'vel_scale_move', label: 'Move compensation', min: 10, max: 300, step: 5, group: 'vel' },
       { key: 'vel_scale_turning', label: 'Turn scale-down', min: 10, max: 300, step: 5, group: 'vel' },
       { key: 'max_correction', label: 'Max correction (°)', min: 0.05, max: 20, step: 0.05, group: 'limits' },
@@ -1730,6 +2028,10 @@
       // stopped_vel is read by nothing in the control path — it appears only inside a
       // LOG_INFO format string (robot.c). The damping gate that looks like it uses it
       // is a hardcoded constant. Kept visible but disabled so it cannot mislead.
+      // Position error inside which the hold stops PUSHING (damping still applies).
+      // 1 tick = 1.3 mm, so 10 ticks = 0.5 in. Was a hardcoded 2 in robot.c --
+      // 0.1 in, tighter than anything you can see, so the loop never rested.
+      { key: 'pos_deadband', label: 'Deadband (ticks, no push)', min: 0, max: 60, step: 1, group: 'limits' },
       { key: 'stopped_vel', label: 'Stopped threshold (unused)', min: 0, max: 200, step: 1, group: 'limits', dead: true },
     ];
 
@@ -1775,6 +2077,7 @@
       encVelLong: '#bcaaa4',
       posCorr: '#b388ff',
       velDamp: '#00e5ff',
+      posIterm: '#7cff6b',
       thetaAdj: '#ff3d3d',
       activeScale: '#ffd54f',
       // MOT — commanded wheel duty
@@ -1788,7 +2091,7 @@
     // set so that nothing (graphs, legends, CSV headers) can present its
     // signals as P/I/D terms. Do not collapse these back into one list.
     const PID_KEYS = ['setpoint', 'measurement', 'error', 'pTerm', 'iTerm', 'dTerm', 'output'];
-    const DRIVE_KEYS = ['encTarget', 'encPos', 'encError', 'encVel', 'encVelRaw', 'encVelMid', 'encVelLong', 'posCorr', 'velDamp', 'thetaAdj', 'activeScale'];
+    const DRIVE_KEYS = ['encTarget', 'encPos', 'encError', 'encVel', 'encVelRaw', 'encVelMid', 'encVelLong', 'posCorr', 'velDamp', 'posIterm', 'thetaAdj', 'activeScale'];
     // MOT is not a controller — it is what actually reached the RoboClaw. Kept
     // as its own group so a left/right asymmetry is visible rather than hidden
     // behind balance's single scalar output.
@@ -1814,6 +2117,7 @@
       encVelLong: 'Tick vel (LSQ 20)',
       posCorr: 'Pos corr (°)',
       velDamp: 'Vel damp (°)',
+      posIterm: 'Integral (°)',
       thetaAdj: 'θ_ref adj (°)',
       activeScale: 'Zone scale',
       leftDuty: 'L duty',
@@ -1834,13 +2138,31 @@
     const graphBufs = Array.from({ length: NUM_CTRL }, (_, i) => makeBuf(i));
     const graphT0 = Array(NUM_CTRL).fill(null);
 
+    /* ── Packet clock ───────────────────────────────────────────────────────
+     * Every telemetry packet already carries "timestamp": microseconds since
+     * boot, stamped on the bot in build_telemetry_json(). The graphs used to
+     * ignore it and stamp each sample with performance.now() -- i.e. when the
+     * BROWSER received it. Over WiFi that is not the time the sample was taken:
+     * a queued burst arrives with ten packets inside two milliseconds, so a
+     * half-second of robot behaviour was drawn as an instantaneous spike, and
+     * every exported CSV carried an axis that was part robot, part network.
+     *
+     * botT is the bot's own clock in seconds. Null until the first packet, and
+     * null forever if the firmware predates the field, in which case everything
+     * below falls back to the old arrival-time behaviour rather than breaking. */
+    let botT = null;
+
+    function packetT() {
+      return botT !== null ? botT : performance.now() / 1000;
+    }
+
     function currentT(ctrlIdx) {
       if (graphT0[ctrlIdx] === null) return 0;
-      return (performance.now() / 1000) - graphT0[ctrlIdx];
+      return packetT() - graphT0[ctrlIdx];
     }
 
     function appendGraphPoint(ctrlIdx, s) {
-      const now = performance.now() / 1000;
+      const now = packetT();
       if (graphT0[ctrlIdx] === null) graphT0[ctrlIdx] = now;
       const t = now - graphT0[ctrlIdx];
       const cutoff = t - windowSec;
@@ -1867,6 +2189,7 @@
         add('encVelLong', s.encVelLong || 0);
         add('posCorr', s.posCorr || 0);
         add('velDamp', s.velDamp || 0);
+        add('posIterm', s.posIterm || 0);
         add('thetaAdj', s.thetaAdj || 0);
         add('activeScale', s.activeScale || 0);
       } else {
@@ -1886,16 +2209,98 @@
 
     function resetGraph() {
       graphBufs.forEach((b, i) => { keysFor(i).forEach(k => b[k] = []); graphT0[i] = null; });
-      recording = false; recordBuf = Array.from({ length: NUM_CTRL }, () => []); updateRecBtn();
+      recording = false; recordBuf = Array.from({ length: NUM_CTRL }, () => []); sysBuf = []; updateRecBtn();
     }
 
     // ── Plot state ────────────────────────────────────────────────────────────────
-    let plots = [
-      { id: 0, series: [{ ctrl: 1, key: 'encError' }, { ctrl: 1, key: 'encVel' }] },
-      { id: 1, series: [{ ctrl: 1, key: 'posCorr' }, { ctrl: 1, key: 'velDamp' }, { ctrl: 1, key: 'thetaAdj' }] },
-      { id: 2, series: [{ ctrl: 0, key: 'measurement' }, { ctrl: 0, key: 'setpoint' }, { ctrl: 0, key: 'output' }] },
-    ];
-    let nextPlotId = 3;
+    /* Default layout: one plot per controller carrying EVERY series that
+     * controller publishes. Three-of-seven was a guess at what mattered and it
+     * meant the interesting trace was usually the one not drawn -- pruning what
+     * you can see beats hunting the + series menu for what you cannot. Built
+     * from CTRL_KEYS so a new signal shows up here without being added twice. */
+    function defaultPlots() {
+      return CTRL_KEYS.map((keys, ci) => ({
+        id: ci,
+        series: keys.map(k => ({ ctrl: ci, key: k })),
+      }));
+    }
+
+    /* Layout persistence. localStorage, not a cookie: a cookie rides on every
+     * HTTP request to serve_web.py for no reason and caps around 4 KB. This
+     * never leaves the browser. It IS per-browser, so the Mac and the phone
+     * keep separate layouts -- see savePlots() if that ever needs to be shared. */
+    const PLOTS_LS_KEY = 'bbot.plots.v1';
+
+    function savePlots() {
+      try {
+        localStorage.setItem(PLOTS_LS_KEY, JSON.stringify(plots));
+      } catch (e) {
+        /* Private windows and blocked site data both throw here. Losing the
+         * layout is not worth breaking the graph over. */
+      }
+    }
+
+    /* Validated on the way in. A saved layout outlives the code that wrote it,
+     * so a renamed or deleted signal must not resurrect itself as an undrawable
+     * series -- anything not currently in CTRL_KEYS is dropped on load. */
+    function loadPlots() {
+      let raw;
+      try {
+        raw = localStorage.getItem(PLOTS_LS_KEY);
+      } catch (e) { return null; }
+      if (!raw) return null;
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch (e) { return null; }
+      if (!Array.isArray(parsed) || !parsed.length) return null;
+
+      const clean = [];
+      parsed.slice(0, 4).forEach((pl, i) => {
+        if (!pl || typeof pl !== 'object' || !Array.isArray(pl.series)) return;
+        const seen = new Set();
+        const series = pl.series.filter(sr => {
+          if (!sr || !Number.isInteger(sr.ctrl)) return false;
+          if (sr.ctrl < 0 || sr.ctrl >= NUM_CTRL) return false;
+          if (!CTRL_KEYS[sr.ctrl].includes(sr.key)) return false;
+          const sig = sr.ctrl + ':' + sr.key;
+          if (seen.has(sig)) return false;
+          seen.add(sig);
+          return true;
+        }).map(sr => ({ ctrl: sr.ctrl, key: sr.key }));
+        clean.push({ id: Number.isInteger(pl.id) ? pl.id : i, series });
+      });
+      // An empty plot is a legitimate choice; zero plots is not.
+      return clean.length ? clean : null;
+    }
+
+    /* Two-step rather than a confirm() dialog, for a reason specific to this
+     * page: a modal blocks the main thread, and server.js evicts a websocket
+     * client that stalls for 15 s. Leaving a confirm box open long enough to
+     * think about it would drop the telemetry connection. Click arms, second
+     * click inside 3 s commits, and it disarms itself otherwise. */
+    let resetArmTimer = null;
+
+    function resetPlots() {
+      const btn = document.getElementById('reset-plots-btn');
+      if (resetArmTimer === null) {
+        if (btn) { btn.classList.add('armed'); btn.textContent = 'Discard layout?'; }
+        resetArmTimer = setTimeout(disarmReset, 3000);
+        return;
+      }
+      disarmReset();
+      plots = defaultPlots();
+      nextPlotId = plots.length;
+      savePlots();
+      rebuildPlots();
+    }
+
+    function disarmReset() {
+      if (resetArmTimer !== null) { clearTimeout(resetArmTimer); resetArmTimer = null; }
+      const btn = document.getElementById('reset-plots-btn');
+      if (btn) { btn.classList.remove('armed'); btn.textContent = 'Reset Layout'; }
+    }
+
+    let plots = loadPlots() || defaultPlots();
+    let nextPlotId = plots.reduce((m, p) => Math.max(m, p.id + 1), 0);
 
     function setTimescale(sec) {
       windowSec = sec;
@@ -1907,23 +2312,27 @@
     function addPlot() {
       if (plots.length >= 4) return;
       plots.push({ id: nextPlotId++, series: [] });
+      savePlots();
       rebuildPlots();
     }
     function removePlot(id) {
       if (plots.length <= 1) return;
       plots = plots.filter(p => p.id !== id);
+      savePlots();
       rebuildPlots();
     }
     function addSeries(plotId, ctrl, key) {
       const p = plots.find(p => p.id === plotId);
       if (!p || p.series.find(s => s.ctrl === ctrl && s.key === key)) return;
       p.series.push({ ctrl, key });
+      savePlots();
       rebuildPlots();
     }
     function removeSeries(plotId, ctrl, key) {
       const p = plots.find(p => p.id === plotId);
       if (!p) return;
       p.series = p.series.filter(s => !(s.ctrl === ctrl && s.key === key));
+      savePlots();
       rebuildPlots();
     }
 
@@ -2057,6 +2466,12 @@
 
     // ── Recording ─────────────────────────────────────────────────────────────────
     let recording = false;
+    // Wall-clock start of the current recording, and the 1 Hz ticker that
+    // repaints the button. Without this the only way to know how long you have
+    // been recording is to remember when you pressed it, which is how runs end
+    // up 293s when you meant 60 and become incomparable with everything else.
+    let recStartMs = null;
+    let recTimer = null;
     let recordBuf = Array.from({ length: NUM_CTRL }, () => []);
     // Config in effect when Rec was pressed. Snapshotted at start, not at save:
     // pidconfig.txt holds startup DEFAULTS, and the live values can be retuned
@@ -2067,6 +2482,12 @@
     // traffic for velocity freshness, so a log needs to say whether the control
     // loop actually kept up while it was being written.
     let loopStat = null;
+    // Per-sample RoboClaw-link / loop-rate trace, same shape as the robot-side
+    // looplog's sys_loopHz/sys_linkDown columns (robot.c: "Same column names as
+    // the dashboard CSV export, on purpose") -- this dashboard export just never
+    // grew them. Without this a RoboClaw brownout during a run is invisible in
+    // the exported CSV even though the live telemetry already carries it.
+    let sysBuf = [];
 
     function snapshotConfig() {
       // Stamp from what the BOT reports, not the UI's copy. The UI copy is
@@ -2095,6 +2516,8 @@
     function toggleRecord() {
       if (recording) {
         recording = false;
+        if (recTimer) { clearInterval(recTimer); recTimer = null; }
+        recStartMs = null;
         saveCSV();
         // Score the run before the buffer is cleared. Same numbers the CSV would
         // give tools/analyze_tune.py, without the export/import round trip -- and
@@ -2104,28 +2527,48 @@
           if (m) { tuneRenderReport(m); tuneRecordRun(m); }
           else console.warn('tune: run had no balancing samples, not scored');
         } catch (e) { console.warn('tune: analysis failed', e); }
-        recordBuf = Array.from({ length: NUM_CTRL }, () => []); recordMeta = null; loopStat = null;
+        recordBuf = Array.from({ length: NUM_CTRL }, () => []); recordMeta = null; loopStat = null; sysBuf = [];
       }
       else {
         recording = true;
+        recStartMs = Date.now();
+        if (recTimer) clearInterval(recTimer);
+        recTimer = setInterval(updateRecBtn, 1000);
         recordBuf = Array.from({ length: NUM_CTRL }, () => []);
         recordMeta = snapshotConfig();
         loopStat = { n: 0, sum: 0, min: Infinity, max: 0, below: 0 };
+        sysBuf = [];
       }
       updateRecBtn();
     }
     function updateRecBtn() {
-      const btn = document.getElementById('rec-btn');
-      if (!btn) return;
-      btn.className = 'g-btn ' + (recording ? 'rec-active' : 'rec');
-      btn.textContent = recording ? '⏹ Stop' : '⏺ Rec';
+      // Two buttons show the same recording state: the Graph tab's original
+      // and the Control tab's mirror, so Rec/Stop can be hit without a tab
+      // switch either way.
+      ['rec-btn', 'ctl-rec-btn'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.className = 'g-btn ' + (recording ? 'rec-active' : 'rec');
+        if (!recording) { btn.textContent = '⏺ Rec'; btn.title = ''; return; }
+        const secs = recStartMs ? Math.floor((Date.now() - recStartMs) / 1000) : 0;
+        const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+        const ss = String(secs % 60).padStart(2, '0');
+        btn.textContent = `⏹ Stop  ${mm}:${ss}`;
+        // Long runs are not just big files -- position RMS accumulates slow drift,
+        // so a 5 minute run is not comparable with a 1 minute one. Flag it rather
+        // than let it pass silently.
+        btn.title = secs >= 300
+          ? `Recording ${mm}:${ss} — long runs are not comparable with short ones`
+          : `Recording ${mm}:${ss}`;
+      });
     }
     function saveCSV() {
       const ctrlNames = ['pit', 'pos', 'yaw', 'mot'];
       // Headers come from each controller's own key set, so position columns are
       // named pos_encError / pos_posCorr / etc. An exported pos_pTerm column would
       // be read as a PID trace by anyone opening the file later — it is not one.
-      const cols = ['t'].concat(ctrlNames.flatMap((c, ci) => keysFor(ci).map(k => c + '_' + k)));
+      const cols = ['t'].concat(ctrlNames.flatMap((c, ci) => keysFor(ci).map(k => c + '_' + k)))
+        .concat(['sys_loopHz', 'sys_linkDown']);
 
       // Commented preamble: the config this run was actually recorded under.
       // Readable with pandas.read_csv(..., comment='#') or csv module + filter.
@@ -2145,19 +2588,56 @@
       csv += `# pos_config: zone_a=${p.zone_a} zone_b=${p.zone_b} zone_c=${p.zone_c}\n`;
       csv += `#   scale_a=${p.scale_a} scale_b=${p.scale_b} scale_c=${p.scale_c} scale_d=${p.scale_d}\n`;
       csv += `#   vel_scale_stop=${p.vel_scale_stop} vel_scale_move=${p.vel_scale_move} vel_scale_turning=${p.vel_scale_turning}\n`;
+      // Which velocity estimate was in control. Two runs with the same
+      // vel_scale_stop but different sources are not comparable -- the sources
+      // differ in both phase and scale -- so the log has to say.
+      csv += `#   vel_src=${p.vel_src} (${['roboclaw','lsq6','lsq12','lsq20'][Math.round(p.vel_src||0)]||'?'})\n`;
+      // Without these a run cannot be compared against another run, which is
+      // exactly the hole that made one of tonight's failures undiagnosable.
+      csv += `#   vel_damp_fc=${p.vel_damp_fc ?? '?'} vel_damp_max=${p.vel_damp_max ?? '?'}\n`;
+      csv += `#   pos_ki=${p.pos_ki ?? '?'} pos_i_max=${p.pos_i_max ?? '?'}\n`;
       csv += `#   stopped_vel=${p.stopped_vel} max_correction=${p.max_correction} max_angle_rate=${p.max_angle_rate}\n`;
-      csv += `#   back_to_spot=${p.back_to_spot}\n`;
+      csv += `#   back_to_spot=${p.back_to_spot} pos_deadband=${p.pos_deadband}\n`;
       if (loopStat && loopStat.n) {
         const avg = loopStat.sum / loopStat.n;
         csv += `# loop_hz: mean=${avg.toFixed(1)} min=${loopStat.min.toFixed(1)} max=${loopStat.max.toFixed(1)} `
              + `samples=${loopStat.n} below_95Hz=${loopStat.below}`
              + `${loopStat.below ? '  <-- CONTROL LOOP MISSED RATE, treat this run with suspicion' : ''}\n`;
       }
+      /* Sample spacing. t is the BOT's clock now, so a gap in t is a packet
+       * that never arrived -- real missing robot time, not render jitter. This
+       * is the number that says whether the run is safe to measure timing from:
+       * a run with 38% of its span inside gaps cannot support a period, a phase
+       * or a spectrum, however clean the values themselves look. */
+      // Same t the rows below use: first buffer that has a sample at that index.
+      const nRow = Math.max(0, ...recordBuf.map(b => b.length));
+      const tSeries = [];
+      for (let i = 0; i < nRow; i++) {
+        const tv = recordBuf.map(b => b[i]?.t).find(v => v !== undefined);
+        if (tv !== undefined) tSeries.push(tv);
+      }
+      if (tSeries.length > 2) {
+        const NOMINAL = 0.05;                 // 20 Hz telemetry
+        let lost = 0, biggest = 0, nGap = 0;
+        for (let i = 1; i < tSeries.length; i++) {
+          const dt = tSeries[i] - tSeries[i - 1];
+          if (dt > NOMINAL * 3) { lost += dt - NOMINAL; nGap++; if (dt > biggest) biggest = dt; }
+        }
+        const span = tSeries[tSeries.length - 1] - tSeries[0];
+        const pct = span > 0 ? (100 * lost / span) : 0;
+        csv += `# clock=BOT (packet "timestamp", us since boot) — t is when the sample was\n`;
+        csv += `#   TAKEN, not when the browser received it. Gaps below are dropped packets.\n`;
+        csv += `# gaps: n=${nGap} largest=${biggest.toFixed(2)}s missing=${lost.toFixed(1)}s of ${span.toFixed(1)}s (${pct.toFixed(0)}%)`
+             + `${pct > 10 ? '  <-- LOSSY RUN, do not measure timing from this' : ''}\n`;
+      }
       csv += `# pit_gains: kp=${m.pit.kp} ki=${m.pit.ki} kd=${m.pit.kd}\n`;
       csv += `# yaw_gains: kp=${m.yaw.kp} ki=${m.yaw.ki} kd=${m.yaw.kd}\n`;
       csv += `# note: position is a zone-scheduled position hold, not a PID — it has no gains.\n`;
       csv += `#   pos_encError is (enc_pos_target - enc_pos), same sign as the error the\n`;
       csv += `#   controller acts on, so pos_posCorr == pos_encError / pos_activeScale.\n`;
+      csv += `# sys_linkDown=1 means the RoboClaw was not answering serial commands on that\n`;
+      csv += `#   sample -- motor_hal skips the port entirely while down, so duty/encoder\n`;
+      csv += `#   columns above are stale/ineffective for as long as this stays 1.\n`;
 
       csv += cols.join(',') + '\n';
       const maxLen = Math.max(...recordBuf.map(b => b.length));
@@ -2167,6 +2647,8 @@
         recordBuf.forEach((b, ci) => {
           keysFor(ci).forEach(k => row.push(((b[i]?.[k]) ?? 0).toFixed(4)));
         });
+        row.push((sysBuf[i]?.loopHz ?? 0).toFixed(1));
+        row.push(String(sysBuf[i]?.down ?? 0));
         csv += row.join(',') + '\n';
       }
       const a = document.createElement('a');
@@ -2257,13 +2739,59 @@
       };
     }
 
+    // Returns whether the command actually went out. It used to return nothing
+    // and drop the message on the floor whenever the socket was closed or
+    // reconnecting, which is most of what "I press things and nothing happens"
+    // was: the press was real, the send was not.
     function sendCmd(obj) {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(obj));
+        return true;
       }
+      flashSendFail(obj.type);
+      return false;
+    }
+
+    let sendFailTimer = null;
+    function flashSendFail(what) {
+      const lbl = document.getElementById('conn-label');
+      if (!lbl) return;
+      lbl.textContent = 'NOT SENT: ' + (what || 'command');
+      lbl.style.color = 'var(--red, #ff3b30)';
+      if (sendFailTimer) clearTimeout(sendFailTimer);
+      sendFailTimer = setTimeout(() => {
+        lbl.style.color = '';
+        setConnStatus(ws && ws.readyState === WebSocket.OPEN);
+      }, 2000);
+    }
+
+    // Link/loop-rate counters. No UI of their own: sys_loopHz and sys_linkDown
+    // are columns in the 100 Hz capture, which is where this belongs. Kept only
+    // so resetLinkStats() has something to clear at the start of a capture.
+    let linkState = { down: false, drops: 0, minHz: Infinity };
+
+    function setClawLink(up, loopHz) {
+        if (!up && !linkState.down) linkState.drops++;
+        linkState.down = !up;
+        if (loopHz > 0 && loopHz < linkState.minHz) linkState.minHz = loopHz;
+    }
+
+    function resetLinkStats() {
+        linkState.drops = 0;
+        linkState.minHz = Infinity;
     }
 
     function setConnStatus(on) {
+      // serve_web.py substitutes __BUILD__ with the file's mtime, so the page
+      // states its own vintage. "Is this the new dashboard or a cached one" is
+      // not a question worth debugging twice.
+      const bs = document.getElementById('build-stamp');
+      if (bs && !bs.dataset.set) {
+        const stamp = '__BUILD' + '__';        // split so serve_web cannot substitute this copy
+        const got = '__BUILD__';               // ...but does substitute this one
+        bs.textContent = (got === stamp) ? '' : 'build ' + got;
+        bs.dataset.set = '1';
+      }
       const dot = document.getElementById('conn-dot');
       const lbl = document.getElementById('conn-label');
       dot.className = on ? 'on' : 'off';
@@ -2397,15 +2925,36 @@
             max_correction: pc.max_correction ?? posCfg.max_correction,
             max_angle_rate: pc.max_angle_rate ?? posCfg.max_angle_rate,
             back_to_spot: pc.back_to_spot ?? posCfg.back_to_spot,
+            // These two were missing, so the fields showed the UI's own
+            // defaults no matter what the bot reported -- which is how a
+            // deadband of 0 on the bot displayed as 2 on screen.
+            pos_deadband: pc.pos_deadband ?? posCfg.pos_deadband,
+            vel_damp_fc: pc.vel_damp_fc ?? posCfg.vel_damp_fc,
+            vel_damp_max: pc.vel_damp_max ?? posCfg.vel_damp_max,
+            pos_ki: pc.pos_ki ?? posCfg.pos_ki,
+            pos_i_max: pc.pos_i_max ?? posCfg.pos_i_max,
+            vel_src: pc.vel_src ?? posCfg.vel_src,
           });
           posCfgReceived = true;
           syncPosUI();
         }
       }
 
+      if (d.claw_hw) renderClawHw(d.claw_hw);
+
       if (d.motor_config) {
         state.motorMode = d.motor_config.mode ?? 0;
         const mc = d.motor_config;
+        // Ground truth, every frame. The seeding below runs once; this does not.
+        clawCfgBot = {
+          mode: mc.mode, qpps_max: mc.qpps_max, accel_qpps: mc.accel_qpps,
+          pol_l: mc.pol_l, pol_r: mc.pol_r,
+          enc_pol_l: mc.enc_pol_l, enc_pol_r: mc.enc_pol_r,
+          kp: mc.claw_kp, ki: mc.claw_ki, kd: mc.claw_kd,
+          baud: mc.baud,
+        };
+        clawCfgBotMs = Date.now();
+        renderClawReadback();
         if (!clawCfg.received) {
           clawCfg.mode = mc.mode ?? clawCfg.mode;
           clawCfg.qpps_max = mc.qpps_max ?? clawCfg.qpps_max;
@@ -2824,6 +3373,7 @@
         encVelMid: raw.enc_vel_mid ?? 0,
         encVelLong: raw.enc_vel_long ?? 0,
         posCorr: raw.pos_correction ?? 0,
+        posIterm: raw.i_term ?? 0,
         velDamp: raw.vel_damp ?? 0,
         thetaAdj: raw.theta_ref_adj ?? 0,
         activeScale: raw.active_scale ?? 0,
@@ -2834,10 +3384,41 @@
     function handleTelemetry(d) {
       state.packetsReceived++;
 
+      /* Adopt the bot's clock for everything this packet feeds. Microseconds
+       * since boot: ~9e15 is the exact-integer ceiling for a JS number and a
+       * year of uptime is 3.2e13, so there is no precision problem here. */
+      if (typeof d.timestamp === 'number' && isFinite(d.timestamp)) {
+        const t = d.timestamp / 1e6;
+        // The bot rebooted (or the counter went backwards). Every buffered
+        // sample is stamped on the old boot's clock and cannot be compared with
+        // what follows, so drop them rather than draw a graph that runs
+        // backwards. 1 s of slack absorbs out-of-order delivery.
+        if (botT !== null && t < botT - 1.0) {
+          graphBufs.forEach((b, i) => keysFor(i).forEach(k => b[k] = []));
+          graphT0.fill(null);
+        }
+        botT = t;
+      }
+
       if (d.system) {
         state.armed = settle('armed', !!d.system.armed);
         state.mode = d.system.mode;
         state.loopHz = d.system.loop_hz ?? 0;
+        setClawLink(d.system.claw_link !== false, state.loopHz);
+        if (d.system.arm_at_boot !== undefined) {
+          const cb = document.getElementById('chk-arm-at-boot');
+          // Don't fight the operator mid-click -- only sync when it's not the
+          // focused element, same reasoning as the PID gain resync above.
+          if (cb && document.activeElement !== cb) cb.checked = !!d.system.arm_at_boot;
+        }
+        if (d.system.oob_angle_deg !== undefined) {
+          state.oobAngleDeg = Number(d.system.oob_angle_deg);
+          const oe = document.getElementById('in-oob-angle');
+          if (oe && document.activeElement !== oe) {
+            oe.value = state.oobAngleDeg;
+            oe.classList.remove('dirty');
+          }
+        }
         if (d.system.theta_offset !== undefined)
           stepShow('pitch', Number(d.system.theta_offset).toFixed(3));
         if (d.system.pose_lean !== undefined) {
@@ -2859,6 +3440,9 @@
           if (state.loopHz > loopStat.max) loopStat.max = state.loopHz;
           if (state.loopHz < 95) loopStat.below++;
         }
+        // One entry per packet, same cadence as the pit/pos/yaw/mot pushes into
+        // recordBuf below, so sysBuf[i] lines up with row i in the exported CSV.
+        if (recording) sysBuf.push({ loopHz: state.loopHz, down: d.system.claw_link === false ? 1 : 0 });
         // Telemetry packets the BOT could not hand to the bridge. Non-zero
         // means samples are missing from every graph and every CSV — and that
         // the cause is upstream of the browser, so no amount of rendering work
@@ -2913,11 +3497,25 @@
       if (d1r) {
         Object.assign(state.pit, d1r);
         appendGraphPoint(0, d1r);
-        if (d1r.kp != null) gainsBot.pit = { kp: d1r.kp, ki: d1r.ki ?? 0, kd: d1r.kd ?? 0 };
-        if (!pidCfg.pit.received && d1r.kp != null) {
-          pidCfg.pit.kp = d1r.kp; pidCfg.pit.ki = d1r.ki ?? 0; pidCfg.pit.kd = d1r.kd ?? 0;
-          pidCfg.pit.received = true;
-          syncPIDUI('pit');
+        if (d1r.kp != null) {
+          gainsBot.pit = { kp: d1r.kp, ki: d1r.ki ?? 0, kd: d1r.kd ?? 0 };
+          // Resync the sliders from the bot's true value whenever they differ,
+          // not just once at connect. It used to latch on the first packet
+          // (received flag) and never look again, so a change made from
+          // another tab -- or a robot.conf reload -- never reached this tab:
+          // the sliders froze at whatever was live when the page loaded, and
+          // two tabs opened at different times disagreed forever. Skip the
+          // resync for a little while right after a LOCAL edit so a slider
+          // drag is not fought by its own not-yet-applied telemetry echo.
+          const editingLocally = (Date.now() - (pidCfg.pit.localMs || 0)) < 1200;
+          const drifted = pidCfg.pit.kp !== gainsBot.pit.kp ||
+                          pidCfg.pit.ki !== gainsBot.pit.ki ||
+                          pidCfg.pit.kd !== gainsBot.pit.kd;
+          if (!editingLocally && (drifted || !pidCfg.pit.received)) {
+            Object.assign(pidCfg.pit, gainsBot.pit);
+            pidCfg.pit.received = true;
+            syncPIDUI('pit');
+          }
         }
       }
       if (d2r) {
@@ -2929,11 +3527,19 @@
       if (d3r) {
         Object.assign(state.yaw, d3r);
         appendGraphPoint(2, d3r);
-        if (d3r.kp != null) gainsBot.yaw = { kp: d3r.kp, ki: d3r.ki ?? 0, kd: d3r.kd ?? 0 };
-        if (!pidCfg.yaw.received && d3r.kp != null) {
-          pidCfg.yaw.kp = d3r.kp; pidCfg.yaw.ki = d3r.ki ?? 0; pidCfg.yaw.kd = d3r.kd ?? 0;
-          pidCfg.yaw.received = true;
-          syncPIDUI('yaw');
+        if (d3r.kp != null) {
+          gainsBot.yaw = { kp: d3r.kp, ki: d3r.ki ?? 0, kd: d3r.kd ?? 0 };
+          // See the matching comment on the pit ('balance') branch above --
+          // same fix, same reason, applied to steering.
+          const editingLocally = (Date.now() - (pidCfg.yaw.localMs || 0)) < 1200;
+          const drifted = pidCfg.yaw.kp !== gainsBot.yaw.kp ||
+                          pidCfg.yaw.ki !== gainsBot.yaw.ki ||
+                          pidCfg.yaw.kd !== gainsBot.yaw.kd;
+          if (!editingLocally && (drifted || !pidCfg.yaw.received)) {
+            Object.assign(pidCfg.yaw, gainsBot.yaw);
+            pidCfg.yaw.received = true;
+            syncPIDUI('yaw');
+          }
         }
       }
       if (motr) {
@@ -2984,18 +3590,24 @@
 
       document.getElementById('pkt-count').textContent = `pkts: ${state.packetsReceived}`;
 
-      // Arm button — green=disarmed, yellow=armed+OOB, red=armed+in-bounds
+      // Arm button doubles as the ready/waiting status box: green=disarmed
+      // (waiting for you to enable), red=armed+in-bounds (actively balancing),
+      // yellow=armed+OOB (trying is persistent now -- it stays armed the whole
+      // time, this just means the firmware's OOB cutoff has the motors held
+      // at 0 until it's back in range). Reads the live, configurable
+      // threshold (Settings > Startup & Safety) rather than a hardcoded
+      // value, so this cannot show a color the firmware itself disagrees with.
       const ab = document.getElementById('arm-btn');
-      const inBounds = Math.abs(state.imu.theta) < 14.0;
+      const inBounds = Math.abs(state.imu.theta) < (state.oobAngleDeg ?? 15.0);
       if (!state.armed) {
         ab.className = 'disarmed';
-        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M8 5v14l11-7z"/></svg> ARM`;
+        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M8 5v14l11-7z"/></svg> ARM — waiting`;
       } else if (inBounds) {
         ab.className = 'armed';
-        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> DISARM`;
+        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> BALANCING — DISARM`;
       } else {
         ab.className = 'armed-oob';
-        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> DISARM`;
+        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> OOB, motors cut — DISARM`;
       }
 
       // Mode seg
@@ -3025,10 +3637,13 @@
       updatePIDLive('pos', state.pos);
       updatePIDLive('yaw', state.yaw);
 
-      // Controller enable buttons
+      // Controller enable buttons (Tuning tab + Control tab mirrors)
       setEnableBtn('pid-pit-en', state.pit.enabled);
       setEnableBtn('pid-pos-en', state.pos.enabled);
       setEnableBtn('pid-yaw-en', state.yaw.enabled);
+      setEnableBtn('ctl-pit-en', state.pit.enabled);
+      setEnableBtn('ctl-pos-en', state.pos.enabled);
+      setEnableBtn('ctl-yaw-en', state.yaw.enabled);
     }
 
     function setTxt(id, val, color) {
@@ -3046,29 +3661,37 @@
     }
 
     function updatePIDLive(ctrl, s) {
-      const errEl = document.getElementById(`${ctrl}-err`);
-      const outEl = document.getElementById(`${ctrl}-out`);
-      const barEl = document.getElementById(`${ctrl}-bar`);
-      if (ctrl === 'pos') {
-        // position reads from drive fields, not setpoint/measurement/error/output.
-        if (errEl) errEl.textContent = s.encError.toFixed(0);
-        const maxErr = posCfg.zone_a || 8000;
-        const frac = Math.min(Math.abs(s.encError) / maxErr, 1.0) * 100;
-        const col = Math.abs(s.encError) < posCfg.zone_c ? 'var(--green)' :
-          Math.abs(s.encError) < posCfg.zone_b ? 'var(--yellow)' : 'var(--orange)';
-        if (barEl) { barEl.style.width = frac + '%'; barEl.style.background = col; }
-        setTxt(`pos-sp`, s.encTarget.toFixed(0));
-        setTxt(`pos-meas`, s.encPos.toFixed(0));
-        setTxt(`pos-err`, s.encError.toFixed(0), 'var(--orange)');
-      } else {
-        if (errEl) errEl.textContent = s.error.toFixed(3);
-        if (outEl) outEl.textContent = s.output.toFixed(3);
-        if (barEl) {
-          const frac = Math.min(Math.abs(s.output), 1.0) * 100;
-          barEl.style.width = frac + '%';
-          barEl.style.background = s.output >= 0 ? 'var(--accent)' : 'var(--orange)';
+      // Runs once for the Tuning tab's own ids ('' prefix) and once more for
+      // the Control tab's mirrored copies ('ctl-' prefix) -- same data, two
+      // places it needs to land, so it does not require a tab switch to see
+      // the effect of a change made from the other tab.
+      ['', 'ctl-'].forEach(px => {
+        const spEl = document.getElementById(`${px}${ctrl}-sp`);
+        const errEl = document.getElementById(`${px}${ctrl}-err`);
+        const outEl = document.getElementById(`${px}${ctrl}-out`);
+        const barEl = document.getElementById(`${px}${ctrl}-bar`);
+        if (ctrl === 'pos') {
+          // position reads from drive fields, not setpoint/measurement/error/output.
+          if (errEl) errEl.textContent = s.encError.toFixed(0);
+          const maxErr = posCfg.zone_a || 8000;
+          const frac = Math.min(Math.abs(s.encError) / maxErr, 1.0) * 100;
+          const col = Math.abs(s.encError) < posCfg.zone_c ? 'var(--green)' :
+            Math.abs(s.encError) < posCfg.zone_b ? 'var(--yellow)' : 'var(--orange)';
+          if (barEl) { barEl.style.width = frac + '%'; barEl.style.background = col; }
+          setTxt(`${px}pos-sp`, s.encTarget.toFixed(0));
+          setTxt(`${px}pos-meas`, s.encPos.toFixed(0));
+          setTxt(`${px}pos-err`, s.encError.toFixed(0), 'var(--orange)');
+        } else {
+          if (spEl) spEl.textContent = s.setpoint.toFixed(3);
+          if (errEl) errEl.textContent = s.error.toFixed(3);
+          if (outEl) outEl.textContent = s.output.toFixed(3);
+          if (barEl) {
+            const frac = Math.min(Math.abs(s.output), 1.0) * 100;
+            barEl.style.width = frac + '%';
+            barEl.style.background = s.output >= 0 ? 'var(--accent)' : 'var(--orange)';
+          }
         }
-      }
+      });
     }
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -3143,14 +3766,8 @@
     // ════════════════════════════════════════════════════════════════════════════
     let currentPIDCtrl = 'pit';
 
-    function selectPIDCtrl(ctrl) {
-      currentPIDCtrl = ctrl;
-      document.querySelectorAll('#pid-ctrl-picker .g-seg').forEach(b =>
-        b.classList.toggle('active', b.dataset.pidctrl === ctrl));
-      document.getElementById('pid-pit-card').style.display = ctrl === 'pit' ? '' : 'none';
-      document.getElementById('pid-yaw-card').style.display = ctrl === 'yaw' ? '' : 'none';
-      document.getElementById('pid-pos-card').style.display = ctrl === 'pos' ? '' : 'none';
-    }
+    // All three cards are always visible now; kept as a no-op for stale callers.
+    function selectPIDCtrl(ctrl) { currentPIDCtrl = ctrl; }
 
     function toggleCtrl(name, short) {
       const next = !state[short].enabled;
@@ -3161,48 +3778,69 @@
     function syncPIDUI(ctrl) {
       const c = pidCfg[ctrl];
       ['kp', 'ki', 'kd'].forEach(k => {
-        const sl = document.getElementById(`sl-${ctrl}-${k}`);
         const vb = document.getElementById(`vb-${ctrl}-${k}`);
-        if (sl) sl.value = c[k];
-        if (vb) vb.value = fmtPIDVal(c[k]);
+        if (!vb) return;
+        // Never overwrite a box the user is typing in. Telemetry arrives at
+        // 20 Hz; without this guard an incoming packet rewrites the field
+        // mid-keystroke and the edit is lost before Enter is ever pressed.
+        if (document.activeElement === vb || vb.classList.contains('dirty')) return;
+        vb.value = fmtPIDVal(c[k]);
       });
     }
 
-    function onPIDSlider(ctrl, key, raw) {
-      const v = parseFloat(raw);
-      pidCfg[ctrl][key] = v;
-      const vb = document.getElementById(`vb-${ctrl}-${key}`);
-      if (vb) vb.value = fmtPIDVal(v);
-      sendPIDUpdate(ctrl);
-    }
-
+    /* Commit path for typed entry. Reached only by change/blur -- the field
+     * fires nothing while you type, so a half-finished number like "0.0" is
+     * never sent to the robot. */
     function onPIDValBox(ctrl, key, raw) {
+      const vb = document.getElementById(`vb-${ctrl}-${key}`);
       const v = parseFloat(raw);
-      if (isNaN(v)) return;
+      if (vb) vb.classList.remove('dirty');
+      if (!isFinite(v)) {                       // junk: put the live value back
+        if (vb) vb.value = fmtPIDVal(pidCfg[ctrl][key]);
+        return;
+      }
       pidCfg[ctrl][key] = v;
-      const sl = document.getElementById(`sl-${ctrl}-${key}`);
-      if (sl) sl.value = v;
+      pidCfg[ctrl].localMs = Date.now();
+      if (vb) vb.value = fmtPIDVal(v);
       sendPIDUpdate(ctrl);
     }
 
     function stepPID(ctrl, key, dir) {
-      const steps = { kp: 1, ki: 0.01, kd: 0.1 };
       const ranges = { kp: [-200, 200], ki: [-10, 10], kd: [-50, 50] };
-      const delta = dir * steps[key] * (pidMult[ctrl] || 1);
-      let v = Math.round((pidCfg[ctrl][key] + delta) * 1000) / 1000;
+      const step = pidRes[`${ctrl}-${key}`] ?? PID_RES_DEFAULT;
+      // Round to the step's own decimal count, not a fixed 3 places -- the old
+      // *1000 rounding quantised every value to 0.001 and silently threw away
+      // a 0.0001 nudge entirely.
+      const dp = Math.max(0, Math.round(-Math.log10(step)));
+      let v = parseFloat((pidCfg[ctrl][key] + dir * step).toFixed(dp));
       v = Math.max(ranges[key][0], Math.min(ranges[key][1], v));
       pidCfg[ctrl][key] = v;
-      const sl = document.getElementById(`sl-${ctrl}-${key}`);
+      pidCfg[ctrl].localMs = Date.now();
       const vb = document.getElementById(`vb-${ctrl}-${key}`);
-      if (sl) sl.value = v;
-      if (vb) vb.value = fmtPIDVal(v);
+      if (vb) { vb.value = fmtPIDVal(v); vb.classList.remove('dirty'); }
       sendPIDUpdate(ctrl);
     }
 
-    function setMult(ctrl, m) {
-      pidMult[ctrl] = m;
-      document.querySelectorAll(`#mult-${ctrl} .mult-btn`).forEach(b =>
-        b.classList.toggle('active', parseInt(b.dataset.m) === m));
+    /* One picker per gain row, built here rather than written out six times in
+     * the markup so the decade list lives in exactly one place. */
+    function buildResSelectors() {
+      ['pit', 'yaw'].forEach(ctrl => ['kp', 'ki', 'kd'].forEach(key => {
+        const id = `${ctrl}-${key}`;
+        const wrap = document.getElementById(`res-${id}`);
+        if (!wrap) return;
+        if (pidRes[id] === undefined) pidRes[id] = PID_RES_DEFAULT;
+        wrap.innerHTML = PID_RES.map(r =>
+          `<button class="res-btn${r === pidRes[id] ? ' active' : ''}" data-r="${r}"` +
+          ` title="one press of +/- changes this gain by ${r}"` +
+          ` onclick="setPidRes('${ctrl}','${key}',${r})">${r}</button>`).join('');
+      }));
+    }
+
+    function setPidRes(ctrl, key, r) {
+      const id = `${ctrl}-${key}`;
+      pidRes[id] = r;
+      document.querySelectorAll(`#res-${id} .res-btn`).forEach(b =>
+        b.classList.toggle('active', parseFloat(b.dataset.r) === r));
     }
 
     function sendPIDUpdate(ctrl) {
@@ -3218,13 +3856,16 @@
     }
 
     function fmtPIDVal(v) {
-      return v % 1 === 0 ? v.toFixed(0) : v.toFixed(3);
+      if (v % 1 === 0) return v.toFixed(0);
+      // Show what is actually there. toFixed(3) rendered 0.0005 as "0.001",
+      // so a yaw Kd nudged at the finest step appeared not to move at all.
+      return parseFloat(v.toFixed(4)).toString();
     }
 
     // PosConfig sliders
     function buildPosSliders() {
       const wrap = document.getElementById('pos-sliders');
-      const groups = { zones: 'Zone Thresholds (ticks)', scales: 'Scale Factors', vel: 'Velocity Scales', limits: 'Limits' };
+      const groups = { zones: 'Zone Thresholds (ticks)', scales: 'Scale Factors', vel: 'Velocity Scales', integ: 'Integral (removes standing offset)', limits: 'Limits' };
       let curGroup = null;
       let html = '';
       POS_SLIDERS.forEach(sl => {
@@ -3235,29 +3876,107 @@
         const v = posCfg[sl.key] ?? 0;
         const dis = sl.dead ? ' disabled' : '';
         const sty = sl.dead ? ' style="opacity:.35"' : '';
+        // min/max are kept as input attributes for the browser's own validation
+        // but no longer gate what you can express -- a slider whose range did not
+        // reach its own tuned value (vel_scale_stop min was 10, value was 5) is
+        // exactly the failure mode typed entry does not have.
         html += `
-      <div class="pid-row"${sty}${sl.dead ? ' title="No effect — this field is not read by the control loop"' : ''}>
-        <span class="pid-label" style="font-size:10px">${sl.label}</span>
-        <input type="range" class="pid-slider" id="psl-${sl.key}"${dis}
-          min="${sl.min}" max="${sl.max}" step="${sl.step}" value="${v}"
-          oninput="onPosSlider('${sl.key}',this.value)">
-        <div class="pid-ctrl">
-          <input class="val-box" id="pvb-${sl.key}" value="${v}"${dis}
-            onchange="onPosValBox('${sl.key}',this.value)"
-            onblur="onPosValBox('${sl.key}',this.value)">
-        </div>
+      <div class="num-row"${sty}${sl.dead ? ' title="No effect — this field is not read by the control loop"' : ''}>
+        <label class="num-k" style="flex:0 0 240px" for="pin-${sl.key}">${sl.label}</label>
+        <input class="num-in" id="pin-${sl.key}" type="number" inputmode="decimal"${dis}
+          step="${sl.step}" value="${v}"
+          oninput="markDirty(this)"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+          onchange="onPosValBox('${sl.key}',this.value)">
+        <span class="num-hint" id="phint-${sl.key}"></span>
       </div>`;
       });
       wrap.innerHTML = html;
     }
 
+    // 1 encoder tick of position = this many inches. 145.1 PPR, 4.75in wheels,
+    // and enc_pos is left+right summed, hence the /2.
+    const POS_IN_PER_TICK = (120.65 * Math.PI / (2 * 145.1)) / 25.4;
+
     function syncPosUI() {
       POS_SLIDERS.forEach(sl => {
         const v = posCfg[sl.key] ?? 0;
-        const s = document.getElementById(`psl-${sl.key}`);
-        const b = document.getElementById(`pvb-${sl.key}`);
-        if (s) s.value = v;
-        if (b) b.value = parseFloat(v).toFixed(sl.step < 1 ? 2 : 0);
+        const b = document.getElementById(`pin-${sl.key}`);
+        if (b) { b.value = parseFloat(v); b.classList.remove('dirty'); }
+        const h = document.getElementById(`phint-${sl.key}`);
+
+        // Ground truth first. Everything below is only meaningful if the field
+        // matches what the firmware actually has, and until now nothing on this
+        // tab said whether it did -- the drift warning lived in the CSV preamble
+        // where you only see it after the run.
+        const bv = posCfgBot ? posCfgBot[sl.key] : undefined;
+        const drift = (bv !== undefined && bv !== null &&
+                       Math.abs(Number(bv) - Number(v)) > 1e-6);
+        if (b) b.classList.toggle('drift', drift);
+        if (drift && h) {
+          h.textContent = 'BOT HAS ' + bv;
+          h.style.color = 'var(--red, #ff3b30)';
+          return;
+        }
+        if (h) {
+          if (sl.key === 'vel_src') {
+            // Labelled by LAG, not by phase at one frequency -- lag is the
+            // frequency-independent fact, and picking a source by its phase at
+            // 0.33 Hz was how the 1.6 Hz instability got missed.
+            const SRC = ['RoboClaw regs  100 ms lag  (58 deg lost @1.6Hz)',
+                         'lsq 6 tick      25 ms lag  (15 deg lost @1.6Hz)',
+                         'lsq 12 tick     55 ms lag  (32 deg lost @1.6Hz)',
+                         'lsq 20 tick     95 ms lag  (55 deg lost @1.6Hz)'];
+            h.textContent = SRC[Math.round(v)] || '?';
+            h.style.color = Math.round(v) === 0 ? '' : 'var(--orange)';
+          }
+          else if (sl.key === 'vel_damp_fc') {
+            if (!(v > 0)) { h.textContent = 'off — unfiltered derivative'; h.style.color = ''; }
+            else {
+              // First-order response: what fraction of the term survives at the
+              // frequency that damps (0.3 Hz) vs the one that runs away (1.6 Hz).
+              const g = f => 1 / Math.sqrt(1 + Math.pow(f / v, 2));
+              h.textContent = 'keeps ' + (100 * g(0.3)).toFixed(0) + '% @0.3Hz (damps), ' +
+                              (100 * g(1.6)).toFixed(0) + '% @1.6Hz (runs away)';
+              h.style.color = '';
+            }
+          }
+          else if (sl.key === 'pos_ki') {
+            if (!(v > 0)) { h.textContent = 'off — standing offset must be trimmed by hand'; }
+            else {
+              // Time to work off the offset seen tonight: 31 ticks needing
+              // 0.52 deg of lean.
+              h.textContent = '~' + (0.52 / (v * 31)).toFixed(0) + 's to absorb a 31-tick offset';
+            }
+            h.style.color = '';
+          }
+          else if (sl.key === 'pos_i_max') {
+            h.textContent = 'max lean the integral may add (standing lean seen: 0.25-0.54 deg)';
+            h.style.color = '';
+          }
+          else if (sl.key === 'vel_damp_max') {
+            h.textContent = (v > 0)
+              ? 'caps spikes (quiet peak was 1.44 deg, runaway hit 5.02)'
+              : 'off — velDamp bypasses the rate limiter entirely';
+            h.style.color = (v > 0) ? '' : 'var(--txt3)';
+          }
+          else if (sl.key === 'vel_scale_stop') {
+            // Effective damping gain is 1/vel_scale_stop times the source's own
+            // scale. Showing it relative to the known-good baseline (RoboClaw
+            // source at 5.0) is the only number that compares across sources.
+            // Measured slope of each estimate against the RoboClaw source,
+            // averaged over three runs. lsq20 is unmeasured -- assumed 1.0.
+            const k = [1.0, 1.143, 1.247, 1.0][Math.round(posCfg.vel_src || 0)] || 1.0;
+            const rel = (5.0 / Math.max(v, 0.01)) * k;
+            h.textContent = 'effective damping ' + rel.toFixed(2) + 'x baseline';
+            h.style.color = (rel > 1.15 || rel < 0.85) ? 'var(--orange)' : '';
+          }
+          else if (sl.key.startsWith('zone_') || sl.key === 'pos_deadband')
+            h.textContent = (v * POS_IN_PER_TICK).toFixed(2) + ' in';
+          else if (sl.dead)
+            h.textContent = 'not read by the control loop';
+          else h.textContent = '';
+        }
       });
       // back_to_spot seg
       document.querySelectorAll('#hold-mode-seg .seg-btn').forEach((b, i) =>
@@ -3265,22 +3984,16 @@
       document.getElementById('pid-pos-cfg').classList.toggle('dimmed', !posCfgReceived);
     }
 
-    function onPosSlider(key, raw) {
-      const v = parseFloat(raw);
-      posCfg[key] = v;
-      const vb = document.getElementById(`pvb-${key}`);
-      const slDef = POS_SLIDERS.find(s => s.key === key);
-      if (vb) vb.value = parseFloat(v).toFixed(slDef && slDef.step < 1 ? 2 : 0);
-      sendPosConfig();
-    }
-
+    // Commits on Enter or blur. Stays orange until the bot's own pos_config comes
+    // back and syncPosUI clears it, so a value that did not land looks wrong.
     function onPosValBox(key, raw) {
       const v = parseFloat(raw);
-      if (isNaN(v)) return;
+      if (!isFinite(v)) { syncPosUI(); return; }
       posCfg[key] = v;
-      const sl = document.getElementById(`psl-${key}`);
-      if (sl) sl.value = v;
       sendPosConfig();
+      // vel_src and vel_scale_stop are coupled -- changing either changes what
+      // the other means, so repaint both hints immediately.
+      if (key === 'vel_src' || key === 'vel_scale_stop') syncPosUI();
     }
 
     function setPosField(key, val) {
@@ -3732,7 +4445,11 @@
 
     function tuneShow(id) {
       const r = tuneLoadRuns().find(x => x.id === id);
-      if (r) { tuneRenderReport(r.m); switchTab('tune'); window.scrollTo(0, 0); }
+      if (r) {
+        tuneRenderReport(r.m);
+        switchTab('pid');
+        document.getElementById('tune-report').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     }
 
     function tuneOnPick() {
@@ -4140,9 +4857,14 @@
       // mode seg
       document.querySelectorAll('#claw-mode-seg .seg-btn').forEach(b =>
         b.classList.toggle('active', parseInt(b.dataset.mmode) === clawCfg.mode));
-      // QPPS + accel
-      setSliderVal('qpps', clawCfg.qpps_max);
-      setSliderVal('accel', clawCfg.accel_qpps);
+      // QPPS + accel -- typed fields now. Clearing .dirty here is what turns a
+      // field from orange back to normal, and it only happens when the BOT
+      // reports the value, never when you type it.
+      ['qpps_max', 'accel_qpps'].forEach(k => {
+        const el = document.getElementById('in-' + k);
+        if (el) { el.value = clawCfg[k]; el.classList.remove('dirty'); }
+        clawHint(k);
+      });
       // polarity segs
       syncPolSeg('pol-l-seg', clawCfg.pol_l);
       syncPolSeg('pol-r-seg', clawCfg.pol_r);
@@ -4155,16 +4877,132 @@
       setTxt('claw-baud-disp', clawCfg.baud > 0 ? String(clawCfg.baud) : '––', 'var(--txt)');
     }
 
-    function setSliderVal(id, val) {
-      const sl = document.getElementById('sl-' + id);
-      const vb = document.getElementById('vb-' + id);
-      if (sl) sl.value = val;
-      if (vb) vb.value = val;
+    // M1/M2 rather than L/R on purpose: which physical wheel is M1 depends on
+    // wiring, and this panel's whole job is to stop assuming.
+    const CLAW_HW_FIELDS = [
+      ['m1_kp', 'M1 Kp', v => Number(v).toFixed(3)],
+      ['m1_ki', 'M1 Ki', v => Number(v).toFixed(3)],
+      ['m1_kd', 'M1 Kd', v => Number(v).toFixed(3)],
+      ['m1_qpps', 'M1 QPPS', v => String(v)],
+      ['m2_kp', 'M2 Kp', v => Number(v).toFixed(3)],
+      ['m2_ki', 'M2 Ki', v => Number(v).toFixed(3)],
+      ['m2_kd', 'M2 Kd', v => Number(v).toFixed(3)],
+      ['m2_qpps', 'M2 QPPS', v => String(v)],
+      ['enc_mode_m1', 'Enc Mode M1', v => '0x' + Number(v).toString(16).padStart(2, '0').toUpperCase()],
+      ['enc_mode_m2', 'Enc Mode M2', v => '0x' + Number(v).toString(16).padStart(2, '0').toUpperCase()],
+      ['config', 'Config', v => '0x' + Number(v).toString(16).padStart(4, '0').toUpperCase()],
+    ];
+
+    function renderClawHw(hw) {
+      const host = document.getElementById('claw-hw');
+      const note = document.getElementById('claw-hw-note');
+      if (!host) return;
+
+      if (!hw || !hw.valid) {
+        host.innerHTML = '<div style="font-size:11px;color:var(--txt3)">press READ FROM ROBOCLAW</div>';
+        if (note) { note.textContent = 'not read yet'; note.style.color = 'var(--txt3)'; }
+        return;
+      }
+
+      host.innerHTML = CLAW_HW_FIELDS.map(([k, label, fmt]) => {
+        const v = hw[k];
+        if (v === undefined || v === null)
+          return `<div class="rb-item"><div class="rb-k">${label}</div><div class="rb-v" style="color:var(--txt3)">––</div></div>`;
+        return `<div class="rb-item"><div class="rb-k">${label}</div><div class="rb-v">${fmt(v)}</div></div>`;
+      }).join('');
+
+      // The two motors having different gains is not a thing you would ever set
+      // on purpose on a differential drive, so say so loudly rather than
+      // leaving it for the eye to catch across eight tiles.
+      const asym = ['kp', 'ki', 'kd'].some(g =>
+        Math.abs(Number(hw['m1_' + g]) - Number(hw['m2_' + g])) > 1e-3)
+        || Number(hw.m1_qpps) !== Number(hw.m2_qpps);
+      const encDiff = Number(hw.enc_mode_m1) !== Number(hw.enc_mode_m2);
+
+      if (note) {
+        const flags = [];
+        if (asym) flags.push('M1/M2 gains differ');
+        if (encDiff) flags.push('encoder modes differ');
+        note.textContent = flags.length ? flags.join(' · ') : 'read OK';
+        note.style.color = flags.length ? 'var(--orange)' : 'var(--txt3)';
+      }
+    }
+
+    // Field order is the order of the controls below it, so the eye can track
+    // straight down from a readback tile to the thing that sets it.
+    const CLAW_RB_FIELDS = [
+      ['mode', 'Mode', v => ['Duty', 'Velocity', 'Vel+Accel'][v] ?? String(v)],
+      ['qpps_max', 'QPPS Max', v => String(v)],
+      ['accel_qpps', 'Accel', v => String(v)],
+      ['pol_l', 'Motor L', v => (v > 0 ? '+1' : '−1')],
+      ['pol_r', 'Motor R', v => (v > 0 ? '+1' : '−1')],
+      ['enc_pol_l', 'Enc L', v => (v > 0 ? '+1' : '−1')],
+      ['enc_pol_r', 'Enc R', v => (v > 0 ? '+1' : '−1')],
+      ['kp', 'Claw Kp', v => Number(v).toFixed(3)],
+      ['ki', 'Claw Ki', v => Number(v).toFixed(3)],
+      ['kd', 'Claw Kd', v => Number(v).toFixed(3)],
+      ['baud', 'Baud', v => String(v)],
+    ];
+
+    function renderClawReadback() {
+      const host = document.getElementById('claw-readback');
+      if (!host) return;
+      const age = document.getElementById('claw-rb-age');
+
+      if (!clawCfgBot) {
+        host.innerHTML = '<div style="font-size:11px;color:var(--txt3)">no motor_config in telemetry yet</div>';
+        if (age) age.textContent = 'waiting…';
+        return;
+      }
+
+      let drifted = 0;
+      const html = CLAW_RB_FIELDS.map(([k, label, fmt]) => {
+        const bv = clawCfgBot[k];
+        if (bv === undefined || bv === null)
+          return `<div class="rb-item"><div class="rb-k">${label}</div><div class="rb-v" style="color:var(--txt3)">––</div></div>`;
+        // Numeric compare with a tolerance: the PID gains round-trip through
+        // the RoboClaw as x/65536 fixed point, so an exact === never matches.
+        const uv = clawCfg[k];
+        const drift = uv !== undefined && Math.abs(Number(bv) - Number(uv)) > 1e-3;
+        if (drift) drifted++;
+        return `<div class="rb-item${drift ? ' drift' : ''}">` +
+          `<div class="rb-k">${label}</div>` +
+          `<div class="rb-v">${fmt(bv)}</div>` +
+          (drift ? `<div class="rb-ui">ui ${fmt(uv)}</div>` : '') +
+          `</div>`;
+      }).join('');
+      host.innerHTML = html;
+
+      if (age) {
+        const secs = ((Date.now() - clawCfgBotMs) / 1000).toFixed(1);
+        age.textContent = drifted
+          ? `${drifted} differ · ${secs}s ago`
+          : `in sync · ${secs}s ago`;
+        age.style.color = drifted ? 'var(--orange)' : 'var(--txt3)';
+      }
+      const btn = document.getElementById('claw-revert');
+      if (btn) btn.style.display = drifted ? '' : 'none';
+    }
+
+    // Discard the UI's copy and adopt what the bot actually has. The way out of
+    // "I do not know which of these two numbers is real".
+    function revertClawToBot() {
+      if (!clawCfgBot) return;
+      for (const [k] of CLAW_RB_FIELDS) {
+        if (clawCfgBot[k] !== undefined && clawCfgBot[k] !== null)
+          clawCfg[k] = clawCfgBot[k];
+      }
+      syncClawTab();
+      renderClawReadback();
     }
 
     function syncPolSeg(segId, val) {
-      const btns = document.querySelectorAll('#' + segId + ' .seg-btn');
-      btns.forEach(b => b.classList.toggle('active', parseFloat(b.textContent) === val));
+      // Was: parseFloat(b.textContent) === val. The -1 buttons are labelled with
+      // U+2212 MINUS SIGN (typographic, not ASCII '-'), and parseFloat of that is
+      // NaN -- so the -1 button never matched, and with val=-1 neither did +1.
+      // Both buttons sat unhighlighted and the card showed you nothing.
+      document.querySelectorAll('#' + segId + ' .seg-btn').forEach(b =>
+        b.classList.toggle('active', Number(b.dataset.pol) === Number(val)));
     }
 
     function syncBaudSeg(baud) {
@@ -4181,10 +5019,12 @@
         enc_pol_l: clawCfg.enc_pol_l, enc_pol_r: clawCfg.enc_pol_r,
         baud: clawCfg.baud,
       });
+      renderClawReadback();
     }
 
     function sendClawPID() {
       sendCmd({ type: 'set_claw_pid', kp: clawCfg.kp, ki: clawCfg.ki, kd: clawCfg.kd });
+      renderClawReadback();
     }
 
     function setClawMode(m) {
@@ -4197,12 +5037,58 @@
       sendMotorConfig();
     }
 
-    function onClawCfg(key, raw) {
-      const v = parseFloat(raw);
-      if (isNaN(v)) return;
-      clawCfg[key] = (key === 'qpps_max' || key === 'accel_qpps') ? Math.round(v) : v;
-      setSliderVal(key === 'qpps_max' ? 'qpps' : 'accel', clawCfg[key]);
+    // One encoder tick is this much commanded speed, so QPPS can be shown in a
+    // unit you can picture. 145.1 PPR, 4.75in wheels:
+    //   (1/145.1) rev x 120.65mm x pi = 2.611 mm  ->  0.10281 in
+    const IN_PER_TICK = (120.65 * Math.PI / 145.1) / 25.4;
+
+    function markDirty(el) { el.classList.add('dirty'); }
+
+    function commitOobAngle(raw) {
+      const el = document.getElementById('in-oob-angle');
+      let v = parseFloat(raw);
+      if (!isFinite(v)) { if (el) el.value = state.oobAngleDeg ?? 15; return; }
+      if (v < 5) v = 5;
+      if (v > 45) v = 45;
+      if (el) { el.value = v; el.classList.remove('dirty'); }
+      sendCmd({ type: 'set_oob_angle', value: v });
+    }
+
+    function clawHint(key) {
+      const el = document.getElementById('hint-' + key);
+      if (!el) return;
+      if (key === 'qpps_max') {
+        const ips = clawCfg.qpps_max * IN_PER_TICK;
+        el.textContent = 'full scale ' + ips.toFixed(1) + ' in/s (' +
+                         (ips * 0.0254).toFixed(2) + ' m/s)';
+      } else if (key === 'accel_qpps') {
+        el.textContent = (clawCfg.mode === 2)
+          ? (clawCfg.qpps_max / clawCfg.accel_qpps).toFixed(2) + 's to full scale'
+          : 'unused in this drive mode - only mode 2 sends accel';
+      }
+    }
+
+    // Commit on Enter or on leaving the field, never per keystroke. Sends once.
+    // The field stays orange (dirty) until the bot's own config packet comes back
+    // and syncClawTab clears it, so a value that did not land stays visibly
+    // uncommitted instead of looking accepted.
+    function commitClaw(key, raw) {
+      const el = document.getElementById('in-' + key);
+      const v = Math.round(parseFloat(raw));
+      if (!isFinite(v) || v < 1) { syncClawTab(); return; }
+      clawCfg[key] = v;
+      if (el) el.value = v;
+      clawHint(key);
       sendMotorConfig();
+    }
+
+    function commitClawPID(key, raw) {
+      const v = parseFloat(raw);
+      if (!isFinite(v) || v < 0) { syncClawPIDUI(); return; }
+      clawCfg[key] = v;
+      const el = document.getElementById('in-claw-' + key);
+      if (el) el.value = v;
+      sendClawPID();
     }
 
     function setPolarity(key, val) {
@@ -4223,42 +5109,78 @@
 
     function syncClawPIDUI() {
       ['kp', 'ki', 'kd'].forEach(k => {
-        const sl = document.getElementById('sl-claw-' + k);
-        const vb = document.getElementById('vb-claw-' + k);
-        if (sl) sl.value = clawCfg[k];
-        if (vb) vb.value = clawCfg[k].toFixed(3);
+        const el = document.getElementById('in-claw-' + k);
+        if (el) { el.value = clawCfg[k]; el.classList.remove('dirty'); }
       });
     }
 
-    function onClawPID(key, raw) {
-      const v = parseFloat(raw);
-      if (isNaN(v) || v < 0) return;
-      clawCfg[key] = v;
-      const vb = document.getElementById('vb-claw-' + key);
-      const sl = document.getElementById('sl-claw-' + key);
-      if (vb) vb.value = v.toFixed(3);
-      if (sl) sl.value = v;
-      sendClawPID();
+    function startLoopLog() {
+      const el = document.getElementById('in-looplog');
+      const hint = document.getElementById('hint-looplog');
+      const btn = document.getElementById('btn-looplog');
+      let secs = Math.round(parseFloat(el && el.value));
+      if (!isFinite(secs) || secs < 1) secs = 20;
+      if (secs > 40) secs = 40;
+      if (el) el.value = secs;
+      if (!sendCmd({ type: 'looplog', seconds: secs })) return;
+      resetLinkStats();
+
+      // The bot is busy balancing and sends no progress, so the countdown is
+      // local. It only has to be right to the second.
+      let left = secs;
+      if (btn) { btn.disabled = true; btn.textContent = left + 's'; }
+      const tick = setInterval(() => {
+        left--;
+        if (left > 0) {
+          if (btn) btn.textContent = left + 's';
+          return;
+        }
+        clearInterval(tick);
+        if (btn) { btn.disabled = false; btn.innerHTML = '&#9210; 100Hz'; }
+        // Give the bot a beat to finish writing, then pull the file straight
+        // into the browser. The capture used to land in /tmp on the bot and
+        // need a separate scp from a different tool, which is a silly way to
+        // move 700 KB you just asked for.
+        setTimeout(fetchLoopLog, 600);
+      }, 1000);
+      if (btn) btn.textContent = left + 's';
+      if (hint) hint.textContent = 'downloads automatically when done';
     }
 
-    function stepClawPID(key, dir) {
-      const steps = { kp: 0.1, ki: 0.01, kd: 0.01 };
-      const maxes = { kp: 10, ki: 5, kd: 5 };
-      const delta = dir * steps[key] * (pidMult['claw'] || 1);
-      let v = Math.round((clawCfg[key] + delta) * 10000) / 10000;
-      v = Math.max(0, Math.min(maxes[key], v));
-      clawCfg[key] = v;
-      const sl = document.getElementById('sl-claw-' + key);
-      const vb = document.getElementById('vb-claw-' + key);
-      if (sl) sl.value = v;
-      if (vb) vb.value = v.toFixed(3);
-      sendClawPID();
+    async function fetchLoopLog() {
+      const hint = document.getElementById('hint-looplog');
+      try {
+        const res = await fetch('/bbot.csv', { cache: 'no-store' });
+        if (!res.ok) throw new Error(await res.text());
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'bbot.csv';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+        if (hint) {
+          hint.style.color = '';
+          hint.textContent = 'saved (' + Math.round(blob.size / 1024) + ' KB)';
+        }
+      } catch (e) {
+        if (hint) {
+          hint.style.color = 'var(--orange)';
+          hint.textContent = 'download failed: ' + e.message;
+        }
+      }
     }
 
     function doReboot() {
       if (!confirm('Restart the balance_bot service on the BBB?')) return;
       sendCmd({ type: 'reboot_app' });
     }
+
+    // Paint the Claw tab once at load so it says what it is waiting for, rather
+    // than sitting empty until the first packet arrives.
+    try { renderClawHw(null); renderClawReadback(); syncClawTab(); }
+    catch (e) { console.warn('claw: initial paint', e); }
 
     document.querySelectorAll('.tab').forEach(t =>
       t.addEventListener('click', () => switchTab(t.dataset.tab)));
@@ -4325,6 +5247,7 @@
     // Init
     // ════════════════════════════════════════════════════════════════════════════
     buildPosSliders();
+    buildResSelectors();
     rebuildPlots();
     requestAnimationFrame(loop);
 

@@ -1,6 +1,14 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright (c) 2025-2026 Ryan Lush <ryan.lush@gmail.com>
+#
+# This file is part of balance_bot, licensed under the PolyForm
+# Noncommercial License 1.0.0. You may use, study, modify, and share
+# it for any noncommercial purpose. Commercial use requires a separate
+# license from the author -- contact ryan.lush@gmail.com.
+# Full license text: see the LICENSE file in the project root, or
+# https://polyformproject.org/licenses/noncommercial/1.0.0/
+
 # bot_aliases.sh — balance_bot service control, sourced from ~/.bashrc
-# SPDX-License-Identifier: MIT
-# Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
 #
 # THE SPLIT. This file holds what is specific to THIS PROJECT: the services,
 # their logs, and the project's own tools. Everything about having a usable

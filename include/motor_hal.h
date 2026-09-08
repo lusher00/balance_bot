@@ -1,43 +1,13 @@
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Copyright (c) 2025-2026 Ryan Lush <ryan.lush@gmail.com>
 //
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
+// This file is part of balance_bot, licensed under the PolyForm
+// Noncommercial License 1.0.0. You may use, study, modify, and share
+// it for any noncommercial purpose. Commercial use requires a separate
+// license from the author -- contact ryan.lush@gmail.com.
+// Full license text: see the LICENSE file in the project root, or
+// https://polyformproject.org/licenses/noncommercial/1.0.0/
+
 /**
  * @file motor_hal.h
  * @brief Motor and encoder hardware abstraction layer.
@@ -204,6 +174,30 @@ int motor_hal_read_encoder_speeds(int32_t *m1_qpps, int32_t *m2_qpps);
  * @return 0 on success, -1 on error
  */
 int motor_hal_read_temp(float *temp_c);
+
+/* What the RoboClaw itself reports, read back over serial -- NOT balance_bot's
+ * copy of robot.conf.  If the controller was configured in Ion Studio (motor
+ * or encoder inverted inside the unit), robot.conf cannot tell you and this
+ * can.  Settings, not signals: poll it rarely, it costs six serial round
+ * trips.  Returns 0 on success, -1 if any read failed. */
+typedef struct
+{
+    float m1_kp, m1_ki, m1_kd;
+    uint32_t m1_qpps;
+    float m2_kp, m2_ki, m2_kd;
+    uint32_t m2_qpps;
+    uint8_t enc_mode_m1;   /* GETENCODERMODE, raw */
+    uint8_t enc_mode_m2;
+    uint16_t config;       /* GETCONFIG, raw */
+    int valid;   /* int, not bool: motor_hal.h does not pull in stdbool */
+} claw_hw_settings_t;
+
+int motor_hal_read_hw_settings(claw_hw_settings_t *out);
+
+/* Non-zero when the RoboClaw has stopped answering and serial I/O is being
+ * skipped to protect the control loop rate. Clears itself when it answers
+ * again -- no restart needed. */
+int motor_hal_link_down(void);
 
 /**
  * @brief Change the serial baud rate for the RoboClaw connection on the fly.

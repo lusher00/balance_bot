@@ -1,3 +1,13 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright (c) 2025-2026 Ryan Lush <ryan.lush@gmail.com>
+#
+# This file is part of balance_bot, licensed under the PolyForm
+# Noncommercial License 1.0.0. You may use, study, modify, and share
+# it for any noncommercial purpose. Commercial use requires a separate
+# license from the author -- contact ryan.lush@gmail.com.
+# Full license text: see the LICENSE file in the project root, or
+# https://polyformproject.org/licenses/noncommercial/1.0.0/
+
 # balance_bot Makefile
 # Self-balancing robot with iPhone app integration
 
@@ -141,23 +151,34 @@ install-units:
 	sudo systemctl daemon-reload
 
 # Install to system
+#
+# This used to stop and restart $(SERVICE)/$(SERVER_SERVICE) unconditionally,
+# every time -- including a `make install` where every object was already up
+# to date and the link step had nothing to do. That bounces a robot that is
+# armed and balancing for zero reason: no new code reached it, just a few
+# seconds of motors off and a fresh robot.conf load. "Nothing to build" must
+# mean "nothing to restart". Only bounce the services when the binary that
+# would land in /usr/local/bin actually differs from what is already there.
 install: $(BINDIR)/$(TARGET) install-units
-	@echo "Stopping $(SERVICE) and $(SERVER_SERVICE)..."
-	sudo systemctl daemon-reload
-	sudo systemctl stop $(SERVICE) || true
-	sudo systemctl stop $(SERVER_SERVICE) || true
-	@echo "Installing $(TARGET) to /usr/local/bin/..."
-	sudo cp $(BINDIR)/$(TARGET) /usr/local/bin/$(TARGET)
+	@if sudo cmp -s $(BINDIR)/$(TARGET) /usr/local/bin/$(TARGET) 2>/dev/null; then \
+		echo "$(TARGET) unchanged — $(SERVICE) and $(SERVER_SERVICE) left running."; \
+	else \
+		echo "Stopping $(SERVICE) and $(SERVER_SERVICE)..."; \
+		sudo systemctl stop $(SERVICE) || true; \
+		sudo systemctl stop $(SERVER_SERVICE) || true; \
+		echo "Installing $(TARGET) to /usr/local/bin/..."; \
+		sudo cp $(BINDIR)/$(TARGET) /usr/local/bin/$(TARGET); \
+		echo "Restarting $(SERVICE) and $(SERVER_SERVICE)..."; \
+		sudo systemctl start $(SERVICE) || true; \
+		sudo systemctl start $(SERVER_SERVICE) || true; \
+		echo ""; \
+		echo "✅ Installed and restarted: /usr/local/bin/$(TARGET)"; \
+		echo ""; \
+	fi
 	@# No config seeding here. balance_bot writes robot.conf itself on first
 	@# run, migrating from pidconfig.txt + /etc/balance_bot_imu.conf if present.
 	@# The old block here wrote a positional file with gains that were not this
 	@# robot's, which the migration would then have adopted.
-	@echo "Restarting $(SERVICE) and $(SERVER_SERVICE)..."
-	sudo systemctl start $(SERVICE) || true
-	sudo systemctl start $(SERVER_SERVICE) || true
-	@echo ""
-	@echo "✅ Installed and restarted: /usr/local/bin/$(TARGET)"
-	@echo ""
 	@# OLED last, and deliberately non-fatal. install.sh refuses to proceed if
 	@# luma.oled/pillow are missing for the service user, and a status display
 	@# failing its dependency check must not leave the robot uninstalled — by

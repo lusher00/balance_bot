@@ -1,43 +1,13 @@
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Copyright (c) 2025-2026 Ryan Lush <ryan.lush@gmail.com>
 //
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
+// This file is part of balance_bot, licensed under the PolyForm
+// Noncommercial License 1.0.0. You may use, study, modify, and share
+// it for any noncommercial purpose. Commercial use requires a separate
+// license from the author -- contact ryan.lush@gmail.com.
+// Full license text: see the LICENSE file in the project root, or
+// https://polyformproject.org/licenses/noncommercial/1.0.0/
+
 /**
  * @file robot.c
  * @brief Main robot control loop with telemetry and IPC integration
@@ -61,6 +31,14 @@ robot_state_t state = {0};
 rc_mpu_data_t mpu_data;
 pid_controller_t pitch_pid, yaw_pid;
 
+/* Low-pass state for the position hold's velocity damping term. File scope so
+ * the disarm path can clear it. */
+static float vel_damp_filt = 0.0f;
+
+/* Integral accumulator for the position hold, in DEGREES of lean (not raw
+ * tick-seconds) so pos_i_max is a limit you can reason about directly. */
+static float pos_integ = 0.0f;
+
 controller_enables_t g_controllers = {
     .pitch = true,
     .position = true,
@@ -78,6 +56,7 @@ sbus_config_t g_sbus_config;
 
 // Runtime-tunable motor/RoboClaw drive parameters (initialised in robot_init)
 motor_config_t g_motor_config;
+int g_arm_at_boot = 0;
 
 // Debug configuration (defined in debug_config.h, initialized in main.c)
 debug_config_t g_debug_config;
@@ -100,6 +79,15 @@ static volatile float pending_left_duty = 0.0f;
 static volatile float pending_right_duty = 0.0f;
 static volatile int motor_output_ready = 0;
 
+// The one out-of-bounds angle both the ISR's actuation gate and robot_run()'s
+// hard cutoff must agree on. Used to live as two separate "15.0f" literals --
+// the ISR's gate never actually had one, which is how arming at 18deg briefly
+// drove the wheels every ISR tick until the main loop's cutoff caught up.
+// Runtime-tunable now (robot.conf [system] oob_angle_deg) rather than a
+// compile-time constant -- 15.0f here is only the default before a config
+// loads or if the key is absent.
+float g_oob_angle_deg = 15.0f;
+
 /**
  * @brief IMU interrupt callback — runs at SAMPLE_RATE_HZ.
  *
@@ -118,16 +106,16 @@ static void imu_interrupt(void)
     state.theta_dot = t.pitch_dot; // deg/s
     state.psi = t.yaw;             // deg
 
-    // Motors only run when armed AND in safe angle range (trying)
-    if (!state.armed || !state.trying)
-    {
-        pending_left_duty = 0.0f;
-        pending_right_duty = 0.0f;
-        motor_output_ready = 0;
-        return;
-    }
-
-    // PID — setpoints and encoder positions are maintained by the main loop.
+    // Ungated: PID runs every tick regardless of armed/trying, so telemetry
+    // (this writes pitch_pid.last_p_term/i_term/d_term/last_output, which
+    // telemetry.c reads directly) and integrator history stay live instead of
+    // freezing mid-fall. Actuation is still gated below -- this only decides
+    // whether the math runs, not whether the wheels move. The gate below now
+    // checks eff_angle itself (not just armed/trying), so this ISR never
+    // publishes real duty while out of bounds. robot_run()'s own
+    // eff_angle>g_oob_angle_deg cutoff still forces motor_hal_set_both(0,0) +
+    // standby(1) unconditionally on top of this, every main-loop tick, as a
+    // second, independent stop for anything that reaches the hardware.
     float balance_output = 0.0f;
     float yaw_output = 0.0f;
 
@@ -145,7 +133,29 @@ static void imu_interrupt(void)
     }
     else
     {
-        yaw_output = state.yaw;
+        /* Was: yaw_output = state.yaw.  state.yaw is a HEADING TARGET in
+         * degrees of phi_diff (see its declaration in balance_bot.h) -- a
+         * setpoint, not a duty.  Feeding it straight into the differential
+         * below mixes units: phi_now grows without bound as the wheels turn,
+         * so within a metre of travel state.yaw is large enough to saturate
+         * left/right to ±1 and the bot spins at full authority.  That is why
+         * turning the yaw controller OFF made the spin worse rather than
+         * removing it.  Disabled means no differential. */
+        yaw_output = 0.0f;
+    }
+
+    // Motors only ACTUATE when armed, trying, AND actually in safe angle
+    // range -- checked here, in the ISR, not just in robot_run()'s separate
+    // cutoff. trying no longer implies "in range" (it is persistent now), so
+    // this angle check is the only thing standing between an out-of-bounds
+    // arm and the wheels. pid_update() above already ran either way.
+    float eff_angle = fabsf(state.theta - state.theta_offset);
+    if (!state.armed || !state.trying || eff_angle > g_oob_angle_deg)
+    {
+        pending_left_duty = 0.0f;
+        pending_right_duty = 0.0f;
+        motor_output_ready = 0;
+        return;
     }
 
     float left_duty = balance_output - yaw_output;
@@ -157,6 +167,175 @@ static void imu_interrupt(void)
     pending_left_duty = left_duty;
     pending_right_duty = right_duty;
     motor_output_ready = 1;
+}
+
+/* ── Loop-rate logging ──────────────────────────────────────────────────────
+ * The websocket telemetry runs at 20 Hz while this loop runs at 100 Hz, which
+ * puts Nyquist at 10 Hz. Anything the derivative term does above that -- which
+ * on a noisy IMU is most of what it does -- folds back and shows up in a
+ * spectrum as low-frequency content that was never there. Tuning decisions made
+ * from a 20 Hz log of a 100 Hz loop are decisions made from aliases.
+ *
+ * So: capture into RAM at full loop rate, write the file afterwards. No file
+ * I/O inside the loop at all -- one struct copy per tick, ~120 bytes memcpy.
+ * Columns are byte-identical to the dashboard's CSV export so tools/analyze_tune.py
+ * and every existing plot work on it unchanged. */
+
+#define LOOPLOG_MAX_SEC   40
+#define LOOPLOG_MAX       (LOOPLOG_MAX_SEC * SAMPLE_RATE_HZ)
+#define LOOPLOG_PATH      "/tmp/bbot.csv"
+
+typedef struct
+{
+    float t;
+    float pit_sp, pit_meas, pit_err, pit_p, pit_i, pit_d, pit_out;
+    int32_t enc_target, enc_pos, enc_err;
+    float enc_vel, enc_vel_raw, enc_vel_mid, enc_vel_long;
+    float pos_corr, vel_damp, theta_adj, active_scale;
+    float yaw_sp, yaw_meas, yaw_err, yaw_p, yaw_i, yaw_d, yaw_out;
+    float left_duty, right_duty;
+    float loop_hz;
+    int32_t link_down;
+} looplog_row_t;
+
+static looplog_row_t looplog_buf[LOOPLOG_MAX];
+static int      looplog_n      = 0;
+static int      looplog_want   = 0;     /* rows to capture; 0 = idle */
+static uint64_t looplog_t0_us  = 0;
+static volatile int looplog_flush = 0;  /* set by the loop, cleared after write */
+
+int looplog_start(int seconds)
+{
+    if (looplog_want)
+        return -1;                      /* already running */
+    if (seconds < 1) seconds = 1;
+    if (seconds > LOOPLOG_MAX_SEC) seconds = LOOPLOG_MAX_SEC;
+    looplog_n     = 0;
+    looplog_t0_us = 0;
+    looplog_flush = 0;
+    looplog_want  = seconds * SAMPLE_RATE_HZ;
+    LOG_WARN("looplog: capturing %d s at %d Hz -> %s", seconds, SAMPLE_RATE_HZ, LOOPLOG_PATH);
+    return 0;
+}
+
+int looplog_active(void) { return looplog_want != 0; }
+
+/* Called every loop tick. Cheap by construction: a bounds test and a copy. */
+static void looplog_tick(void)
+{
+    if (!looplog_want || looplog_n >= looplog_want)
+        return;
+
+    uint64_t now = rc_nanos_since_boot() / 1000;
+    if (looplog_n == 0)
+        looplog_t0_us = now;
+
+    looplog_row_t *r = &looplog_buf[looplog_n++];
+    r->t            = (float)(now - looplog_t0_us) / 1e6f;
+    r->pit_sp       = g_telemetry_data.pitch.setpoint;
+    r->pit_meas     = g_telemetry_data.pitch.measurement;
+    r->pit_err      = g_telemetry_data.pitch.error;
+    r->pit_p        = g_telemetry_data.pitch.p_term;
+    r->pit_i        = g_telemetry_data.pitch.i_term;
+    r->pit_d        = g_telemetry_data.pitch.d_term;
+    r->pit_out      = g_telemetry_data.pitch.output;
+    r->enc_target   = g_telemetry_data.position.enc_pos_target;
+    r->enc_pos      = g_telemetry_data.position.enc_pos;
+    r->enc_err      = g_telemetry_data.position.enc_error;
+    r->enc_vel      = g_telemetry_data.position.enc_velocity;
+    r->enc_vel_raw  = g_telemetry_data.position.enc_velocity_raw;
+    r->enc_vel_mid  = g_telemetry_data.position.enc_vel_lsq_mid;
+    r->enc_vel_long = g_telemetry_data.position.enc_vel_lsq_long;
+    r->pos_corr     = g_telemetry_data.position.pos_correction;
+    r->vel_damp     = g_telemetry_data.position.vel_damp;
+    r->theta_adj    = g_telemetry_data.position.theta_ref_adj;
+    r->active_scale = g_telemetry_data.position.active_scale;
+    r->yaw_sp       = g_telemetry_data.yaw.setpoint;
+    r->yaw_meas     = g_telemetry_data.yaw.measurement;
+    r->yaw_err      = g_telemetry_data.yaw.error;
+    r->yaw_p        = g_telemetry_data.yaw.p_term;
+    r->yaw_i        = g_telemetry_data.yaw.i_term;
+    r->yaw_d        = g_telemetry_data.yaw.d_term;
+    r->yaw_out      = g_telemetry_data.yaw.output;
+    r->left_duty    = g_telemetry_data.motors.left_duty;
+    r->right_duty   = g_telemetry_data.motors.right_duty;
+    /* The two columns that say whether the rest of the row means anything.
+     * A tick logged at 30 Hz was computed with pid->dt = 0.01 s regardless, so
+     * its d_term is inflated by the ratio -- the gains on that row are not the
+     * gains in robot.conf. */
+    r->loop_hz      = g_telemetry_data.system.loop_hz;
+    r->link_down    = motor_hal_link_down();
+
+    if (looplog_n >= looplog_want)
+        looplog_flush = 1;
+}
+
+/* Called from the loop OUTSIDE the timing-critical section, once, when the
+ * capture is full. Writing 4000 rows takes a few ms -- fine here, not fine
+ * inside the tick. */
+static void looplog_write_if_full(void)
+{
+    if (!looplog_flush)
+        return;
+    looplog_flush = 0;
+
+    FILE *f = fopen(LOOPLOG_PATH, "w");
+    if (!f)
+    {
+        LOG_WARN("looplog: cannot open %s", LOOPLOG_PATH);
+        looplog_want = 0;
+        return;
+    }
+
+    /* Header carries the config the run was made under. A log that cannot say
+     * what it was recorded with cannot be compared against another log. */
+    fprintf(f, "# bbot loop-rate log\n");
+    fprintf(f, "# rate_hz=%d rows=%d\n", SAMPLE_RATE_HZ, looplog_n);
+    fprintf(f, "# pit_gains: kp=%g ki=%g kd=%g\n",
+            g_telemetry_data.pitch.kp, g_telemetry_data.pitch.ki, g_telemetry_data.pitch.kd);
+    fprintf(f, "# yaw_gains: kp=%g ki=%g kd=%g\n",
+            g_telemetry_data.yaw.kp, g_telemetry_data.yaw.ki, g_telemetry_data.yaw.kd);
+    fprintf(f, "# pos_config: zone_a=%d zone_b=%d zone_c=%d\n",
+            g_pos_config.zone_a, g_pos_config.zone_b, g_pos_config.zone_c);
+    fprintf(f, "#   scale_a=%g scale_b=%g scale_c=%g scale_d=%g\n",
+            g_pos_config.scale_a, g_pos_config.scale_b, g_pos_config.scale_c, g_pos_config.scale_d);
+    fprintf(f, "#   vel_scale_stop=%g vel_scale_move=%g vel_scale_turning=%g\n",
+            g_pos_config.vel_scale_stop, g_pos_config.vel_scale_move, g_pos_config.vel_scale_turning);
+    fprintf(f, "#   max_correction=%g max_angle_rate=%g pos_deadband=%d back_to_spot=%d\n",
+            g_pos_config.max_correction, g_pos_config.max_angle_rate,
+            g_pos_config.pos_deadband, g_pos_config.back_to_spot);
+    fprintf(f, "# motor: mode=%d qpps_max=%d claw_kp=%g claw_ki=%g claw_kd=%g\n",
+            g_motor_config.mode, g_motor_config.qpps_max,
+            g_motor_config.claw_kp, g_motor_config.claw_ki, g_motor_config.claw_kd);
+
+    /* Same column names as the dashboard CSV export, on purpose. */
+    fprintf(f, "t,pit_setpoint,pit_measurement,pit_error,pit_pTerm,pit_iTerm,pit_dTerm,"
+               "pit_output,pos_encTarget,pos_encPos,pos_encError,pos_encVel,pos_encVelRaw,"
+               "pos_encVelMid,pos_encVelLong,pos_posCorr,pos_velDamp,pos_thetaAdj,"
+               "pos_activeScale,yaw_setpoint,yaw_measurement,yaw_error,yaw_pTerm,yaw_iTerm,"
+               "yaw_dTerm,yaw_output,mot_leftDuty,mot_rightDuty,mot_dutyDiff,"
+               "sys_loopHz,sys_linkDown\n");
+
+    for (int i = 0; i < looplog_n; i++)
+    {
+        const looplog_row_t *r = &looplog_buf[i];
+        fprintf(f,
+                "%.4f,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,"
+                "%d,%d,%d,%.4f,%.4f,%.4f,%.4f,"
+                "%.4f,%.4f,%.4f,%.4f,"
+                "%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,"
+                "%.4f,%.4f,%.4f,%.1f,%d\n",
+                r->t, r->pit_sp, r->pit_meas, r->pit_err, r->pit_p, r->pit_i, r->pit_d, r->pit_out,
+                r->enc_target, r->enc_pos, r->enc_err,
+                r->enc_vel, r->enc_vel_raw, r->enc_vel_mid, r->enc_vel_long,
+                r->pos_corr, r->vel_damp, r->theta_adj, r->active_scale,
+                r->yaw_sp, r->yaw_meas, r->yaw_err, r->yaw_p, r->yaw_i, r->yaw_d, r->yaw_out,
+                r->left_duty, r->right_duty, r->right_duty - r->left_duty,
+                r->loop_hz, r->link_down);
+    }
+    fclose(f);
+    LOG_WARN("looplog: wrote %d rows to %s", looplog_n, LOOPLOG_PATH);
+    looplog_want = 0;
 }
 
 /**
@@ -310,6 +489,27 @@ void robot_run(void)
             last_batt_us = now_us;
         }
 
+        // ── Arm at boot ──────────────────────────────────────────────────
+        // Fires once, on this loop's first iteration -- by construction that's
+        // after robot_init()/robot_config_apply() have run and the IMU/DMP
+        // interrupt is live, so state.theta is real data, not a zero default.
+        // Only sets armed+trying; the ISR's own eff_angle>g_oob_angle_deg check
+        // still gates real actuation exactly like an operator-pressed ARM.
+        static int boot_arm_tried = 0;
+        if (!boot_arm_tried)
+        {
+            boot_arm_tried = 1;
+            if (g_arm_at_boot && !state.estop_latched && !state.armed)
+            {
+                state.armed = 1;
+                state.trying = 1;
+                motor_hal_standby(0);
+                rc_led_set(RC_LED_GREEN, 1);
+                LOG_INFO("arm_at_boot: armed automatically at startup (theta=%.2f)",
+                         state.theta);
+            }
+        }
+
         // ── Disarm handling ───────────────────────────────────────────────
         static int prev_armed = 0;
         if (prev_armed && !state.armed)
@@ -324,14 +524,18 @@ void robot_run(void)
             last_left_duty = 0.0f;
             last_right_duty = 0.0f;
             state.enc_pos_target = state.enc_pos;
+            pos_integ = 0.0f;   /* target moved — accumulated error is stale */
         }
         if (!prev_armed && state.armed)
         {
             state.enc_pos_target = state.enc_pos;
+            pos_integ = 0.0f;   /* target moved — accumulated error is stale */
             state.theta_ref = 0.0f;
-            // If already in bounds when armed, enable motor output immediately
-            if (fabsf(state.theta - state.theta_offset) < 14.0f)
-                state.trying = 1;
+            // trying is persistent now -- tracks armed directly, no angle gate.
+            // The ISR's own eff_angle>g_oob_angle_deg check (imu_interrupt, above
+            // in this file) is what actually protects a bad arming angle; it
+            // just means trying=1 sits inert until in range.
+            state.trying = 1;
         }
         prev_armed = state.armed;
 
@@ -455,14 +659,16 @@ void robot_run(void)
                     last_vel_us = now_us;
                 }
 
-                /* Only one of these controls. The rest are evidence. */
-#if POS_VEL_USE_LSQ
-                state.enc_velocity     = lsq[POS_VEL_USE_LSQ - 1];
-                state.enc_velocity_raw = vel_claw;
-#else
-                state.enc_velocity     = vel_claw;
-                state.enc_velocity_raw = lsq[0];
-#endif
+                /* Only one of these controls. The rest are evidence.
+                 * Runtime-selected so velocity sources can be A/B'd against
+                 * each other in one session instead of one per rebuild. */
+                {
+                    int src = g_pos_config.vel_src;
+                    if (src < 0 || src > 3)
+                        src = 0;
+                    state.enc_velocity     = (src == 0) ? vel_claw : lsq[src - 1];
+                    state.enc_velocity_raw = (src == 0) ? lsq[0]   : vel_claw;
+                }
                 state.enc_vel_lsq_mid  = lsq[1];
                 state.enc_vel_lsq_long = lsq[2];
             }
@@ -638,28 +844,31 @@ void robot_run(void)
                 state.yaw = state.steering_latch;
         }
 
-        // ── Fall detection / auto-recovery ────────────────────────────────
-        // trying  = angle is within recoverable range (<10°), managed automatically
-        // armed   = operator intent, set/cleared by IPC only — never auto-set here
+        // ── Hard OOB cutoff (edge-triggered) ───────────────────────────────
+        // trying is now persistent — it tracks armed directly (set together at
+        // ARM/DISARM/E-STOP) and is no longer auto-cleared by angle. Ryan asked
+        // to ungate the control loop and stop the angle hysteresis from
+        // requiring a trip back through <10 deg before it would try again.
         //
-        // States:
-        //   armed=1, trying=1  → running normally
-        //   armed=0, trying=1  → operator disarmed but angle ok (standby)
-        //   armed=0, trying=0  → out of range / fell — motors off
-        //   armed=1, trying=0  → can't happen (arm requires trying=1)
+        // The actual safety backstop does not depend on trying at all: while
+        // eff_angle stays above 15 deg, motors are forced to 0 and the RoboClaw
+        // held in standby unconditionally, every tick, regardless of armed or
+        // trying. was_oob only tracks the edge so the reset bookkeeping below
+        // (stale position target, stale integrators) and the recovery pid_reset
+        // each run once per excursion instead of every tick.
+        static int was_oob = 0;
         float eff_angle = fabsf(state.theta - state.theta_offset);
-        if (eff_angle > 15.0f)
+        if (eff_angle > g_oob_angle_deg)
         {
-            // OOB: always stop motors regardless of whether trying was already 0.
-            // (e.g. angle passed through the 10–15° zone first, clearing trying
-            // without stopping motors — then the old if(trying) guard was a no-op.)
+            // OOB: always stop motors, every tick, regardless of was_oob.
             motor_hal_set_both(0.0f, 0.0f);
             motor_hal_standby(1);
-            if (state.trying)
+            if (!was_oob)
             {
-                state.trying = 0;
+                was_oob = 1;
                 rc_led_set(RC_LED_GREEN, 0);
                 state.enc_pos_target = state.enc_pos;
+                pos_integ = 0.0f;   /* target moved — accumulated error is stale */
                 state.enc_velocity = 0;
                 state.enc_vel_reset = 1;
                 state.theta_ref = 0.0f;
@@ -667,27 +876,20 @@ void robot_run(void)
                     LOG_WARN("OOB — motors cut (eff=%.1f deg), staying armed", eff_angle);
             }
         }
-        else if (eff_angle < 10.0f)
+        else if (was_oob)
         {
-            if (!state.trying)
-            {
-                state.trying = 1;
-                if (state.armed)
-                    motor_hal_standby(0);
-                LOG_INFO("IN RANGE — trying=1, armed=%d", state.armed);
-            }
-        }
-        else
-        {
-            // Between 10° and 15° — clear trying so arm is blocked until stable.
-            // Must also explicitly stop motors: ISR will stop queuing commands
-            // (motor_output_ready stays 0) but the H-bridge holds its last value
-            // unless we zero it here.
-            if (state.trying)
-            {
-                state.trying = 0;
-                motor_hal_set_both(0.0f, 0.0f);
-            }
+            // Back in range: clear the edge, resume standby if still armed, and
+            // reset both PIDs so whatever the (now-ungated) loop accumulated
+            // while OOB does not slam through as a kick on the first actuated
+            // tick -- same clean-restart guarantee the disarm/arm path already
+            // gives via pid_reset() above.
+            was_oob = 0;
+            pid_reset(&pitch_pid);
+            pid_reset(&yaw_pid);
+            if (state.armed)
+                motor_hal_standby(0);
+            rc_led_set(RC_LED_GREEN, state.armed ? 1 : 0);
+            LOG_INFO("IN RANGE — armed=%d", state.armed);
         }
 
         // ── D2 position (drive) controller ───────────────────────────────
@@ -774,9 +976,39 @@ void robot_run(void)
                 {
                     int32_t err = state.enc_pos_target - state.enc_pos;
                     int32_t absErr = abs(err);
+                    /* First-order low-pass on the damping term. Filtering here
+                     * rather than filtering enc_velocity itself, because
+                     * vel_scale_move and the turn turndown read the same signal
+                     * and neither has this problem -- only the stop-damping
+                     * derivative does. Held across ticks; reset on disarm below
+                     * so a stale value cannot kick the first tick after arming. */
                     float vel_damp = (float)state.enc_velocity / g_pos_config.vel_scale_stop;
+                    {
+                        const float fc = g_pos_config.vel_damp_fc;
+                        if (fc > 0.0f)
+                        {
+                            const float dt  = 1.0f / (float)SAMPLE_RATE_HZ;
+                            const float rc  = 1.0f / (2.0f * (float)M_PI * fc);
+                            const float a   = dt / (dt + rc);
+                            vel_damp_filt  += a * (vel_damp - vel_damp_filt);
+                            vel_damp        = vel_damp_filt;
+                        }
+                        else
+                        {
+                            vel_damp_filt = vel_damp;   /* track, so enabling it mid-run does not step */
+                        }
+                        /* Cap AFTER filtering: the filter shapes which
+                         * frequencies the term acts on, this bounds how far it
+                         * can throw theta_ref on any single tick. */
+                        const float vdmax = g_pos_config.vel_damp_max;
+                        if (vdmax > 0.0f)
+                        {
+                            if (vel_damp >  vdmax) vel_damp =  vdmax;
+                            if (vel_damp < -vdmax) vel_damp = -vdmax;
+                        }
+                    }
 
-                    if (absErr < 2)
+                    if (absErr < g_pos_config.pos_deadband)
                     {
                         // Inside tight deadband — no position push, but do NOT slam
                         // last_correction to 0. Leaving it intact lets the rate limiter
@@ -814,10 +1046,37 @@ void robot_run(void)
                             // target rather than correcting toward it.
                             state.pos_scale = 0.0f;
                             state.enc_pos_target = state.enc_pos;
+                            pos_integ = 0.0f;   /* target moved — accumulated error is stale */
                         }
                     }
 
                     state.pos_correction = correction;
+
+                    /* Integral. Accumulated in degrees so the clamp is in the
+                     * same units as max_correction. Applied BEFORE the rate
+                     * limiter on purpose: it is a slow term and belongs on the
+                     * smooth path, unlike vel_damp which is deliberately
+                     * immediate. Conditional integration -- frozen while the
+                     * output sits at the clamp, so it cannot wind up against a
+                     * limit and lurch when the limit releases. */
+                    if (g_pos_config.pos_ki > 0.0f && state.pos_scale > 0.0f)
+                    {
+                        const float dt = 1.0f / (float)SAMPLE_RATE_HZ;
+                        if (fabsf(last_correction) < g_pos_config.max_correction * 0.98f)
+                            pos_integ += g_pos_config.pos_ki * (float)err * dt;
+                        const float ilim = g_pos_config.pos_i_max;
+                        if (ilim > 0.0f)
+                        {
+                            if (pos_integ >  ilim) pos_integ =  ilim;
+                            if (pos_integ < -ilim) pos_integ = -ilim;
+                        }
+                        correction += pos_integ;
+                    }
+                    else
+                    {
+                        pos_integ = 0.0f;
+                    }
+                    state.pos_i_term = -pos_integ;   /* sign matches thetaAdj */
 
                     // Rate-limit the position correction — prevents slamming theta_ref
                     float delta = correction - last_correction;
@@ -852,8 +1111,20 @@ void robot_run(void)
                     if (correction < -g_pos_config.max_correction)
                         correction = -g_pos_config.max_correction;
 
-                    state.pos_output = correction;
-                    state.theta_ref = correction;
+                    /* Negated on purpose. enc_pol_l/enc_pol_r are -1.0 in
+                     * robot.conf, so enc_pos counts negative when the bot moves
+                     * forward and (enc_pos_target - enc_pos) comes out with the
+                     * wrong sign for a lean command.
+                     *
+                     * Do NOT "fix" this by flipping enc_pol to +1 instead. The
+                     * yaw loop closes on (phi_right - phi_left) -- see the
+                     * yaw_target line further up and pid_update(&yaw_pid, ...)
+                     * in the mixer. Flipping both encoder polarities flips that
+                     * difference too, turns steering into positive feedback,
+                     * and the bot spins the moment it arms. Yaw owns enc_pol;
+                     * position compensates here. */
+                    state.pos_output = -correction;
+                    state.theta_ref  = -correction;
                 }
                 else
                 {
@@ -866,12 +1137,16 @@ void robot_run(void)
                         correction += vel_comp;
                     }
                     state.enc_pos_target = state.enc_pos;
+                    pos_integ = 0.0f;   /* target moved — accumulated error is stale */
 
                     // Position hold is not running while driving. Clear the hold
                     // telemetry so it does not sit at stale values from the last
                     // centred tick and get read as live position-hold activity.
                     state.pos_correction = 0.0f;
                     state.pos_vel_damp = 0.0f;
+                    state.pos_i_term = 0.0f;
+                    vel_damp_filt = 0.0f;
+                    pos_integ = 0.0f;
                     state.pos_scale = 0.0f;
                     state.pos_output = correction;
                 }
@@ -893,7 +1168,27 @@ void robot_run(void)
                     }
                 }
                 state.enc_pos_target = state.enc_pos;
+                pos_integ = 0.0f;   /* target moved — accumulated error is stale */
                 state.pos_setpoint = state.pos;
+
+                // Turning D2 off zeroed g_controllers.position, but nothing here
+                // ever touched state.theta_ref: it stayed pinned at whatever lean
+                // the hold loop last commanded (state.theta_ref = -correction,
+                // above). "Position off" then meant "position's last correction,
+                // frozen forever" -- the balance loop kept chasing a stale
+                // nonzero setpoint, which reads as the bot pushing one way or
+                // another for no reason while trying to isolate D1 for tuning.
+                // Ease it back to zero at the same max_angle_rate every other
+                // theta_ref change in this file already respects, rather than
+                // slamming it -- a balancing robot does not want a discontinuous
+                // step in its angle reference.
+                {
+                    float d = 0.0f - state.theta_ref;
+                    float lim = g_pos_config.max_angle_rate;
+                    if (d > lim) d = lim;
+                    if (d < -lim) d = -lim;
+                    state.theta_ref += d;
+                }
             }
             prev_armed_d2 = state.armed;
         } // end D2 block
@@ -976,6 +1271,11 @@ void robot_run(void)
         g_telemetry_data.motors.left_duty = last_left_duty;
         g_telemetry_data.motors.right_duty = last_right_duty;
 
+        /* Full loop rate, straight into RAM. Must come after the motor duties
+         * are stamped above or every logged row would carry the previous
+         * tick's command. */
+        looplog_tick();
+
         uint64_t now_sched_us = rc_nanos_since_boot() / 1000;   // microseconds
 
         /* Scheduling in MICROSECONDS with a phase accumulator, not milliseconds
@@ -1048,6 +1348,9 @@ void robot_run(void)
         ipc_broadcast_config_if_dirty();
 
         display_update();
+
+        /* Outside the tick: writes the file once, when the capture fills. */
+        looplog_write_if_full();
 
         loop_counter++;
 

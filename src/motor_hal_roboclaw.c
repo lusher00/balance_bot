@@ -1,43 +1,13 @@
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Copyright (c) 2025-2026 Ryan Lush <ryan.lush@gmail.com>
 //
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
+// This file is part of balance_bot, licensed under the PolyForm
+// Noncommercial License 1.0.0. You may use, study, modify, and share
+// it for any noncommercial purpose. Commercial use requires a separate
+// license from the author -- contact ryan.lush@gmail.com.
+// Full license text: see the LICENSE file in the project root, or
+// https://polyformproject.org/licenses/noncommercial/1.0.0/
+
 /**
  * @file motor_hal_roboclaw.c
  * @brief Motor HAL backend: RoboClaw via roboclaw library (Bartosz Meglicki).
@@ -92,9 +62,80 @@ static pthread_mutex_t g_rc_mutex = PTHREAD_MUTEX_INITIALIZER;
 static char g_device[64] = "/dev/ttyS1";
 static int g_baud = 460800;
 
+/* Bench/stub mode: no RoboClaw wired up. Selected with -m none.
+ * Every function in this file already guards on g_rc, so the stub only has to
+ * suppress the -1 returns that would otherwise be produced 100 times a second
+ * by a control loop that is working exactly as intended. */
+static int g_stub = 0;
+
 /* last encoder values — cached so motor_hal_encoder_read() works per-side */
 static int32_t g_enc_l = 0;
 static int32_t g_enc_r = 0;
+
+/* ── Link watchdog ──────────────────────────────────────────────────────────
+ * The library blocks: at 460800 baud it waits 5 ms for a reply and retries 3
+ * times, so ONE command to a RoboClaw that is not answering costs 15 ms. The
+ * control loop issues a duty write plus an encoder read every tick and a speed
+ * poll every 40 ms, which is 30-60 ms of pure timeout per tick -- the 100 Hz
+ * loop falls to 16-33 Hz. Switching the controller off, or a loose connector,
+ * silently destroys the control loop rather than just stopping the motors.
+ *
+ * So: count consecutive failures. After LINK_FAIL_TRIP of them, declare the
+ * link down and return immediately from every call without touching the port,
+ * probing only once every LINK_RETRY_MS. A dead RoboClaw then costs one
+ * timeout every half second instead of six per tick, and the loop holds rate.
+ * Any success clears it. */
+#define LINK_FAIL_TRIP   3
+#define LINK_RETRY_MS    500
+
+static int      g_link_fails = 0;
+static int      g_link_down  = 0;
+static uint64_t g_link_next_probe_ms = 0;
+
+static uint64_t now_ms(void)
+{
+    return rc_nanos_since_boot() / 1000000ULL;
+}
+
+/* True when the caller should skip the port entirely. Lets one probe through
+ * every LINK_RETRY_MS so the link can come back on its own when the controller
+ * is switched on again -- no restart needed. */
+static int link_blocked(void)
+{
+    if (!g_link_down)
+        return 0;
+    uint64_t t = now_ms();
+    if (t >= g_link_next_probe_ms)
+    {
+        g_link_next_probe_ms = t + LINK_RETRY_MS;
+        return 0; /* let this one through as the probe */
+    }
+    return 1;
+}
+
+static void link_result(int ok)
+{
+    if (ok)
+    {
+        if (g_link_down)
+            LOG_WARN("motor_hal: RoboClaw link restored");
+        g_link_down = 0;
+        g_link_fails = 0;
+        return;
+    }
+    if (g_link_down)
+        return;
+    if (++g_link_fails >= LINK_FAIL_TRIP)
+    {
+        g_link_down = 1;
+        g_link_next_probe_ms = now_ms() + LINK_RETRY_MS;
+        LOG_WARN("motor_hal: RoboClaw not answering — link marked down, "
+                 "skipping serial I/O to protect the control loop rate "
+                 "(probing every %d ms)", LINK_RETRY_MS);
+    }
+}
+
+int motor_hal_link_down(void) { return g_link_down; }
 
 /* ── helpers ────────────────────────────────────────────────────── */
 
@@ -102,10 +143,13 @@ static int refresh_encoders(void)
 {
     if (!g_rc)
         return -1;
+    if (link_blocked())
+        return -1;
     int32_t m1, m2;
     pthread_mutex_lock(&g_rc_mutex);
     int ret = roboclaw_encoders(g_rc, RC_ADDRESS, &m1, &m2);
     pthread_mutex_unlock(&g_rc_mutex);
+    link_result(ret == ROBOCLAW_OK);
     if (ret != ROBOCLAW_OK)
     {
         /* 100 Hz path, x2 for both wheels. A RoboClaw that fails one read
@@ -124,6 +168,21 @@ static int refresh_encoders(void)
 
 int motor_hal_init(const char *device, int baud)
 {
+    if (device && (strcmp(device, "none") == 0 ||
+                   strcmp(device, "stub") == 0 ||
+                   strcmp(device, "sim")  == 0))
+    {
+        g_stub  = 1;
+        g_rc    = NULL;
+        g_enc_l = 0;
+        g_enc_r = 0;
+        strncpy(g_device, "none", sizeof(g_device) - 1);
+        g_baud = (baud > 0) ? baud : 460800;
+        LOG_WARN("motor_hal_roboclaw: STUB MODE (-m none) — no RoboClaw, "
+                 "motors will not move, encoders read 0");
+        return 0;
+    }
+
     if (!device)
         device = "/dev/ttyS1";
     if (baud <= 0)
@@ -166,6 +225,8 @@ void motor_hal_cleanup(void)
 
 int motor_hal_roboclaw_reset(void)
 {
+    if (g_stub)
+        return 0;
     LOG_INFO("motor_hal_roboclaw: resetting RoboClaw (WriteNVM)...");
     pthread_mutex_lock(&g_rc_mutex);
     if (g_rc)
@@ -196,6 +257,8 @@ int motor_hal_roboclaw_reset(void)
 
 int motor_hal_set_both(float left, float right)
 {
+    if (g_stub)
+        return 0;
     if (!g_rc)
         return -1;
 
@@ -214,6 +277,13 @@ int motor_hal_set_both(float left, float right)
     const int mode = g_motor_config.mode;
     const int qpps_max = g_motor_config.qpps_max;
     const int accel = g_motor_config.accel_qpps;
+
+    /* Motors are already stopped when the link is down -- the controller's own
+     * serial timeout kills output within tens of ms of it stopping hearing from
+     * us, which is exactly the behaviour we want. Nothing is gained by spending
+     * 15 ms per tick discovering that again. */
+    if (link_blocked())
+        return -1;
 
     int ret;
     pthread_mutex_lock(&g_rc_mutex);
@@ -251,6 +321,7 @@ int motor_hal_set_both(float left, float right)
     }
 
     pthread_mutex_unlock(&g_rc_mutex);
+    link_result(ret == ROBOCLAW_OK);
     return (ret == ROBOCLAW_OK) ? 0 : -1;
 }
 
@@ -305,6 +376,8 @@ int motor_hal_encoder_reset_all(void)
 {
     g_enc_l = 0;
     g_enc_r = 0;
+    if (g_stub)
+        return 0;
     if (!g_rc)
         return -1;
     pthread_mutex_lock(&g_rc_mutex);
@@ -319,6 +392,8 @@ int motor_hal_encoder_reset_all(void)
 
 int motor_hal_set_claw_pid(float kp, float ki, float kd)
 {
+    if (g_stub)
+        return 0;
     if (!g_rc)
         return -1;
     roboclaw_vel_pid_t pid = {.kp = kp, .ki = ki, .kd = kd};
@@ -339,6 +414,50 @@ int motor_hal_set_claw_pid(float kp, float ki, float kd)
     return 0;
 }
 
+/* ── Reading the controller's own settings ──────────────────────────
+ * Six round trips at ~1 ms each.  Called from the config path, never from the
+ * control loop.  All-or-nothing: a partial read is worse than none, because a
+ * half-filled struct on screen looks authoritative. */
+
+int motor_hal_read_hw_settings(claw_hw_settings_t *out)
+{
+    if (!out)
+        return -1;
+    memset(out, 0, sizeof(*out));
+    if (g_stub || !g_rc)
+        return -1;
+
+    roboclaw_vel_pid_t p1 = {0}, p2 = {0};
+    uint32_t q1 = 0, q2 = 0;
+    uint8_t em1 = 0, em2 = 0;
+    uint16_t cfg = 0;
+    int ret;
+
+    pthread_mutex_lock(&g_rc_mutex);
+    ret = roboclaw_read_velocity_pid(g_rc, RC_ADDRESS, 0, &p1, &q1);
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_read_velocity_pid(g_rc, RC_ADDRESS, 1, &p2, &q2);
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_read_encoder_mode(g_rc, RC_ADDRESS, &em1, &em2);
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_read_config(g_rc, RC_ADDRESS, &cfg);
+    pthread_mutex_unlock(&g_rc_mutex);
+
+    if (ret != ROBOCLAW_OK)
+    {
+        LOG_WARN("motor_hal_read_hw_settings: read failed (%d)", ret);
+        return -1;
+    }
+
+    out->m1_kp = p1.kp; out->m1_ki = p1.ki; out->m1_kd = p1.kd; out->m1_qpps = q1;
+    out->m2_kp = p2.kp; out->m2_ki = p2.ki; out->m2_kd = p2.kd; out->m2_qpps = q2;
+    out->enc_mode_m1 = em1;
+    out->enc_mode_m2 = em2;
+    out->config = cfg;
+    out->valid = 1;
+    return 0;
+}
+
 /* ── Battery voltage ────────────────────────────────────────────── */
 
 int motor_hal_read_voltage(float *volts)
@@ -347,6 +466,8 @@ int motor_hal_read_voltage(float *volts)
     if (!g_rc)
         return -1;
     int16_t raw = 0;
+    if (link_blocked())
+        return -1;
     pthread_mutex_lock(&g_rc_mutex);
     int ret = roboclaw_main_battery_voltage(g_rc, RC_ADDRESS, &raw);
     pthread_mutex_unlock(&g_rc_mutex);
@@ -365,10 +486,13 @@ int motor_hal_read_encoder_speeds(int32_t *m1_qpps, int32_t *m2_qpps)
     *m2_qpps = 0;
     if (!g_rc)
         return -1;
+    if (link_blocked())
+        return -1;
     int32_t m1 = 0, m2 = 0;
     pthread_mutex_lock(&g_rc_mutex);
     int ret = roboclaw_encoder_speeds(g_rc, RC_ADDRESS, &m1, &m2);
     pthread_mutex_unlock(&g_rc_mutex);
+    link_result(ret == ROBOCLAW_OK);
     if (ret != ROBOCLAW_OK)
         return -1;
     /* Apply encoder polarity to match position encoder convention */
@@ -384,6 +508,8 @@ int motor_hal_read_temp(float *temp_c)
     *temp_c = 0.0f;
     if (!g_rc)
         return -1;
+    if (link_blocked())
+        return -1;
     pthread_mutex_lock(&g_rc_mutex);
     int ret = roboclaw_temperature(g_rc, RC_ADDRESS, temp_c);
     pthread_mutex_unlock(&g_rc_mutex);
@@ -396,6 +522,11 @@ int motor_hal_set_baud(int baud)
 {
     if (baud <= 0)
         return -1;
+    if (g_stub)
+    {
+        g_baud = baud;
+        return 0;
+    }
     pthread_mutex_lock(&g_rc_mutex);
     /* Stop motors before disconnecting */
     if (g_rc)

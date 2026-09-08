@@ -1,23 +1,13 @@
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Copyright (c) 2025-2026 Ryan Lush <ryan.lush@gmail.com>
 //
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
+// This file is part of balance_bot, licensed under the PolyForm
+// Noncommercial License 1.0.0. You may use, study, modify, and share
+// it for any noncommercial purpose. Commercial use requires a separate
+// license from the author -- contact ryan.lush@gmail.com.
+// Full license text: see the LICENSE file in the project root, or
+// https://polyformproject.org/licenses/noncommercial/1.0.0/
+
 /**
  * @file robot_config.c
  * @brief Single sectioned key=value config for every tunable on the robot.
@@ -98,6 +88,8 @@ void robot_config_defaults(robot_config_t *c)
     c->imu.pitch_dot_offset = 0.0f;
     c->imu.pitch_axis = 1;
     c->theta_trim = 0.0f;
+    c->arm_at_boot = 0;   /* off by default -- must be explicitly ticked */
+    c->oob_angle_deg = 15.0f;   /* matches robot.c's compiled-in default */
 
     c->position.zone_a = POS_ZONE_A_DEFAULT;
     c->position.zone_b = POS_ZONE_B_DEFAULT;
@@ -107,9 +99,15 @@ void robot_config_defaults(robot_config_t *c)
     c->position.scale_c = POS_SCALE_C_DEFAULT;
     c->position.scale_d = POS_SCALE_D_DEFAULT;
     c->position.vel_scale_stop = POS_VEL_SCALE_STOP_DEFAULT;
+    c->position.vel_src = POS_VEL_SRC_DEFAULT;
+    c->position.vel_damp_fc = POS_VEL_DAMP_FC_DEFAULT;
+    c->position.vel_damp_max = POS_VEL_DAMP_MAX_DEFAULT;
+    c->position.pos_ki = POS_KI_DEFAULT;
+    c->position.pos_i_max = POS_I_MAX_DEFAULT;
     c->position.vel_scale_move = POS_VEL_SCALE_MOVE_DEFAULT;
     c->position.vel_scale_turning = POS_VEL_SCALE_TURNING_DEFAULT;
     c->position.stopped_vel = POS_STOPPED_VEL_DEFAULT;
+    c->position.pos_deadband = POS_DEADBAND_DEFAULT;
     c->position.max_correction = POS_MAX_CORRECTION_DEFAULT;
     c->position.max_angle_rate = POS_MAX_ANGLE_RATE_DEFAULT;
     c->position.back_to_spot = POS_BACK_TO_SPOT_DEFAULT;
@@ -219,15 +217,26 @@ int robot_config_load(const char *path, robot_config_t *c)
             else if (KEY("scale_c")) c->position.scale_c = fv;
             else if (KEY("scale_d")) c->position.scale_d = fv;
             else if (KEY("vel_scale_stop")) c->position.vel_scale_stop = fv;
+            else if (KEY("vel_src")) c->position.vel_src = (int32_t)fv;
+            else if (KEY("vel_damp_fc")) c->position.vel_damp_fc = fv;
+            else if (KEY("vel_damp_max")) c->position.vel_damp_max = fv;
+            else if (KEY("pos_ki")) c->position.pos_ki = fv;
+            else if (KEY("pos_i_max")) c->position.pos_i_max = fv;
             else if (KEY("vel_scale_move")) c->position.vel_scale_move = fv;
             else if (KEY("vel_scale_turning")) c->position.vel_scale_turning = fv;
             else if (KEY("stopped_vel")) c->position.stopped_vel = (int32_t)fv;
+            else if (KEY("pos_deadband")) c->position.pos_deadband = (int32_t)fv;
             else if (KEY("max_correction")) c->position.max_correction = fv;
             else if (KEY("max_angle_rate")) c->position.max_angle_rate = fv;
             else if (KEY("back_to_spot")) c->position.back_to_spot = (int)fv;
             else if (KEY("drive_mode")) c->position.drive_mode = (int)fv;
             else if (KEY("drive_rate")) c->position.drive_rate = fv;
             else if (KEY("runaway_limit")) c->position.runaway_limit = (int32_t)fv;
+        }
+        else if (ieq(section, "system"))
+        {
+            if (KEY("arm_at_boot")) c->arm_at_boot = (int)fv;
+            else if (KEY("oob_angle_deg")) c->oob_angle_deg = fv;
         }
         else if (ieq(section, "sbus"))
         {
@@ -291,6 +300,10 @@ int robot_config_save(const char *path, const robot_config_t *c)
     fprintf(f, "\n");
 
     fprintf(f, "# Balance loop: pitch angle -> motor duty. A real PID.\n");
+    fprintf(f, "[system]\n");
+    fprintf(f, "arm_at_boot = %d\n", c->arm_at_boot);
+    fprintf(f, "oob_angle_deg = %.1f\n", c->oob_angle_deg);
+    fprintf(f, "\n");
     fprintf(f, "[pitch]\n");
     fprintf(f, "kp = %.4f\n", c->pitch.kp);
     fprintf(f, "ki = %.4f\n", c->pitch.ki);
@@ -317,9 +330,15 @@ int robot_config_save(const char *path, const robot_config_t *c)
     fprintf(f, "scale_c           = %.3f\n", c->position.scale_c);
     fprintf(f, "scale_d           = %.3f\n", c->position.scale_d);
     fprintf(f, "vel_scale_stop    = %.3f\n", c->position.vel_scale_stop);
+    fprintf(f, "vel_src           = %d\n", c->position.vel_src);
+    fprintf(f, "vel_damp_fc       = %.3f\n", c->position.vel_damp_fc);
+    fprintf(f, "vel_damp_max      = %.3f\n", c->position.vel_damp_max);
+    fprintf(f, "pos_ki            = %.5f\n", c->position.pos_ki);
+    fprintf(f, "pos_i_max         = %.3f\n", c->position.pos_i_max);
     fprintf(f, "vel_scale_move    = %.3f\n", c->position.vel_scale_move);
     fprintf(f, "vel_scale_turning = %.3f\n", c->position.vel_scale_turning);
     fprintf(f, "stopped_vel       = %d\n", c->position.stopped_vel);
+    fprintf(f, "pos_deadband      = %d\n", c->position.pos_deadband);
     fprintf(f, "max_correction    = %.3f\n", c->position.max_correction);
     fprintf(f, "max_angle_rate    = %.3f\n", c->position.max_angle_rate);
     fprintf(f, "back_to_spot      = %d\n", c->position.back_to_spot);
@@ -406,6 +425,8 @@ void robot_config_get_current(robot_config_t *c)
     c->imu = g_imu_offsets;
     c->sbus = g_sbus_config;
     c->theta_trim = state.theta_offset;
+    c->arm_at_boot = g_arm_at_boot;
+    c->oob_angle_deg = g_oob_angle_deg;
 }
 
 void robot_config_apply(const robot_config_t *c)
@@ -417,6 +438,8 @@ void robot_config_apply(const robot_config_t *c)
     g_imu_offsets = c->imu;
     g_sbus_config = c->sbus;
     state.theta_offset = c->theta_trim;
+    g_arm_at_boot = c->arm_at_boot;
+    g_oob_angle_deg = c->oob_angle_deg;
 }
 
 int robot_config_save_current(const char *path)
@@ -497,6 +520,11 @@ static int load_legacy_pid(const char *path, robot_config_t *c)
         else if (ieq(k, "scale_c")) c->position.scale_c = v;
         else if (ieq(k, "scale_d")) c->position.scale_d = v;
         else if (ieq(k, "vel_scale_stop")) c->position.vel_scale_stop = v;
+        else if (ieq(k, "vel_src")) c->position.vel_src = (int32_t)v;
+        else if (ieq(k, "vel_damp_fc")) c->position.vel_damp_fc = v;
+        else if (ieq(k, "vel_damp_max")) c->position.vel_damp_max = v;
+        else if (ieq(k, "pos_ki")) c->position.pos_ki = v;
+        else if (ieq(k, "pos_i_max")) c->position.pos_i_max = v;
         else if (ieq(k, "vel_scale_move")) c->position.vel_scale_move = v;
         else if (ieq(k, "vel_scale_turning")) c->position.vel_scale_turning = v;
         else if (ieq(k, "stopped_vel")) c->position.stopped_vel = (int32_t)v;
@@ -506,6 +534,7 @@ static int load_legacy_pid(const char *path, robot_config_t *c)
         else if (ieq(k, "drive_mode")) c->position.drive_mode = (int)v;
         else if (ieq(k, "drive_rate")) c->position.drive_rate = v;
         else if (ieq(k, "runaway_limit")) c->position.runaway_limit = (int32_t)v;
+        else if (ieq(k, "pos_deadband")) c->position.pos_deadband = (int32_t)v;
         else if (ieq(k, "mode")) c->motor.mode = (int)v;
         else if (ieq(k, "qpps_max")) c->motor.qpps_max = (int)v;
         else if (ieq(k, "accel_qpps")) c->motor.accel_qpps = (int)v;

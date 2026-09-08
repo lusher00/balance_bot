@@ -1,43 +1,13 @@
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Copyright (c) 2025-2026 Ryan Lush <ryan.lush@gmail.com>
 //
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
+// This file is part of balance_bot, licensed under the PolyForm
+// Noncommercial License 1.0.0. You may use, study, modify, and share
+// it for any noncommercial purpose. Commercial use requires a separate
+// license from the author -- contact ryan.lush@gmail.com.
+// Full license text: see the LICENSE file in the project root, or
+// https://polyformproject.org/licenses/noncommercial/1.0.0/
+
 /**
  * @file ipc_server.c
  * @brief Unix domain socket server for iPhone app communication
@@ -87,6 +57,11 @@ static int parse_json_command(const char *json_cmd);
 static void build_telemetry_json(char *buffer, size_t size);
 static void build_rc_json(char *buffer, size_t size);
 static void build_config_json(char *buffer, size_t size);
+
+/* Last successful RoboClaw settings read.  Zeroed (valid=0) until a client
+ * asks for one via read_claw_hw; the dashboard shows "not read yet" rather
+ * than inventing values. */
+static claw_hw_settings_t g_claw_hw;
 
 // Client connection tracking
 typedef struct
@@ -316,7 +291,10 @@ static void *ipc_estop_reset_thread(void *arg)
         return NULL;
     }
     state.estop_latched = 0;
-    state.trying = 0;  // let angle logic re-set cleanly
+    // armed is already 0 from the e_stop call that latched this, and
+    // trying is persistent now (tracks armed, no angle auto-reset) -- this
+    // is just belt-and-suspenders in case that invariant is ever violated.
+    state.trying = 0;
     LOG_INFO("estop reset complete — latch cleared");
     return NULL;
 }
@@ -406,6 +384,39 @@ static int parse_json_command(const char *json_cmd)
         return 0;
     }
 
+    // {"type":"set_arm_at_boot","value":true}
+    if (strstr(json_cmd, "\"type\":\"set_arm_at_boot\""))
+    {
+        g_arm_at_boot = strstr(json_cmd, "\"value\":true") ? 1 : 0;
+        if (robot_config_save_current(NULL) != 0)
+            LOG_WARN("set_arm_at_boot: save failed, value=%d not persisted", g_arm_at_boot);
+        else
+            LOG_INFO("arm_at_boot set to %d and saved", g_arm_at_boot);
+        return 0;
+    }
+
+    // {"type":"set_oob_angle","value":15.0}
+    //
+    // The hard safety cutoff -- imu_interrupt()'s actuation gate and
+    // robot_run()'s motor-cut both read this one value (robot.c). Clamped
+    // here so a bad paste cannot turn the safety net into a no-op (too large)
+    // or something that trips before the robot can even balance (too small).
+    if (strstr(json_cmd, "\"type\":\"set_oob_angle\""))
+    {
+        float v = g_oob_angle_deg;
+        const char *vp = strstr(json_cmd, "\"value\":");
+        if (vp)
+            sscanf(vp + strlen("\"value\":"), "%f", &v);
+        if (v < 5.0f) v = 5.0f;
+        if (v > 45.0f) v = 45.0f;
+        g_oob_angle_deg = v;
+        if (robot_config_save_current(NULL) != 0)
+            LOG_WARN("set_oob_angle: save failed, value=%.1f not persisted", g_oob_angle_deg);
+        else
+            LOG_INFO("oob_angle_deg set to %.1f and saved", g_oob_angle_deg);
+        return 0;
+    }
+
     // {"type":"arm","value":true}  or  {"type":"arm","value":false}
     if (strstr(json_cmd, "\"type\":\"arm\""))
     {
@@ -418,9 +429,10 @@ static int parse_json_command(const char *json_cmd)
             else
             {
                 state.armed = 1;
-                // Set trying only if currently in bounds — fall detection manages it otherwise
-                if (fabsf(state.theta - state.theta_offset) < 14.0f)
-                    state.trying = 1;
+                // trying is persistent -- tracks armed directly. The
+                // eff_angle>15 hard cutoff in robot_run() still protects a bad
+                // arming angle; trying=1 just sits inert until back in range.
+                state.trying = 1;
                 motor_hal_standby(0);
                 rc_led_set(RC_LED_GREEN, 1);
                 LOG_INFO("iPhone: ARMED (theta=%.2f trying=%d)", state.theta, state.trying);
@@ -776,9 +788,15 @@ static int parse_json_command(const char *json_cmd)
         PCFG_FLOAT("scale_c", scale_c);
         PCFG_FLOAT("scale_d", scale_d);
         PCFG_FLOAT("vel_scale_stop", vel_scale_stop);
+        PCFG_INT("vel_src", vel_src);
+        PCFG_FLOAT("vel_damp_fc", vel_damp_fc);
+        PCFG_FLOAT("vel_damp_max", vel_damp_max);
+        PCFG_FLOAT("pos_ki", pos_ki);
+        PCFG_FLOAT("pos_i_max", pos_i_max);
         PCFG_FLOAT("vel_scale_move", vel_scale_move);
         PCFG_FLOAT("vel_scale_turning", vel_scale_turning);
         PCFG_INT("stopped_vel", stopped_vel);
+        PCFG_INT("pos_deadband", pos_deadband);
         PCFG_FLOAT("max_correction", max_correction);
         PCFG_FLOAT("max_angle_rate", max_angle_rate);
         PCFG_INT("back_to_spot", back_to_spot);
@@ -933,6 +951,54 @@ static int parse_json_command(const char *json_cmd)
         return 0;
     }
 
+    /* {"type":"looplog","seconds":20}
+     *
+     * Capture every control-loop tick to /tmp/bbot.csv. Fixed path, overwritten
+     * each run. Fires and returns immediately -- the loop fills a RAM buffer and
+     * writes the file when it is full, so nothing here blocks. */
+    if (strstr(json_cmd, "\"type\":\"looplog\""))
+    {
+        int secs = 20;
+        const char *p = strstr(json_cmd, "\"seconds\":");
+        if (p) sscanf(p + strlen("\"seconds\":"), "%d", &secs);
+        if (looplog_start(secs) != 0)
+        {
+            LOG_WARN("looplog: already running");
+            return -1;
+        }
+        return 0;
+    }
+
+    /* {"type":"read_claw_hw"}
+     *
+     * Read the RoboClaw's OWN settings back over serial and stash them for the
+     * next config packet.  Deliberately on demand rather than periodic: it is
+     * six round trips holding the port mutex, which stalls the control loop,
+     * and these are settings -- they do not change unless something changes
+     * them.  Answers the question robot.conf cannot: if the unit was set up in
+     * Ion Studio with a motor or encoder inverted inside it, this is the only
+     * place that shows it. */
+    if (strstr(json_cmd, "\"type\":\"read_claw_hw\""))
+    {
+        claw_hw_settings_t hw;
+        if (motor_hal_read_hw_settings(&hw) != 0)
+        {
+            LOG_WARN("read_claw_hw: RoboClaw did not answer");
+            g_claw_hw.valid = 0;
+        }
+        else
+        {
+            g_claw_hw = hw;
+            LOG_INFO("read_claw_hw: M1 kp=%.4f ki=%.4f kd=%.4f qpps=%u | "
+                     "M2 kp=%.4f ki=%.4f kd=%.4f qpps=%u | encmode=%02X/%02X cfg=%04X",
+                     hw.m1_kp, hw.m1_ki, hw.m1_kd, hw.m1_qpps,
+                     hw.m2_kp, hw.m2_ki, hw.m2_kd, hw.m2_qpps,
+                     hw.enc_mode_m1, hw.enc_mode_m2, hw.config);
+        }
+        ipc_config_touch();
+        return 0;
+    }
+
     /* {"type":"set_rates","telemetry":20,"rc":20}
      *
      * Runtime control of the two outbound stream rates. This exists because
@@ -1048,7 +1114,7 @@ static void build_telemetry_json(char *buffer, size_t size)
     if (g_debug_config.telemetry.system_status)
     {
         pos = json_append(buffer, pos, size,
-                        "\"system\":{\"battery\":%.2f,\"armed\":%s,\"mode\":%d,\"loop_hz\":%.1f,\"theta_offset\":%.4f,\"pose_lean\":%.4f,"
+                        "\"system\":{\"claw_link\":%s,\"battery\":%.2f,\"armed\":%s,\"arm_at_boot\":%s,\"oob_angle_deg\":%.1f,\"mode\":%d,\"loop_hz\":%.1f,\"theta_offset\":%.4f,\"pose_lean\":%.4f,"
                         "\"batt_voltage\":%.3f,\"batt_status\":%d,\"claw_voltage\":%.2f,\"claw_temp\":%.1f,"
                         /* Telemetry packets the kernel refused because the
                          * client was not draining. Non-zero means holes in the
@@ -1069,8 +1135,11 @@ static void build_telemetry_json(char *buffer, size_t size)
                         "\"node_up\":%s,\"node_cpu\":%.1f,"
                         "\"oled_up\":%s,\"oled_cpu\":%.1f,"
                         "\"batt_up\":%s,\"batt_cpu\":%.1f},",
+                        motor_hal_link_down() ? "false" : "true",
                         g_telemetry_data.system.battery_voltage,
                         g_telemetry_data.system.armed ? "true" : "false",
+                        g_arm_at_boot ? "true" : "false",
+                        g_oob_angle_deg,
                         g_telemetry_data.system.mode,
                         g_telemetry_data.system.loop_hz,
                         state.theta_offset,
@@ -1181,7 +1250,7 @@ static void build_telemetry_json(char *buffer, size_t size)
                         "\"enc_pos_target\":%d,\"enc_pos\":%d,\"enc_error\":%d,"
                         "\"enc_velocity\":%.3f,\"enc_velocity_raw\":%.3f,"
                         "\"enc_vel_mid\":%.3f,\"enc_vel_long\":%.3f,"
-                        "\"pos_correction\":%.4f,\"vel_damp\":%.4f,"
+                        "\"pos_correction\":%.4f,\"vel_damp\":%.4f,\"i_term\":%.4f,"
                         "\"theta_ref_adj\":%.4f,\"active_scale\":%.4f,"
                         "\"max_correction\":%.4f},",
                         g_telemetry_data.position.enabled ? "true" : "false",
@@ -1194,6 +1263,7 @@ static void build_telemetry_json(char *buffer, size_t size)
                         g_telemetry_data.position.enc_vel_lsq_long,
                         g_telemetry_data.position.pos_correction,
                         g_telemetry_data.position.vel_damp,
+                        state.pos_i_term,
                         g_telemetry_data.position.theta_ref_adj,
                         g_telemetry_data.position.active_scale,
                         g_telemetry_data.position.max_correction);
@@ -1322,23 +1392,47 @@ static void build_config_json(char *buffer, size_t size)
                     g_motor_config.claw_kd,
                     g_motor_config.baud);
 
+    /* What the CONTROLLER reports, as opposed to what we told it.  Separate
+     * key on purpose -- conflating the two is how you end up trusting
+     * robot.conf about a setting that lives in the RoboClaw's NVM. */
+    if (g_claw_hw.valid)
+    {
+        pos = json_append(buffer, pos, size,
+                        "\"claw_hw\":{\"valid\":true,"
+                        "\"m1_kp\":%.6f,\"m1_ki\":%.6f,\"m1_kd\":%.6f,\"m1_qpps\":%u,"
+                        "\"m2_kp\":%.6f,\"m2_ki\":%.6f,\"m2_kd\":%.6f,\"m2_qpps\":%u,"
+                        "\"enc_mode_m1\":%u,\"enc_mode_m2\":%u,\"config\":%u},",
+                        g_claw_hw.m1_kp, g_claw_hw.m1_ki, g_claw_hw.m1_kd, g_claw_hw.m1_qpps,
+                        g_claw_hw.m2_kp, g_claw_hw.m2_ki, g_claw_hw.m2_kd, g_claw_hw.m2_qpps,
+                        (unsigned)g_claw_hw.enc_mode_m1, (unsigned)g_claw_hw.enc_mode_m2,
+                        (unsigned)g_claw_hw.config);
+    }
+    else
+    {
+        pos = json_append(buffer, pos, size, "\"claw_hw\":{\"valid\":false},");
+    }
+
     pos = json_append(buffer, pos, size,
                     "\"pos_config\":{"
                     "\"zone_a\":%d,\"zone_b\":%d,\"zone_c\":%d,"
                     "\"scale_a\":%.1f,\"scale_b\":%.1f,\"scale_c\":%.1f,\"scale_d\":%.1f,"
                     "\"vel_scale_stop\":%.1f,\"vel_scale_move\":%.1f,\"vel_scale_turning\":%.1f,"
+                    "\"vel_src\":%d,\"vel_damp_fc\":%.3f,\"vel_damp_max\":%.3f,\"pos_ki\":%.5f,\"pos_i_max\":%.3f,"
                     "\"stopped_vel\":%d,\"max_correction\":%.2f,"
                     "\"max_angle_rate\":%.2f,\"back_to_spot\":%d,"
-                    "\"drive_mode\":%d,\"drive_rate\":%.1f,\"runaway_limit\":%d},",
+                    "\"drive_mode\":%d,\"drive_rate\":%.1f,\"runaway_limit\":%d,"
+                    "\"pos_deadband\":%d},",
                     g_pos_config.zone_a, g_pos_config.zone_b, g_pos_config.zone_c,
                     g_pos_config.scale_a, g_pos_config.scale_b,
                     g_pos_config.scale_c, g_pos_config.scale_d,
                     g_pos_config.vel_scale_stop, g_pos_config.vel_scale_move,
                     g_pos_config.vel_scale_turning,
+                    g_pos_config.vel_src, g_pos_config.vel_damp_fc,
+                    g_pos_config.vel_damp_max, g_pos_config.pos_ki, g_pos_config.pos_i_max,
                     g_pos_config.stopped_vel, g_pos_config.max_correction,
                     g_pos_config.max_angle_rate, g_pos_config.back_to_spot,
                     g_pos_config.drive_mode, g_pos_config.drive_rate,
-                    g_pos_config.runaway_limit);
+                    g_pos_config.runaway_limit, g_pos_config.pos_deadband);
 
     pos = json_append(buffer, pos, size,
                       "\"sbus_config\":{\"drive_channel\":%d,\"turn_channel\":%d,"

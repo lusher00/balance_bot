@@ -1,43 +1,13 @@
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Copyright (c) 2025-2026 Ryan Lush <ryan.lush@gmail.com>
 //
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
+// This file is part of balance_bot, licensed under the PolyForm
+// Noncommercial License 1.0.0. You may use, study, modify, and share
+// it for any noncommercial purpose. Commercial use requires a separate
+// license from the author -- contact ryan.lush@gmail.com.
+// Full license text: see the LICENSE file in the project root, or
+// https://polyformproject.org/licenses/noncommercial/1.0.0/
+
 /**
  * @file main.c
  * @brief Main entry point for balance_bot
@@ -109,6 +79,7 @@ static void print_usage(void)
     printf("\n");
     printf("Motor options:\n");
     printf("  -m <device>        RoboClaw UART device (default: /dev/ttyO1)\n");
+    printf("                     use 'none' to run with no motor controller\n");
     printf("  -B <baud>          RoboClaw baud rate   (default: 38400)\n");
     printf("\n");
     printf("Other options:\n");
@@ -124,6 +95,7 @@ static void print_usage(void)
     printf("  balance_bot -i sbus -u /dev/ttyO5      # Same, explicit device\n");
     printf("  balance_bot -i ext  -u /dev/ttyO1      # Generic UART packet input\n");
     printf("  balance_bot -m /dev/ttyO1              # Use RoboClaw for motors\n");
+    printf("  balance_bot -i none -m none            # Bench test: no TX, no RoboClaw\n");
     printf("  balance_bot -i sbus -m /dev/ttyO1      # SBUS + RoboClaw\n");
     printf("  balance_bot -i xbox /dev/input/js0     # Xbox controller\n");
     printf("  balance_bot -d imu -d pid              # Show IMU + PID display panels\n");
@@ -237,11 +209,15 @@ int main(int argc, char *argv[])
 {
     robot_config_t robot_config;
 
+    /* Under systemd, stdout is a pipe to journald, and glibc block-buffers a
+     * pipe (4 KB).  Startup LOG_INFO output is far short of that, so it sat in
+     * the buffer instead of reaching the journal -- which made it look like
+     * lines such as "Claw velocity PID: ..." were never printed at all.
+     * Line-buffer explicitly.  Must happen before the first printf. */
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
     if (parse_args(argc, argv) < 0)
         return -1;
-
-    /* Logging level */
-    g_debug_config.logging.level = quiet_mode ? LOG_LEVEL_WARN : LOG_LEVEL_INFO;
 
     printf("\n");
     printf("╔═══════════════════════════════════════════════╗\n");
@@ -278,6 +254,10 @@ int main(int argc, char *argv[])
 
     /* Debug / display config */
     g_debug_config = get_default_debug_config();
+    /* After the struct assignment, not before -- this used to be set up at the
+     * top of main() and was silently overwritten right here, so -q never did
+     * anything. */
+    g_debug_config.logging.level = quiet_mode ? LOG_LEVEL_WARN : LOG_LEVEL_INFO;
     g_debug_config.display.sbus_tx = disp_sbus;
     g_debug_config.display.pid = disp_pid;
     g_debug_config.display.encoders = disp_enc;
@@ -336,9 +316,19 @@ int main(int argc, char *argv[])
      * applying earlier would just be overwritten. */
     robot_config_apply(&robot_config);
     motor_config_apply(&robot_config.motor);
-    motor_hal_set_claw_pid(robot_config.motor.claw_kp,
-                           robot_config.motor.claw_ki,
-                           robot_config.motor.claw_kd);
+    /* Unconditional, not LOG_INFO: with -q the log level is WARN and this line
+     * vanishes, and "did my robot.conf claw gains actually reach the RoboClaw"
+     * is exactly the question you cannot answer from the outside.  Reports the
+     * return code so a failed write is visible rather than assumed. */
+    {
+        int claw_rc = motor_hal_set_claw_pid(robot_config.motor.claw_kp,
+                                             robot_config.motor.claw_ki,
+                                             robot_config.motor.claw_kd);
+        printf("  Claw PID:   kp=%.4f ki=%.4f kd=%.4f qpps=%d  (%s)\n",
+               robot_config.motor.claw_kp, robot_config.motor.claw_ki,
+               robot_config.motor.claw_kd, robot_config.motor.qpps_max,
+               claw_rc == 0 ? "written to RoboClaw" : "WRITE FAILED");
+    }
 
     /* Input subsystem */
     switch (input_mode)

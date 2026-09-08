@@ -1,13 +1,31 @@
+// Copy these into your own keybindings.json:
+//   Cmd+Shift+P -> "Preferences: Open Keyboard Shortcuts (JSON)"
+//
+// Two kinds of entry here. runTask runs a task from tasks.json and puts the
+// output in the task panel. newWithProfile opens a real interactive terminal
+// from the profiles in settings.json — use those for anything you have to type
+// into or Ctrl-C out of, which means start.sh above all.
 [
+    // ---------- build and deploy ----------
     {
         "key": "ctrl+alt+b",
         "command": "workbench.action.tasks.runTask",
         "args": "sync and build"
     },
     {
+        "key": "ctrl+alt+n",
+        "command": "workbench.action.tasks.runTask",
+        "args": "sync and build (no install)"
+    },
+    {
         "key": "ctrl+alt+shift+b",
         "command": "workbench.action.tasks.runTask",
         "args": "clean sync and build"
+    },
+    {
+        "key": "ctrl+alt+l",
+        "command": "workbench.action.tasks.runTask",
+        "args": "get log"
     },
     {
         "key": "ctrl+alt+s",
@@ -33,5 +51,63 @@
         "key": "ctrl+alt+c",
         "command": "workbench.action.tasks.runTask",
         "args": "clean"
+    },
+
+    // ---------- interactive terminals on the bot ----------
+    // start.sh traps INT to write its END stamp to /dev/kmsg and kill
+    // server.js. Ctrl-C in a terminal profile delivers that signal; Ctrl-C in
+    // the task panel gets intercepted by VS Code, so the trap may not run and
+    // the run's elapsed time is lost. Use this one for bench sessions.
+    {
+        "key": "ctrl+alt+r",
+        "command": "workbench.action.terminal.newWithProfile",
+        "args": { "profileName": "bot: start.sh" }
+    },
+    {
+        "key": "ctrl+alt+shift+r",
+        "command": "workbench.action.terminal.newWithProfile",
+        "args": { "profileName": "bot: start.sh (control run)" }
+    },
+    {
+        "key": "ctrl+alt+g",
+        "command": "workbench.action.terminal.newWithProfile",
+        "args": { "profileName": "bot: shell" }
+    },
+    {
+        "key": "ctrl+alt+shift+l",
+        "command": "workbench.action.terminal.newWithProfile",
+        "args": { "profileName": "bot: journal" }
+    },
+    {
+        "key": "ctrl+alt+shift+d",
+        "command": "workbench.action.terminal.newWithProfile",
+        "args": { "profileName": "bot: dmesg" }
+    },
+
+    // ---------- journal and services ----------
+    {
+        "key": "ctrl+alt+j",
+        "command": "workbench.action.tasks.runTask",
+        "args": "journal"
+    },
+    {
+        "key": "ctrl+alt+shift+j",
+        "command": "workbench.action.tasks.runTask",
+        "args": "journal (this boot, errors only)"
+    },
+    {
+        "key": "ctrl+alt+shift+i",
+        "command": "workbench.action.tasks.runTask",
+        "args": "service: restart"
+    },
+    {
+        "key": "ctrl+alt+x",
+        "command": "workbench.action.tasks.runTask",
+        "args": "service: stop"
+    },
+    {
+        "key": "ctrl+alt+shift+u",
+        "command": "workbench.action.tasks.runTask",
+        "args": "service: status"
     }
 ]

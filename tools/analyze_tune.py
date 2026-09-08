@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: MIT
-# Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright (c) 2025-2026 Ryan Lush <ryan.lush@gmail.com>
+#
+# This file is part of balance_bot, licensed under the PolyForm
+# Noncommercial License 1.0.0. You may use, study, modify, and share
+# it for any noncommercial purpose. Commercial use requires a separate
+# license from the author -- contact ryan.lush@gmail.com.
+# Full license text: see the LICENSE file in the project root, or
+# https://polyformproject.org/licenses/noncommercial/1.0.0/
+
 """
 analyze_tune.py — full tune-quality report from one or more telemetry CSVs.
 
@@ -69,7 +77,12 @@ TH = {
     "loop_bad":        10.0,
 }
 
-MM_PER_TICK = 155.0 * math.pi / 145.1
+# Wheel 4.75 in = 120.65 mm dia, 145.1 counts per wheel revolution.
+# The /2 matters: robot.c does `enc_pos = left_ticks + right_ticks`, so one
+# unit of enc_pos is half a wheel-tick of travel. Without it every distance
+# in this report reads 2x high -- and with the old 155 mm diameter it read
+# 2.57x high, which is why 5 inches of real wander printed as 12.6.
+MM_PER_TICK = 120.65 * math.pi / (2 * 145.1)
 
 
 def verdict(value, ok, bad, lower_is_better=True):
@@ -265,11 +278,26 @@ def analyse(log, max_theta=8.0):
         eek = [ee[k] for k in keep]
         r["pos_rms"] = rms(eek)
         r["pos_peak"] = max(abs(x) for x in eek)
-        r["pos_tight_pct"] = 100.0 * sum(1 for x in eek if abs(x) < 2) / len(eek)
+        # Read the bot's real deadband from the log header when it is there.
+        # This used to be a hardcoded 2, which silently measured the wrong
+        # thing the moment pos_deadband became tunable.
+        db = log.c("pos_deadband", 2)
+        try:
+            db = int(float(db))
+        except (TypeError, ValueError):
+            db = 2
+        r["pos_deadband"] = db
+        # Peak-to-peak travel: the swing you can SEE the machine make.
+        # RMS is the honest statistic for comparing tunes, but it runs ~4x
+        # smaller than the visible wander and reads as success when the bot is
+        # plainly sliding around. Report both or the report argues with the eye.
+        r["pos_p2p"] = (max(eek) - min(eek)) if eek else 0.0
+        r["pos_tight_pct"] = 100.0 * sum(1 for x in eek if abs(x) < db) / len(eek)
         pper, pamp = autocorr_period(eek, r["dt"], lo=0.5, hi=8.0)
         r["pos_period"], r["pos_amp"] = pper, pamp
     else:
-        r["pos_rms"] = r["pos_peak"] = r["pos_tight_pct"] = 0.0
+        r["pos_rms"] = r["pos_peak"] = r["pos_tight_pct"] = r["pos_p2p"] = 0.0
+        r["pos_deadband"] = 2
         r["pos_period"] = None
         r["pos_amp"] = 0.0
 
@@ -334,8 +362,11 @@ def report(r):
         f"ticks = {r['pos_rms']*MM_PER_TICK:.0f} mm (ok <{TH['pos_rms_ok']:.0f})")
     row("position error peak", r["pos_peak"], "%.0f", v,
         f"ticks = {r['pos_peak']*MM_PER_TICK/1000:.2f} m")
+    print(f"    [    ] {'travel peak-to-peak':<26} {r['pos_p2p']:>9.0f}   "
+          f"ticks = {r['pos_p2p']*MM_PER_TICK/25.4:.1f} in  <- the wander you can see")
     print(f"    [    ] {'time inside deadband':<26} {r['pos_tight_pct']:>9.0f}%   "
-          f"(|err| < 2 ticks)")
+          f"(|err| < {r['pos_deadband']} ticks = "
+          f"{r['pos_deadband']*MM_PER_TICK:.0f} mm)")
     if r["pos_period"]:
         print(f"    [    ] {'limit cycle':<26} {r['pos_period']:>9.2f}s   "
               f"amplitude {r['pos_amp']:.0f} ticks = {r['pos_amp']*MM_PER_TICK:.0f} mm")

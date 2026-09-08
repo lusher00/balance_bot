@@ -1,11 +1,36 @@
-/obj/
-/bin/
-/server/node_modules/
-__pycache__/
-*.pyc
-.DS_Store
-**/.DS_Store
+# ── build output ────────────────────────────────────────────────────────────
 obj/
 bin/
+server/node_modules/
+__pycache__/
+*.pyc
+*.o
+*.d
+
+# ── machine-local config (lives on the bot / on this Mac, never in the repo) ─
 robot.conf
 pidconfig.txt
+
+# ── disk images ─────────────────────────────────────────────────────────────
+# A gzipped SD image was committed once (93ea304, 1.35 GB) and made the repo
+# unpushable -- GitHub rejects any blob over 100 MB. Card archives belong
+# outside the working tree. See tools/git_cleanup.sh.
+*.img
+*.img.gz
+*.img.xz
+*.img.zip
+*.iso
+
+# ── parked for deletion ─────────────────────────────────────────────────────
+# Files moved aside rather than deleted. hailo-tracker already ignores this;
+# without it here, everything you park shows up as untracked noise in
+# git status and eventually gets committed by a stray 'git add -A'.
+_to_delete/
+
+# ── editor / OS / scratch ───────────────────────────────────────────────────
+.DS_Store
+**/.DS_Store
+*.bak
+*.bak.*
+*.orig
+*.rej

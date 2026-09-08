@@ -1,46 +1,14 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright (c) 2025-2026 Ryan Lush <ryan.lush@gmail.com>
+#
+# This file is part of balance_bot, licensed under the PolyForm
+# Noncommercial License 1.0.0. You may use, study, modify, and share
+# it for any noncommercial purpose. Commercial use requires a separate
+# license from the author -- contact ryan.lush@gmail.com.
+# Full license text: see the LICENSE file in the project root, or
+# https://polyformproject.org/licenses/noncommercial/1.0.0/
 
-# SPDX-License-Identifier: MIT
-# Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
-
-# SPDX-License-Identifier: MIT
-# Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
 """
 serve_web.py — serve BBotHUD web dashboard on port 8888.
 Run from the balance_bot directory:
@@ -74,7 +42,6 @@ BANNER = (
 
 os.chdir(WEB_DIR)
 
-
 def _stale_names():
     """Names that get the warning banner injected, so an old URL in someone's
     bookmarks announces itself instead of quietly lying.
@@ -102,9 +69,7 @@ def _stale_names():
             names.add(generic)
     return names
 
-
 STALE = _stale_names()
-
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
@@ -118,6 +83,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         name = self.path.lstrip("/").split("?")[0]
+
+        # The loop-rate capture lands in /tmp on the bot, which is nowhere the
+        # operator can reach from a browser. Serve it from here so the dashboard
+        # can just hand over the file -- no scp, no second tool, no wondering
+        # where it went.
+        if name == "bbot.csv":
+            path = "/tmp/bbot.csv"
+            if not os.path.isfile(path):
+                self.send_response(404)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"no capture yet - press CAPTURE AT LOOP RATE first\n")
+                return
+            with open(path, "rb") as fh:
+                body = fh.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv")
+            self.send_header("Content-Disposition", 'attachment; filename="bbot.csv"')
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if name in STALE and os.path.isfile(name):
             with open(name, "rb") as fh:
                 body = fh.read()
@@ -133,8 +121,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        return super().do_GET()
+        # Serve the dashboard itself uncached, with its own mtime stamped into
+        # the page. Without this a browser keeps showing a page from before the
+        # last rsync and there is no way to tell that from the firmware not
+        # having the feature -- which has now cost several debugging rounds.
+        if name.endswith(".html") and os.path.isfile(name):
+            with open(name, "rb") as fh:
+                body = fh.read()
+            import time
+            stamp = time.strftime("%H:%M:%S", time.localtime(os.path.getmtime(name)))
+            body = body.replace(b"__BUILD__", stamp.encode())
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, must-revalidate")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
 
+        return super().do_GET()
 
 with socketserver.TCPServer(("", PORT), Handler) as httpd:
     print(f"BBotHUD web dashboard: http://boneblue-0:{PORT}/  ->  {CURRENT}", flush=True)

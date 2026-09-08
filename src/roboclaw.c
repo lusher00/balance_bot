@@ -758,3 +758,80 @@ int roboclaw_temperature(struct roboclaw *rc, uint8_t address, float *temp_c)
 	*temp_c = raw / 10.0f;
 	return ROBOCLAW_OK;
 }
+
+/* ── Reading what the RoboClaw ACTUALLY has ────────────────────────────────
+ * Everything above writes settings.  These read them back out of the
+ * controller, which is a different question and the one that matters when the
+ * unit has been configured through Ion Studio: robot.conf's pol_l/enc_pol_r
+ * describe what balance_bot does to the numbers, and say nothing about what
+ * the RoboClaw does to them afterwards.  If the controller has a motor or an
+ * encoder inverted internally, every sign argument made from robot.conf alone
+ * is off by that inversion.
+ */
+
+/* READM1PID/READM2PID (55/56).
+ * Reply: [P:4][I:4][D:4][QPPS:4][CRC:2] = 18 bytes.
+ * Gains come back as fixed point x65536, the same scaling SETM1PID takes. */
+int roboclaw_read_velocity_pid(struct roboclaw *rc, uint8_t address, int motor,
+							   roboclaw_vel_pid_t *pid, uint32_t *qpps)
+{
+	uint8_t bytes = 0;
+	uint16_t crc;
+	int ret;
+
+	rc->buffer[bytes++] = address;
+	rc->buffer[bytes++] = (motor == 1) ? READM2PID : READM1PID;
+	crc = calculate_crc16(rc->buffer, bytes);
+	if ((ret = send_cmd_wait_answer(rc, bytes, 18, crc)) != ROBOCLAW_OK)
+		return ret;
+
+	pid->kp = (float)decode_uint32_t(rc->buffer + bytes) / 65536.0f;
+	pid->ki = (float)decode_uint32_t(rc->buffer + bytes + 4) / 65536.0f;
+	pid->kd = (float)decode_uint32_t(rc->buffer + bytes + 8) / 65536.0f;
+	if (qpps)
+		*qpps = decode_uint32_t(rc->buffer + bytes + 12);
+	return ROBOCLAW_OK;
+}
+
+/* GETENCODERMODE (91).
+ * Reply: [M1mode:1][M2mode:1][CRC:2] = 4 bytes.
+ * Returned raw and undecoded on purpose -- the bit meanings vary by firmware
+ * revision and guessing at them here would be worse than showing the byte. */
+int roboclaw_read_encoder_mode(struct roboclaw *rc, uint8_t address,
+							   uint8_t *m1_mode, uint8_t *m2_mode)
+{
+	uint8_t bytes = 0;
+	uint16_t crc;
+	int ret;
+
+	rc->buffer[bytes++] = address;
+	rc->buffer[bytes++] = GETENCODERMODE;
+	crc = calculate_crc16(rc->buffer, bytes);
+	if ((ret = send_cmd_wait_answer(rc, bytes, 4, crc)) != ROBOCLAW_OK)
+		return ret;
+
+	if (m1_mode)
+		*m1_mode = rc->buffer[bytes];
+	if (m2_mode)
+		*m2_mode = rc->buffer[bytes + 1];
+	return ROBOCLAW_OK;
+}
+
+/* GETCONFIG (99).
+ * Reply: [config:2][CRC:2] = 4 bytes.  Raw, for the same reason as above. */
+int roboclaw_read_config(struct roboclaw *rc, uint8_t address, uint16_t *cfg)
+{
+	uint8_t bytes = 0;
+	uint16_t crc;
+	int ret;
+
+	rc->buffer[bytes++] = address;
+	rc->buffer[bytes++] = GETCONFIG;
+	crc = calculate_crc16(rc->buffer, bytes);
+	if ((ret = send_cmd_wait_answer(rc, bytes, 4, crc)) != ROBOCLAW_OK)
+		return ret;
+
+	if (cfg)
+		*cfg = decode_uint16(rc->buffer + bytes);
+	return ROBOCLAW_OK;
+}

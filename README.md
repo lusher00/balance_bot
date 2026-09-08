@@ -6,7 +6,7 @@ dashboard over WebSocket.
 
 ![Platform](https://img.shields.io/badge/platform-BeagleBone%20Blue-blue)
 ![Language](https://img.shields.io/badge/language-C-lightgrey)
-![License](https://img.shields.io/badge/license-MIT-green)
+![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
 
 ---
 
@@ -234,7 +234,7 @@ ssh debian@boneblue-0 "cd ~/balance_bot && python3 web/serve_web.py &"
 | Color | Meaning |
 |-------|---------|
 | 🟢 Green | Disarmed — ready to arm |
-| 🟡 Yellow | Armed but out of bounds (>14°) — no motor output |
+| 🟡 Yellow | Armed but out of bounds (>15°) — motors cut, still armed |
 | 🔴 Red | Armed and balancing |
 
 ### E-stop recovery
@@ -299,6 +299,9 @@ require_center = 1
 mode = 0               # 0 = duty, 1 = velocity, 2 = velocity + accel
 pol_l = -1.0
 enc_pol_l = -1.0
+
+[system]
+arm_at_boot = 0         # 1 = arm automatically once the control loop starts
 ```
 
 Section names changed with the controller rename; `[balance]` and `[steering]`
@@ -390,6 +393,7 @@ Commands are JSON sent over WebSocket to `server.js`, which forwards them to the
 | RC mapping | `{"type":"set_sbus_config","drive_channel":3,"drive_scale":0.25}` |
 | Nudge pose / position | `{"type":"nudge","axis":"pose","delta":0.1}` — axes: `pitch` (trim), `pose` (lean), `yaw`, `fwd` |
 | Telemetry options | `{"type":"set_telemetry","encoders":true,"pid_states":true}` |
+| Arm at boot | `{"type":"set_arm_at_boot","value":true}` — persists to `robot.conf` immediately |
 
 Controller names are `pitch`, `position` and `yaw`. The older `balance` and
 `steering` are still accepted, so an out-of-date browser tab keeps working.
@@ -416,4 +420,13 @@ Managed by `balance_bot_server.service`.
 
 ## License
 
-MIT
+[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/) — free to use, study,
+modify and share for any noncommercial purpose. Commercial use requires a
+separate license; contact ryan.lush@gmail.com. Full text in
+[`LICENSE`](LICENSE).
+
+Third-party code keeps its own license: `src/roboclaw.c` / `include/roboclaw.h`
+(Mozilla Public License 2.0, Bartosz Meglicki) and `include/dmpKey.h` /
+`include/dmpmap.h` (InvenSense Corporation). `src/dmp_firmware.c` /
+`include/dmp_firmware.h` are a generated InvenSense DMP firmware blob, not
+original source, and are noted as such in the files themselves.

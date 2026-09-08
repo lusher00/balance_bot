@@ -1,46 +1,14 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright (c) 2025-2026 Ryan Lush <ryan.lush@gmail.com>
+#
+# This file is part of balance_bot, licensed under the PolyForm
+# Noncommercial License 1.0.0. You may use, study, modify, and share
+# it for any noncommercial purpose. Commercial use requires a separate
+# license from the author -- contact ryan.lush@gmail.com.
+# Full license text: see the LICENSE file in the project root, or
+# https://polyformproject.org/licenses/noncommercial/1.0.0/
 
-# SPDX-License-Identifier: MIT
-# Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
-
-# SPDX-License-Identifier: MIT
-# Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
 """
 roboclaw_reset.py — reset RoboClaw via WriteNVM (cmd 94) using stdlib only.
 No pyserial dependency — uses termios directly.
@@ -147,29 +115,48 @@ def gpio_high(gpio):
     except Exception as e:
         print("roboclaw_reset: GPIO%d warning: %s" % (gpio, e))
 
-try:
-    _estop = resolve_estop_gpio()
-    if _estop is None:
+def release_estop_gpio():
+    """Drive the e-stop line high. NO WriteNVM.
+
+    Split out so other tools can raise the line without the NVM write, which on
+    firmware v4.2.8 performs a FULL CONFIG RESET -- it zeroes the velocity PID
+    gains and QPPS. Running the whole reset just to un-latch before a bench test
+    wipes the tuning you are about to measure.
+
+    Returns the resolved sysfs GPIO number, or None if the bank was not found.
+    """
+    gpio = resolve_estop_gpio()
+    if gpio is None:
         print("roboclaw_reset: WARNING — no gpiochip owns %s.gpio (AM335x GPIO1); "
               "e-stop NOT released" % ESTOP_BANK_ADDR)
-    else:
-        gpio_high(_estop)
-    time.sleep(0.1)
-    fd = open_port(PORT, BAUD)
-    time.sleep(0.1)
+        return None
+    gpio_high(gpio)
+    return gpio
 
-    payload = struct.pack('>BBI', ADDR, 94, 0xE22EAB7A)
-    ok = send_acked(fd, payload, timeout=1.0)
-    os.close(fd)
+def main():
+    try:
+        release_estop_gpio()
+        time.sleep(0.1)
+        fd = open_port(PORT, BAUD)
+        time.sleep(0.1)
 
-    if ok:
-        print("roboclaw_reset: WriteNVM OK — waiting 2s for unit to come up")
-    else:
-        print("roboclaw_reset: no ACK — unit may already be reset, continuing")
+        payload = struct.pack('>BBI', ADDR, 94, 0xE22EAB7A)
+        ok = send_acked(fd, payload, timeout=1.0)
+        os.close(fd)
 
-    time.sleep(2.0)
+        if ok:
+            print("roboclaw_reset: WriteNVM OK — waiting 2s for unit to come up")
+        else:
+            print("roboclaw_reset: no ACK — unit may already be reset, continuing")
 
-except Exception as e:
-    print(f"roboclaw_reset: error — {e}, continuing anyway")
+        time.sleep(2.0)
 
-sys.exit(0)
+    except Exception as e:
+        print(f"roboclaw_reset: error — {e}, continuing anyway")
+
+    return 0
+
+# Guarded so the module can be imported for resolve_estop_gpio / gpio_high /
+# release_estop_gpio without firing a config-resetting WriteNVM on import.
+if __name__ == "__main__":
+    sys.exit(main())

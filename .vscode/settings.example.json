@@ -1,0 +1,69 @@
+// Terminal profiles cannot be loaded from workspace settings: VS Code
+// ignores terminal.integrated.profiles.* from .vscode/settings.json,
+// because a cloned repo could otherwise run arbitrary commands the
+// moment you opened a terminal. They have to live in USER settings.
+//
+// You do not need to copy this by hand:
+//     ./tools/install_keybindings.py            # dry run
+//     ./tools/install_keybindings.py --apply    # install
+//
+// That merges these into your user settings.json, leaving your own
+// settings, comments and any other project's profiles untouched.
+{
+    "terminal.integrated.profiles.osx": {
+        "bash": {
+            "path": "bash",
+            "icon": "terminal-bash"
+        },
+        "bot: shell": {
+            "path": "ssh",
+            "args": [
+                "-t",
+                "boneblue-0",
+                "cd ~/balance_bot && exec $SHELL -l"
+            ],
+            "icon": "circuit-board",
+            "color": "terminal.ansiGreen"
+        },
+        "bot: start.sh": {
+            "path": "ssh",
+            "args": [
+                "-t",
+                "boneblue-0",
+                "cd ~/balance_bot && ./start.sh"
+            ],
+            "icon": "rocket",
+            "color": "terminal.ansiYellow"
+        },
+        "bot: start.sh (control run)": {
+            "path": "ssh",
+            "args": [
+                "-t",
+                "boneblue-0",
+                "cd ~/balance_bot && ./start.sh --input none --no-server --label 'control'"
+            ],
+            "icon": "beaker",
+            "color": "terminal.ansiCyan"
+        },
+        "bot: journal": {
+            "path": "ssh",
+            "args": [
+                "-t",
+                "boneblue-0",
+                "journalctl -u balance_bot -u balance_bot_server -f -n 100"
+            ],
+            "icon": "output",
+            "color": "terminal.ansiBlue"
+        },
+        "bot: dmesg": {
+            "path": "ssh",
+            "args": [
+                "-t",
+                "boneblue-0",
+                "sudo dmesg -w -T"
+            ],
+            "icon": "pulse",
+            "color": "terminal.ansiMagenta"
+        }
+    }
+}

@@ -152,6 +152,20 @@ int roboclaw_encoder_speeds(struct roboclaw *rc, uint8_t address,
  */
 int roboclaw_temperature(struct roboclaw *rc, uint8_t address, float *temp_c);
 
+/* Read settings back OUT of the controller, as opposed to the setters above.
+ * robot.conf says what balance_bot does to the numbers; these say what the
+ * RoboClaw itself is configured to do, which is the other half and the half
+ * you cannot see when the unit was set up in Ion Studio.
+ *
+ * motor: 0 = M1, 1 = M2.  Gains are already un-scaled from the wire's x65536.
+ * Encoder mode and config come back RAW -- bit meanings shift between firmware
+ * revisions, so they are reported rather than interpreted. */
+int roboclaw_read_velocity_pid(struct roboclaw *rc, uint8_t address, int motor,
+                               roboclaw_vel_pid_t *pid, uint32_t *qpps);
+int roboclaw_read_encoder_mode(struct roboclaw *rc, uint8_t address,
+                               uint8_t *m1_mode, uint8_t *m2_mode);
+int roboclaw_read_config(struct roboclaw *rc, uint8_t address, uint16_t *cfg);
+
 #ifdef __cplusplus
 }
 #endif

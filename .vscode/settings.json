@@ -9,4 +9,11 @@
     ],
     "terminal.integrated.defaultProfile.osx": "bash",
     "cmake.configureOnOpen": false
+
+    // Terminal profiles ("bot: start.sh, bot: shell, bot: journal, bot: dmesg") are NOT here on purpose.
+    // VS Code ignores terminal.integrated.profiles.* when it comes from
+    // workspace settings, since a cloned repo could otherwise run arbitrary
+    // commands as soon as you opened a terminal. They have to live in User
+    // settings: see .vscode/settings.example.json.
+
 }

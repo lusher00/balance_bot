@@ -1,43 +1,13 @@
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Copyright (c) 2025-2026 Ryan Lush <ryan.lush@gmail.com>
 //
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2025 Ryan Lush <ryan.lush@gmail.com>
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
+// This file is part of balance_bot, licensed under the PolyForm
+// Noncommercial License 1.0.0. You may use, study, modify, and share
+// it for any noncommercial purpose. Commercial use requires a separate
+// license from the author -- contact ryan.lush@gmail.com.
+// Full license text: see the LICENSE file in the project root, or
+// https://polyformproject.org/licenses/noncommercial/1.0.0/
+
 /**
  * @file balance_bot.h
  * @brief Main header for balance_bot
@@ -114,6 +84,12 @@
 #define POS_DRIVE_RATE_DEFAULT 300.0f
 #define POS_RUNAWAY_LIMIT_DEFAULT 300
 #define POS_BACK_TO_SPOT_DEFAULT 1       // Full zone hold by default
+#define POS_KI_DEFAULT     0.0f          // off — opt in from the dashboard
+#define POS_I_MAX_DEFAULT  2.0f          // deg; ~4x the standing lean seen so far
+#define POS_VEL_DAMP_MAX_DEFAULT 0.0f    // 0 = unlimited, original behaviour
+#define POS_VEL_DAMP_FC_DEFAULT 0.0f     // off — opt in from the dashboard
+#define POS_VEL_SRC_DEFAULT 0            // RoboClaw speed registers — known good
+#define POS_DEADBAND_DEFAULT 2           // ticks; 2 = 2.6 mm = 0.1 in
 // How often the RoboClaw is polled for wheel speed (ms).
 //
 // This is a POLL RATE, not a measurement window: roboclaw_encoder_speeds()
@@ -146,8 +122,31 @@
 
 /* 0 = RoboClaw speed registers control the loop (known good, default)
  * 1 = short window controls, 2 = mid, 3 = long
- * All candidates are computed and logged regardless. */
-#define POS_VEL_USE_LSQ 0
+ * All candidates are computed and logged regardless.
+ *
+ * Sep 2 2026 -- set to 2 (mid window).  The RoboClaw's own speed registers are
+ * polled every POS_VEL_PERIOD_MS and held, and measured against the true
+ * derivative of enc_pos they lead position by only +76.9 deg at the 0.33 Hz
+ * wander frequency where +90 is ideal.  The mid window gives +86.0.
+ *
+ * That 13 deg matters more than it looks, because velocity damping closes an
+ * inner loop (velocity -> lean -> acceleration -> velocity) whose stability is
+ * set by the phase its velocity signal carries.  With a late signal there is no
+ * good gain: vel_scale_stop=7 is underdamped, 5 is the optimum, and 3.5 sends
+ * the damping term up 8.7x for a 1.43x gain increase and pins the lean command
+ * at its clamp.  Gain cannot fix phase.
+ *
+ * IMPORTANT -- the two sources are NOT the same scale.  Measured over a 95 s
+ * run, enc_vel_mid = 1.255 x vel_claw (r = 0.934).  Since vel_damp is
+ * enc_velocity / vel_scale_stop, changing this constant without also scaling
+ * vel_scale_stop raises the damping gain by 26% as a side effect -- on a loop
+ * where 43% was catastrophic.  vel_scale_stop must go 5.0 -> 6.3 in robot.conf
+ * at the same time, which holds the gain constant and leaves phase as the only
+ * thing that changed. */
+#define POS_VEL_USE_LSQ 0   /* compile-time DEFAULT only; pos_config.vel_src
+                             * overrides it at runtime. Left at 0 so a board
+                             * with no robot.conf comes up on the known-good
+                             * source. */
 
 /**
  * @brief Runtime-tunable parameters for the position hold (hold/drive) controller.
@@ -177,6 +176,92 @@ typedef struct
     float max_angle_rate;    // Max correction change per main loop tick (deg/tick)
                              // Rate-limits position hold output to prevent slamming theta_ref.
                              // reference implementation uses 1°/loop at 500Hz ≈ 5°/loop at 100Hz.
+    /* Which velocity estimate drives the damping term:
+     *   0 = RoboClaw speed registers (polled every POS_VEL_PERIOD_MS and held)
+     *   1 = least-squares over POS_VEL_WIN_SHORT (6 ticks, ~25 ms lag)
+     *   2 = mid   (12 ticks, ~55 ms)
+     *   3 = long  (20 ticks, ~95 ms)
+     *
+     * Runtime-selectable because it is a PHASE choice and phase is what limits
+     * this loop: vel_damp supplies ~78% of the lean command, and with the
+     * RoboClaw source leading position by only +77 deg (ideal +90) there is no
+     * good vel_scale_stop -- 7 is underdamped, 5 is the optimum, 3.5 pins the
+     * lean command at its clamp. Comparing sources needed a rebuild per trial,
+     * which is why this is a knob now.
+     *
+     * The sources are NOT the same scale: enc_vel_mid measured 1.255x
+     * vel_claw over a 95 s run (r=0.934), because the RoboClaw's own averaging
+     * plus the 40 ms hold attenuates peaks. So vel_scale_stop must be scaled by
+     * the same factor when changing this, or the damping GAIN changes too and
+     * the experiment tells you nothing. */
+    int32_t vel_src;
+
+    /* Corner frequency (Hz) of a first-order low-pass on the VELOCITY DAMPING
+     * term only. 0 disables it.
+     *
+     * The damping term is a derivative, and an unfiltered derivative of a
+     * 1-tick-quantised encoder is a noise amplifier. Measured on this bot: the
+     * position hold is stable at 0.3 Hz but runs away at ~1.6 Hz, where the
+     * RoboClaw velocity estimate's ~100 ms lag has cost 58 deg of phase and the
+     * "damping" reinforces instead of opposing. 1.6 Hz is also where the pitch
+     * loop's own resonance sits, so it has something to feed.
+     *
+     * Neither gain nor a faster estimate fixes it -- both were tried:
+     *   vel_scale_stop 7   (less gain)  loses the 0.3 Hz damping, wanders
+     *   vel_scale_stop 3.5 (more gain)  8.7x runaway, lean pinned at the clamp
+     *   vel_src 2 (55 ms lag)           unstable
+     *   vel_src 1 (25 ms lag)           worse still -- shorter window, more noise
+     * The one thing every result agrees on is that SMOOTHER is better, which is
+     * what this is. A 1 Hz corner keeps 96% of the term's authority at 0.3 Hz
+     * where it damps, and removes half of it at 1.6 Hz where it does not. */
+    float vel_damp_fc;
+
+    /* Hard cap (degrees) on how much lean the velocity damping term alone may
+     * command. 0 = unlimited (the original behaviour).
+     *
+     * The position term is rate-limited by max_angle_rate; vel_damp is
+     * subtracted AFTER that limiter and has neither a rate limit nor a cap, so
+     * a velocity spike reaches theta_ref in one tick. Measured: velDamp peaks
+     * at 1.44 deg in steady hold and hit 5.02 deg during a push-induced
+     * runaway. A cap near 2.0 truncates the runaway and leaves normal operation
+     * untouched -- which is why this is preferable to lowering the gain, which
+     * degrades the hold everywhere to fix behaviour that only occurs on
+     * excursions. */
+    float vel_damp_max;
+
+    /* ── Integral term on the position hold ──────────────────────────────────
+     * pos_ki  : degrees of lean per (tick of error x second). 0 disables.
+     * pos_i_max: hard clamp on the integral's contribution, in degrees.
+     *
+     * The hold is proportional-only, so the ONLY way it can command the standing
+     * lean this bot needs (its CG is not over the axle) is to sit off-target:
+     * lean = err / scale_d, so 0.5 deg of required lean costs 30 ticks = 1.6 in
+     * of permanent offset. Measured three times in one evening at +0.25, -0.09
+     * and -0.54 deg, because CG shift, battery position and IMU drift all move
+     * it. Chasing it with theta_trim works once and is stale by the next run.
+     *
+     * The integral absorbs whatever standing lean is required and drives the
+     * offset to zero on its own. It is deliberately slow -- it exists to cancel
+     * a constant, not to help with disturbances, which is what the proportional
+     * and damping terms are for.
+     *
+     * Anti-windup, all three of which matter on a robot that gets picked up:
+     *   - contribution clamped to +/- pos_i_max
+     *   - integration STOPS while the lean command is saturated at
+     *     max_correction (integrating into a limit is how you get a lurch when
+     *     the limit releases)
+     *   - reset to zero on disarm, on out-of-bounds, and whenever the target is
+     *     re-snapped to the current position */
+    float pos_ki;
+    float pos_i_max;
+
+    int32_t pos_deadband;    // Ticks of position error inside which the hold
+                             // stops PUSHING and applies damping only. Was a
+                             // literal 2 in robot.c -- 2.6 mm, far tighter than
+                             // anything the operator cares about, so the loop
+                             // never rested and hunted around the target. Set
+                             // it to roughly half the tolerance you actually
+                             // want and the limit cycle loses its driver.
     int back_to_spot;        // 1 = full zone-based hold (A/B/C/D);
                              // 0 = only correct inside zone_c (loose hold, position hold mode)
 
@@ -396,6 +481,7 @@ typedef struct
     // position hold controller internal signals (for telemetry)
     float pos_correction; // lean angle from position error (deg)
     float pos_vel_damp;       // lean angle from velocity damping (deg)
+    float pos_i_term;         // lean angle from the integral (deg)
     float pos_output; // final rate-limited, clamped correction injected (deg)
     float pos_scale;   // zone divisor used this tick (0 = deadband, no correction).
                              // position hold is gain-scheduled, so "which zone am I in" is the
@@ -419,6 +505,17 @@ extern debug_config_t g_debug_config;
 extern telemetry_data_t g_telemetry_data;
 extern pos_config_t g_pos_config;
 extern motor_config_t g_motor_config;
+// Mirrors robot_config_t.arm_at_boot -- robot_config_apply() copies it in,
+// robot_run()'s main loop consumes it once on its first iteration (after
+// the DMP thread has real theta data, not before), then it's inert until
+// the next restart. set_arm_at_boot persists the preference immediately.
+extern int g_arm_at_boot;
+
+// The one out-of-bounds angle (degrees) that both imu_interrupt()'s actuation
+// gate and robot_run()'s hard motor-cutoff read -- see robot.c. Mirrors
+// robot_config_t.oob_angle_deg; set_oob_angle applies and persists it
+// immediately, unlike arm_at_boot which only takes effect on next boot.
+extern float g_oob_angle_deg;
 
 // ============================================================================
 // PID (pid.c)
@@ -483,6 +580,13 @@ void ipc_broadcast_config(void);
  * motor_config, pos_config or sbus_config. Cheap -- sets a flag; the control
  * loop does the send via ipc_broadcast_config_if_dirty(). */
 void ipc_config_touch(void);
+
+/* Loop-rate capture to /tmp/bbot.csv. The websocket telemetry is 20 Hz against
+ * a 100 Hz loop, so anything above 10 Hz aliases; this is the only honest view
+ * of what the derivative term is actually doing. RAM buffer during the run,
+ * file written when it fills. Fixed path, overwritten each time. */
+int looplog_start(int seconds);
+int looplog_active(void);
 void ipc_broadcast_config_if_dirty(void);
 
 /* Worst telemetry-drop count across connected clients. Reported in the
@@ -651,6 +755,8 @@ typedef struct
     imu_offsets_t imu;
     sbus_config_t sbus;
     float theta_trim;       /* was balance_angle; applied as state.theta_offset */
+    int arm_at_boot;        /* 1 = auto-arm on startup instead of waiting for ARM */
+    float oob_angle_deg;    /* hard safety cutoff -- see g_oob_angle_deg */
 } robot_config_t;
 
 void robot_config_defaults(robot_config_t *c);
