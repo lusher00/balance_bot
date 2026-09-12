@@ -111,15 +111,18 @@ def main():
     fail = False
 
     # ── 1. units ────────────────────────────────────────────────────────────
-    units = sorted(glob.glob(f"{UNIT_DIR}/bbb?oled.service"))
+    units = sorted(set(glob.glob(f"{UNIT_DIR}/bbb?oled.service"))
+                   | set(glob.glob(f"{UNIT_DIR}/*oled*.service")))
     if not units:
-        say(BAD, "no bbb_oled unit installed",
-            "sudo ./oled-utils/install.sh --apply")
+        say(BAD, "no OLED unit installed",
+            """sudo ./oled-utils/install.sh          (on the bot: unit bbb_oled)
+               sudo ./oled_status.py --install       (anywhere else: unit oled-status)""")
         return 1
     if len(units) > 1:
         say(BAD, f"TWO units installed: {', '.join(os.path.basename(u) for u in units)}",
-            """Both will start and both will drive the same I2C display. Remove the
-               old hyphenated one:
+            """Both will start and both will drive the same I2C display, and the
+               result looks exactly like a dead panel. Keep one; for the old
+               hyphenated name that is:
                  sudo systemctl disable --now bbb-oled
                  sudo rm /etc/systemd/system/bbb-oled.service
                  sudo systemctl daemon-reload""")
@@ -141,7 +144,10 @@ def main():
     port = a.port
     addr = a.addr
     if port is None:
-        m = re.search(r"--i2c-port\s+(\d+)", args)
+        m = re.search(r"--i2c-(?:port|bus)\s+(\d+)", args)
+        # No bus in OLED_ARGS is not a misconfiguration any more: the script
+        # scans every /dev/i2c-* when it is not told one. Check bus 1 anyway,
+        # since that is what it finds on this board.
         port = int(m.group(1)) if m else 1
     if addr is None:
         m = re.search(r"--i2c-addr\s+(\S+)", args)

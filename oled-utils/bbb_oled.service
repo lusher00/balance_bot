@@ -36,8 +36,14 @@ EnvironmentFile=-/etc/default/bbb_oled
 Restart=always
 RestartSec=5
 
-# Modest hardening. This process needs one character device and one file in
-# /run; it has no business anywhere else.
+# /run/bbb_oled, created on start and removed on stop. Needed because
+# ProtectSystem=strict below makes /run read-only, and the status file has to
+# go somewhere the dashboard can read it. Removal on stop is the point as much
+# as creation: a stopped service must not leave a stale "ok" behind.
+RuntimeDirectory=bbb_oled
+
+# Modest hardening. This process needs one character device and one directory
+# in /run; it has no business anywhere else.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

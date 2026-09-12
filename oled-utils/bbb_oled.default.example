@@ -3,16 +3,28 @@
 # Installed by install.sh only if the file does not already exist, so local
 # edits survive a reinstall. Run `systemctl restart bbb_oled` after changing.
 #
-# Everything bbb_oled.py accepts is valid here; see `bbb_oled.py --help`.
+# Everything the script accepts is valid here; see `bbb_oled.py --help`.
+# (The script is oled-utils/oled_status.py, installed under the old name.)
 #
-#   --i2c-port N        bus number; run oled_check.py to see which bus the
-#                       panel is actually on (it sweeps all of them)
-#   --i2c-addr 0x3C     panel address; some modules are 0x3D
-#   --height 32         for 128x32 panels; layout adapts
-#   --service NAME      which unit the BBOT line and heartbeat track
+#   --i2c-port N        bus number. Omit it entirely and the script scans every
+#                       /dev/i2c-* for a panel, which is usually what you want
+#   --i2c-addr 0x3C     panel address; some modules are 0x3D. Omit to try both
+#   --height 32         for 128x32 panels; the layout adapts and each page is
+#                       built to fit the rows it has, not sliced in half
+#   --service NAME      which unit the BOT page and heartbeat track. Repeat it
+#                       to watch more units; the first one given is primary
+#   --batt-path PATH    battery status JSON (alias of --battery)
 #   --refresh 1.0       redraw interval
-#   --status-interval   how often to shell out to systemctl (keep >= 2 on ARM)
-#   --batt-path PATH    battery status JSON
+#   --page-sec 5.0      seconds per page before it cycles
+#   --pages bot,sys     only these pages (of bot,net,sys,svc)
+#   --pin none          stop returning to the BOT page between the others
+#   --banner-h 16       height of the panel's yellow segment. The header bar is
+#                       sized to fill it exactly and nothing is drawn across
+#                       that row -- see the layout note in the script. Change
+#                       it only if your panel's band is not 16 rows
+#   --no-header         single-colour panel: no bar, four plain rows
+#   --rotate 2          180 degrees, for a panel mounted upside down
+#   --contrast 128      0-255, for a panel that is too bright at night
 #   -v                  debug logging to the journal
 
 OLED_ARGS="--i2c-port 1 --i2c-addr 0x3C --service balance_bot"

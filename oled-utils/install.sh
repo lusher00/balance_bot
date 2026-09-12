@@ -10,7 +10,7 @@
 # https://polyformproject.org/licenses/noncommercial/1.0.0/
 
 #
-# Install bbb_oled.py and its systemd unit. Run on the BeagleBone.
+# Install the OLED status display and its systemd unit. Run on the BeagleBone.
 #
 #   ./install.sh                 install, enable and start
 #   ./install.sh --no-start      install only
@@ -36,7 +36,13 @@ fi
 
 set -euo pipefail
 
-SCRIPT_SRC="bbb_oled.py"
+# The script is vendored from ~/oled-utils (upstream); keep them identical:
+#     cmp oled_status.py ~/oled-utils/oled_status.py
+# It installs under the OLD name and unit on purpose -- /etc/default/bbb_oled,
+# the dashboard's /run/bbb_oled/status.json path and every note in HANDOFF.md
+# are written against "bbb_oled", and renaming a working service to match an
+# upstream filename buys nothing.
+SCRIPT_SRC="oled_status.py"
 UNIT_SRC="bbb_oled.service"
 DEFAULT_SRC="bbb_oled.default.example"
 
