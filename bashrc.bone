@@ -249,6 +249,22 @@ alias gs='git status'                            #: status
 alias gd='git diff'                              #: diff
 alias gl='git log --oneline --graph --decorate -20'  #: last 20 commits, graph
 alias gb='git branch --show-current'             #: current branch
+# A function, not an alias, because it takes the commit message as arguments.
+# "$*" rather than "$1" so the message does not need quoting -- with $1 alone,
+# `gp fixed the camera` commits as "fixed" and silently drops the rest.
+#
+# git add -A stages EVERYTHING, including files you did not mean to add. Check
+# gs first if you have been leaving scratch files around.
+gp() {                                           #: add -A, commit, push:  gp fixed the camera
+    local msg="${*:-update}"
+    git add -A || return 1
+    if git diff --cached --quiet; then
+        printf 'nothing staged - pushing whatever is already committed\n'
+    else
+        git commit -m "$msg" || return 1
+    fi
+    git push
+}
 
 #:: Logs and units (any service)
 alias sc='systemctl'                                  #: shorthand

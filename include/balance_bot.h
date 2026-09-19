@@ -321,6 +321,15 @@ typedef struct
 #define MOTOR_HAL_MODE_DEFAULT MOTOR_HAL_MODE_DUTY
 #define MOTOR_QPPS_MAX_DEFAULT QPPS_RATED         // 2500 QPPS
 #define MOTOR_ACCEL_QPPS_DEFAULT (QPPS_RATED * 2) // 5000 QPPS/s ≈ 0.5 s ramp
+
+/* Per-motor hardware current limit, enforced by the RoboClaw itself.
+ *
+ * 2.5 A each = 5 A total, which sits under a 6 A fuse with margin. The limit
+ * exists because a stalled motor draws V/R_winding with no back-EMF to oppose
+ * it, and a bot driving into the floor holds that for as long as the fault
+ * lasts — long enough to cook a fuse holder, which is not a transient event a
+ * capacitor can absorb. Raise it only after watching real numbers. */
+#define MOTOR_MAX_AMPS_DEFAULT 2.5f
 #define MOTOR_BAUD_DEFAULT 460800
 
 // RoboClaw internal velocity-PID defaults (fixed-point × 65536 on the wire)
@@ -374,6 +383,11 @@ typedef struct
     // Serial baud rate for the RoboClaw connection on the BBB.
     // Changing this via set_motor_config causes live reconnection.
     int baud;
+
+    // Per-motor current limit in amps, pushed to the RoboClaw at init and
+    // whenever set_motor_config changes it. 0 = leave the controller's own
+    // setting alone.
+    float max_amps;
 } motor_config_t;
 
 // ============================================================================
@@ -516,6 +530,8 @@ extern int g_arm_at_boot;
 // robot_config_t.oob_angle_deg; set_oob_angle applies and persists it
 // immediately, unlike arm_at_boot which only takes effect on next boot.
 extern float g_oob_angle_deg;
+/* Set when theta stops changing; blocks actuation. See robot.c. */
+extern volatile int g_imu_stale;
 
 // ============================================================================
 // PID (pid.c)
@@ -549,6 +565,11 @@ void uart_input_cleanup(void);
 int robot_init(void);
 void robot_run(void);
 void robot_cleanup(void);
+
+/* Zero the steering loop's heading target, latch and integral. Must be called
+ * whenever phi_left/phi_right are reset, because the steering measurement is
+ * derived from them -- see robot_reset_heading() in robot.c. */
+void robot_reset_heading(void);
 
 // ============================================================================
 // IPC SERVER (ipc_server.c)
@@ -586,6 +607,10 @@ void ipc_config_touch(void);
  * of what the derivative term is actually doing. RAM buffer during the run,
  * file written when it fills. Fixed path, overwritten each time. */
 int looplog_start(int seconds);
+/* Free run: keep the most recent LOOPLOG_MAX_SEC in a ring until stop() writes
+ * it out. For catching something you cannot predict the timing of. */
+int looplog_start_free(void);
+int looplog_stop(void);
 int looplog_active(void);
 void ipc_broadcast_config_if_dirty(void);
 

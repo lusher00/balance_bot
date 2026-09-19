@@ -31,6 +31,32 @@ robot_state_t state = {0};
 rc_mpu_data_t mpu_data;
 pid_controller_t pitch_pid, yaw_pid;
 
+/* Heading target, in the same units as phi_diff: degrees of differential wheel
+ * rotation. File scope rather than a function-local static ONLY so that
+ * robot_reset_heading() below can clear it. Nothing else may touch it.
+ *
+ * Why that matters: zero_encoders clears phi_left/phi_right, which is the
+ * steering loop's MEASUREMENT. While this kept its old value the setpoint
+ * survived the reset, so the error stepped from ~0 to the whole accumulated
+ * heading in one tick and the bot spun hard to pay off a debt that no longer
+ * existed. Clearing state.yaw alone was not enough -- the armed + SBUS branch
+ * reassigns state.yaw = yaw_target every tick, so it came straight back. */
+static float yaw_target = 0.0f;
+
+/* Clear the steering loop's heading target and latch. Call whenever the wheel
+ * positions that the measurement is derived from are reset out from under it,
+ * so setpoint and measurement are zeroed together and no step appears. */
+void robot_reset_heading(void)
+{
+    yaw_target = 0.0f;
+    state.yaw = 0.0f;
+    state.steering_latch = 0.0f;
+    state.yaw_latched = 0;
+    /* The integral has been winding against the old heading; carrying it over
+     * would reintroduce a fraction of the same kick. */
+    pid_reset(&yaw_pid);
+}
+
 /* Low-pass state for the position hold's velocity damping term. File scope so
  * the disarm path can clear it. */
 static float vel_damp_filt = 0.0f;
@@ -38,6 +64,8 @@ static float vel_damp_filt = 0.0f;
 /* Integral accumulator for the position hold, in DEGREES of lean (not raw
  * tick-seconds) so pos_i_max is a limit you can reason about directly. */
 static float pos_integ = 0.0f;
+
+static float pos_last_correction = 0.0f;
 
 controller_enables_t g_controllers = {
     .pitch = true,
@@ -57,6 +85,18 @@ sbus_config_t g_sbus_config;
 // Runtime-tunable motor/RoboClaw drive parameters (initialised in robot_init)
 motor_config_t g_motor_config;
 int g_arm_at_boot = 0;
+
+// Count of DMP samples delivered since start. Written only by imu_interrupt,
+// read by the main loop; volatile because those are different contexts and the
+// compiler must not cache it across the wait below.
+//
+// This exists because "the IMU is initialised" and "the IMU has produced a
+// reading" are different facts, and arm_at_boot was built on the first one
+// while needing the second. robot_init() sets the DMP going and returns; the
+// first interrupt lands ~300ms later. In that window state.theta is still its
+// initialised 0.0, which reads as perfectly upright and passes every bounds
+// check there is.
+volatile uint32_t g_imu_samples = 0;
 
 // Debug configuration (defined in debug_config.h, initialized in main.c)
 debug_config_t g_debug_config;
@@ -88,6 +128,14 @@ static volatile int motor_output_ready = 0;
 // loads or if the key is absent.
 float g_oob_angle_deg = 15.0f;
 
+/* Sensor watchdog: while armed, theta must move by at least this much within
+ * this long, or the reading is stale and the motors are cut. The threshold is
+ * well below real IMU noise on purpose -- this is meant to catch a frozen
+ * feed, not a quiet one. */
+#define IMU_STALE_EPS_DEG 0.001f
+#define IMU_STALE_US 300000ULL
+volatile int g_imu_stale = 0;
+
 /**
  * @brief IMU interrupt callback — runs at SAMPLE_RATE_HZ.
  *
@@ -105,6 +153,7 @@ static void imu_interrupt(void)
     state.theta = t.pitch;         // deg
     state.theta_dot = t.pitch_dot; // deg/s
     state.psi = t.yaw;             // deg
+    g_imu_samples++;               // proof that theta is a measurement
 
     // Ungated: PID runs every tick regardless of armed/trying, so telemetry
     // (this writes pitch_pid.last_p_term/i_term/d_term/last_output, which
@@ -149,8 +198,36 @@ static void imu_interrupt(void)
     // cutoff. trying no longer implies "in range" (it is persistent now), so
     // this angle check is the only thing standing between an out-of-bounds
     // arm and the wheels. pid_update() above already ran either way.
+    /* Sensor watchdog. A balancing robot's angle is never perfectly constant,
+     * so a theta that has not moved is a dead sensor, not a steady robot. The
+     * OOB check below cannot catch this -- it is watching the frozen number. */
+    {
+        static float last_theta = 0.0f;
+        static uint64_t last_move_us = 0;
+        uint64_t now = rc_nanos_since_boot() / 1000;
+
+        /* Armed only. Parked on the kickstand theta is legitimately almost
+         * constant, and checking there would trip on every boot. Armed, the
+         * body is always moving -- that is what balancing is. */
+        if (!state.armed)
+        {
+            last_move_us = 0;
+            g_imu_stale = 0;
+        }
+        else if (last_move_us == 0 || fabsf(state.theta - last_theta) > IMU_STALE_EPS_DEG)
+        {
+            last_theta = state.theta;
+            last_move_us = now;
+            g_imu_stale = 0;
+        }
+        else if (now - last_move_us > IMU_STALE_US)
+        {
+            g_imu_stale = 1; /* main loop logs it; no I/O in here */
+        }
+    }
+
     float eff_angle = fabsf(state.theta - state.theta_offset);
-    if (!state.armed || !state.trying || eff_angle > g_oob_angle_deg)
+    if (!state.armed || !state.trying || g_imu_stale || eff_angle > g_oob_angle_deg)
     {
         pending_left_duty = 0.0f;
         pending_right_duty = 0.0f;
@@ -181,92 +258,137 @@ static void imu_interrupt(void)
  * Columns are byte-identical to the dashboard's CSV export so tools/analyze_tune.py
  * and every existing plot work on it unchanged. */
 
-#define LOOPLOG_MAX_SEC   40
-#define LOOPLOG_MAX       (LOOPLOG_MAX_SEC * SAMPLE_RATE_HZ)
-#define LOOPLOG_PATH      "/tmp/bbot.csv"
+#define LOOPLOG_MAX_SEC 40
+#define LOOPLOG_MAX (LOOPLOG_MAX_SEC * SAMPLE_RATE_HZ)
+#define LOOPLOG_PATH "/tmp/bbot.csv"
 
 typedef struct
 {
-    float t;
+    uint64_t t_us; /* absolute, us since boot; re-based on write */
     float pit_sp, pit_meas, pit_err, pit_p, pit_i, pit_d, pit_out;
     int32_t enc_target, enc_pos, enc_err;
     float enc_vel, enc_vel_raw, enc_vel_mid, enc_vel_long;
-    float pos_corr, vel_damp, theta_adj, active_scale;
+    float pos_corr, vel_damp, pos_iterm, theta_adj, active_scale;
     float yaw_sp, yaw_meas, yaw_err, yaw_p, yaw_i, yaw_d, yaw_out;
     float left_duty, right_duty;
     float loop_hz;
     int32_t link_down;
 } looplog_row_t;
 
+/* Two capture modes.
+ *
+ * ONESHOT is the original: fill N seconds of rows, write, stop. You know in
+ * advance how long the thing you want to see will take.
+ *
+ * FREE is for when you do not. The buffer is a fixed array -- 40 s of RAM is
+ * 40 s of RAM -- so "free running" cannot mean "record forever"; it means keep
+ * overwriting the oldest row and, when you press stop, write out the most
+ * recent 40 s. That is the useful shape for "it just did the thing, get me the
+ * log", which is exactly the case a fixed countdown cannot catch. */
+#define LOOPLOG_OFF 0
+#define LOOPLOG_ONESHOT 1
+#define LOOPLOG_FREE 2
+
 static looplog_row_t looplog_buf[LOOPLOG_MAX];
-static int      looplog_n      = 0;
-static int      looplog_want   = 0;     /* rows to capture; 0 = idle */
-static uint64_t looplog_t0_us  = 0;
-static volatile int looplog_flush = 0;  /* set by the loop, cleared after write */
+static uint64_t looplog_n = 0; /* rows ever written this capture */
+static int looplog_want = 0;   /* ONESHOT: rows to capture */
+static volatile int looplog_mode = LOOPLOG_OFF;
+static volatile int looplog_flush = 0; /* set by the loop, cleared after write */
 
 int looplog_start(int seconds)
 {
-    if (looplog_want)
-        return -1;                      /* already running */
-    if (seconds < 1) seconds = 1;
-    if (seconds > LOOPLOG_MAX_SEC) seconds = LOOPLOG_MAX_SEC;
-    looplog_n     = 0;
-    looplog_t0_us = 0;
+    if (looplog_mode != LOOPLOG_OFF)
+        return -1; /* already running */
+    if (seconds < 1)
+        seconds = 1;
+    if (seconds > LOOPLOG_MAX_SEC)
+        seconds = LOOPLOG_MAX_SEC;
+    looplog_n = 0;
     looplog_flush = 0;
-    looplog_want  = seconds * SAMPLE_RATE_HZ;
-    LOG_WARN("looplog: capturing %d s at %d Hz -> %s", seconds, SAMPLE_RATE_HZ, LOOPLOG_PATH);
+    looplog_want = seconds * SAMPLE_RATE_HZ;
+    looplog_mode = LOOPLOG_ONESHOT;
+    LOG_WARN("looplog: one-shot, %d s at %d Hz -> %s", seconds, SAMPLE_RATE_HZ, LOOPLOG_PATH);
     return 0;
 }
 
-int looplog_active(void) { return looplog_want != 0; }
+int looplog_start_free(void)
+{
+    if (looplog_mode != LOOPLOG_OFF)
+        return -1;
+    looplog_n = 0;
+    looplog_flush = 0;
+    looplog_want = 0;
+    looplog_mode = LOOPLOG_FREE;
+    LOG_WARN("looplog: free running, keeping the last %d s -> %s", LOOPLOG_MAX_SEC, LOOPLOG_PATH);
+    return 0;
+}
+
+/* Stop a free run and write what is in the buffer. Harmless on a one-shot:
+ * it just ends it early with however many rows it had. */
+int looplog_stop(void)
+{
+    if (looplog_mode == LOOPLOG_OFF)
+        return -1;
+    if (looplog_n == 0)
+    {
+        looplog_mode = LOOPLOG_OFF;
+        return -1;
+    }
+    looplog_flush = 1;
+    return 0;
+}
+
+int looplog_active(void) { return looplog_mode != LOOPLOG_OFF; }
 
 /* Called every loop tick. Cheap by construction: a bounds test and a copy. */
 static void looplog_tick(void)
 {
-    if (!looplog_want || looplog_n >= looplog_want)
+    if (looplog_mode == LOOPLOG_OFF)
+        return;
+    if (looplog_mode == LOOPLOG_ONESHOT && looplog_n >= (uint64_t)looplog_want)
         return;
 
     uint64_t now = rc_nanos_since_boot() / 1000;
-    if (looplog_n == 0)
-        looplog_t0_us = now;
 
-    looplog_row_t *r = &looplog_buf[looplog_n++];
-    r->t            = (float)(now - looplog_t0_us) / 1e6f;
-    r->pit_sp       = g_telemetry_data.pitch.setpoint;
-    r->pit_meas     = g_telemetry_data.pitch.measurement;
-    r->pit_err      = g_telemetry_data.pitch.error;
-    r->pit_p        = g_telemetry_data.pitch.p_term;
-    r->pit_i        = g_telemetry_data.pitch.i_term;
-    r->pit_d        = g_telemetry_data.pitch.d_term;
-    r->pit_out      = g_telemetry_data.pitch.output;
-    r->enc_target   = g_telemetry_data.position.enc_pos_target;
-    r->enc_pos      = g_telemetry_data.position.enc_pos;
-    r->enc_err      = g_telemetry_data.position.enc_error;
-    r->enc_vel      = g_telemetry_data.position.enc_velocity;
-    r->enc_vel_raw  = g_telemetry_data.position.enc_velocity_raw;
-    r->enc_vel_mid  = g_telemetry_data.position.enc_vel_lsq_mid;
+    /* FREE wraps; ONESHOT cannot reach the wrap because want <= LOOPLOG_MAX. */
+    looplog_row_t *r = &looplog_buf[looplog_n++ % LOOPLOG_MAX];
+    r->t_us = now;
+    r->pit_sp = g_telemetry_data.pitch.setpoint;
+    r->pit_meas = g_telemetry_data.pitch.measurement;
+    r->pit_err = g_telemetry_data.pitch.error;
+    r->pit_p = g_telemetry_data.pitch.p_term;
+    r->pit_i = g_telemetry_data.pitch.i_term;
+    r->pit_d = g_telemetry_data.pitch.d_term;
+    r->pit_out = g_telemetry_data.pitch.output;
+    r->enc_target = g_telemetry_data.position.enc_pos_target;
+    r->enc_pos = g_telemetry_data.position.enc_pos;
+    r->enc_err = g_telemetry_data.position.enc_error;
+    r->enc_vel = g_telemetry_data.position.enc_velocity;
+    r->enc_vel_raw = g_telemetry_data.position.enc_velocity_raw;
+    r->enc_vel_mid = g_telemetry_data.position.enc_vel_lsq_mid;
     r->enc_vel_long = g_telemetry_data.position.enc_vel_lsq_long;
-    r->pos_corr     = g_telemetry_data.position.pos_correction;
-    r->vel_damp     = g_telemetry_data.position.vel_damp;
-    r->theta_adj    = g_telemetry_data.position.theta_ref_adj;
+    r->pos_corr = g_telemetry_data.position.pos_correction;
+    r->vel_damp = g_telemetry_data.position.vel_damp;
+    r->pos_iterm = state.pos_i_term;
+    r->theta_adj = g_telemetry_data.position.theta_ref_adj;
     r->active_scale = g_telemetry_data.position.active_scale;
-    r->yaw_sp       = g_telemetry_data.yaw.setpoint;
-    r->yaw_meas     = g_telemetry_data.yaw.measurement;
-    r->yaw_err      = g_telemetry_data.yaw.error;
-    r->yaw_p        = g_telemetry_data.yaw.p_term;
-    r->yaw_i        = g_telemetry_data.yaw.i_term;
-    r->yaw_d        = g_telemetry_data.yaw.d_term;
-    r->yaw_out      = g_telemetry_data.yaw.output;
-    r->left_duty    = g_telemetry_data.motors.left_duty;
-    r->right_duty   = g_telemetry_data.motors.right_duty;
+    r->yaw_sp = g_telemetry_data.yaw.setpoint;
+    r->yaw_meas = g_telemetry_data.yaw.measurement;
+    r->yaw_err = g_telemetry_data.yaw.error;
+    r->yaw_p = g_telemetry_data.yaw.p_term;
+    r->yaw_i = g_telemetry_data.yaw.i_term;
+    r->yaw_d = g_telemetry_data.yaw.d_term;
+    r->yaw_out = g_telemetry_data.yaw.output;
+    r->left_duty = g_telemetry_data.motors.left_duty;
+    r->right_duty = g_telemetry_data.motors.right_duty;
     /* The two columns that say whether the rest of the row means anything.
      * A tick logged at 30 Hz was computed with pid->dt = 0.01 s regardless, so
      * its d_term is inflated by the ratio -- the gains on that row are not the
      * gains in robot.conf. */
-    r->loop_hz      = g_telemetry_data.system.loop_hz;
-    r->link_down    = motor_hal_link_down();
+    r->loop_hz = g_telemetry_data.system.loop_hz;
+    r->link_down = motor_hal_link_down();
 
-    if (looplog_n >= looplog_want)
+    if (looplog_mode == LOOPLOG_ONESHOT && looplog_n >= (uint64_t)looplog_want)
         looplog_flush = 1;
 }
 
@@ -279,6 +401,15 @@ static void looplog_write_if_full(void)
         return;
     looplog_flush = 0;
 
+    /* Oldest row first. After a wrap the oldest live row is the one about to be
+     * overwritten next, not index 0 -- writing 0..n-1 on a wrapped buffer would
+     * splice the newest seconds in front of the oldest and produce a log whose
+     * time column jumps backwards in the middle. */
+    const int wrapped = (looplog_n > (uint64_t)LOOPLOG_MAX);
+    const int rows = wrapped ? LOOPLOG_MAX : (int)looplog_n;
+    const int first = wrapped ? (int)(looplog_n % LOOPLOG_MAX) : 0;
+    const uint64_t t0 = looplog_buf[first].t_us;
+
     FILE *f = fopen(LOOPLOG_PATH, "w");
     if (!f)
     {
@@ -290,7 +421,8 @@ static void looplog_write_if_full(void)
     /* Header carries the config the run was made under. A log that cannot say
      * what it was recorded with cannot be compared against another log. */
     fprintf(f, "# bbot loop-rate log\n");
-    fprintf(f, "# rate_hz=%d rows=%d\n", SAMPLE_RATE_HZ, looplog_n);
+    fprintf(f, "# rate_hz=%d rows=%d mode=%s\n", SAMPLE_RATE_HZ, rows,
+            wrapped ? "free" : "oneshot");
     fprintf(f, "# pit_gains: kp=%g ki=%g kd=%g\n",
             g_telemetry_data.pitch.kp, g_telemetry_data.pitch.ki, g_telemetry_data.pitch.kd);
     fprintf(f, "# yaw_gains: kp=%g ki=%g kd=%g\n",
@@ -301,6 +433,16 @@ static void looplog_write_if_full(void)
             g_pos_config.scale_a, g_pos_config.scale_b, g_pos_config.scale_c, g_pos_config.scale_d);
     fprintf(f, "#   vel_scale_stop=%g vel_scale_move=%g vel_scale_turning=%g\n",
             g_pos_config.vel_scale_stop, g_pos_config.vel_scale_move, g_pos_config.vel_scale_turning);
+    /* These six used to be missing, and their absence cost a full tuning
+     * session: a capture could not say which velocity source fed the damping
+     * term, whether the damping filter was on, or what the integral was capped
+     * at -- so a run made with changed settings was indistinguishable from one
+     * where the change never reached the firmware. A log that cannot state the
+     * configuration it was recorded under cannot be compared with another log. */
+    fprintf(f, "#   vel_src=%d vel_damp_fc=%g vel_damp_max=%g\n",
+            g_pos_config.vel_src, g_pos_config.vel_damp_fc, g_pos_config.vel_damp_max);
+    fprintf(f, "#   pos_ki=%g pos_i_max=%g stopped_vel=%d\n",
+            g_pos_config.pos_ki, g_pos_config.pos_i_max, g_pos_config.stopped_vel);
     fprintf(f, "#   max_correction=%g max_angle_rate=%g pos_deadband=%d back_to_spot=%d\n",
             g_pos_config.max_correction, g_pos_config.max_angle_rate,
             g_pos_config.pos_deadband, g_pos_config.back_to_spot);
@@ -311,31 +453,33 @@ static void looplog_write_if_full(void)
     /* Same column names as the dashboard CSV export, on purpose. */
     fprintf(f, "t,pit_setpoint,pit_measurement,pit_error,pit_pTerm,pit_iTerm,pit_dTerm,"
                "pit_output,pos_encTarget,pos_encPos,pos_encError,pos_encVel,pos_encVelRaw,"
-               "pos_encVelMid,pos_encVelLong,pos_posCorr,pos_velDamp,pos_thetaAdj,"
+               "pos_encVelMid,pos_encVelLong,pos_posCorr,pos_velDamp,pos_posIterm,pos_thetaAdj,"
                "pos_activeScale,yaw_setpoint,yaw_measurement,yaw_error,yaw_pTerm,yaw_iTerm,"
                "yaw_dTerm,yaw_output,mot_leftDuty,mot_rightDuty,mot_dutyDiff,"
                "sys_loopHz,sys_linkDown\n");
 
-    for (int i = 0; i < looplog_n; i++)
+    for (int k = 0; k < rows; k++)
     {
-        const looplog_row_t *r = &looplog_buf[i];
+        const looplog_row_t *r = &looplog_buf[(first + k) % LOOPLOG_MAX];
         fprintf(f,
                 "%.4f,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,"
                 "%d,%d,%d,%.4f,%.4f,%.4f,%.4f,"
-                "%.4f,%.4f,%.4f,%.4f,"
+                "%.4f,%.4f,%.4f,%.4f,%.4f,"
                 "%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,"
                 "%.4f,%.4f,%.4f,%.1f,%d\n",
-                r->t, r->pit_sp, r->pit_meas, r->pit_err, r->pit_p, r->pit_i, r->pit_d, r->pit_out,
+                (double)(r->t_us - t0) / 1e6, r->pit_sp, r->pit_meas, r->pit_err, r->pit_p, r->pit_i, r->pit_d, r->pit_out,
                 r->enc_target, r->enc_pos, r->enc_err,
                 r->enc_vel, r->enc_vel_raw, r->enc_vel_mid, r->enc_vel_long,
-                r->pos_corr, r->vel_damp, r->theta_adj, r->active_scale,
+                r->pos_corr, r->vel_damp, r->pos_iterm, r->theta_adj, r->active_scale,
                 r->yaw_sp, r->yaw_meas, r->yaw_err, r->yaw_p, r->yaw_i, r->yaw_d, r->yaw_out,
                 r->left_duty, r->right_duty, r->right_duty - r->left_duty,
                 r->loop_hz, r->link_down);
     }
     fclose(f);
-    LOG_WARN("looplog: wrote %d rows to %s", looplog_n, LOOPLOG_PATH);
+    LOG_WARN("looplog: wrote %d rows (%s) to %s", rows,
+             wrapped ? "free run, last window" : "one-shot", LOOPLOG_PATH);
     looplog_want = 0;
+    looplog_mode = LOOPLOG_OFF;
 }
 
 /**
@@ -383,6 +527,7 @@ int robot_init(void)
     g_motor_config.mode = MOTOR_HAL_MODE_DEFAULT;
     g_motor_config.qpps_max = MOTOR_QPPS_MAX_DEFAULT;
     g_motor_config.accel_qpps = MOTOR_ACCEL_QPPS_DEFAULT;
+    g_motor_config.max_amps = MOTOR_MAX_AMPS_DEFAULT;
     g_motor_config.pol_l = 1.0f;
     g_motor_config.pol_r = 1.0f;
     LOG_INFO("PID Controllers:");
@@ -490,23 +635,113 @@ void robot_run(void)
         }
 
         // ── Arm at boot ──────────────────────────────────────────────────
-        // Fires once, on this loop's first iteration -- by construction that's
-        // after robot_init()/robot_config_apply() have run and the IMU/DMP
-        // interrupt is live, so state.theta is real data, not a zero default.
-        // Only sets armed+trying; the ISR's own eff_angle>g_oob_angle_deg check
-        // still gates real actuation exactly like an operator-pressed ARM.
-        static int boot_arm_tried = 0;
-        if (!boot_arm_tried)
+        // Stand inert on the kickstand however long it takes, then start
+        // balancing when picked up -- no network, no dashboard, no button.
+        //
+        // The bot parks at ~19 deg, past the OOB limit, so "out of bounds" is
+        // the normal resting state and is not a fault.
+        //
+        // ORDER MATTERS. The bot must SEE the kickstand before it may arm.
+        // On this machine a valid sensor cannot read in-bounds at boot -- the
+        // stand holds it at 19 deg. So a theta that sits near zero from boot
+        // is a broken sensor, not a ready robot, and arming on it drives the
+        // wheels with no working feedback until someone pulls the battery.
+        // Requiring an out-of-bounds reading first makes that failure inert:
+        // a frozen theta never sets the latch, so it never arms.
+#define ARM_MIN_SAMPLES 50u     /* samples before theta is believed at all */
+#define ARM_STEADY_US 250000ULL /* held inside the window this long */
+#define ARM_OOB_SAMPLES 25u     /* consecutive OOB samples = kickstand seen */
+/* Arm INSIDE this window, which is deliberately tighter than g_oob_angle_deg:
+ * the OOB limit is where motors get cut, not a sane place to start balancing.
+ * The rate limit stops it arming while swinging through on the way elsewhere. */
+#define ARM_ANGLE_DEG 3.0f
+#define ARM_RATE_DPS 15.0f
+        static int boot_arm_done = 0; /* once per run: a deliberate
+                                         disarm must stay disarmed */
+        static uint64_t in_range_since_us = 0;
+        static int waiting_logged = 0;
+        static unsigned oob_run = 0;   /* consecutive OOB samples */
+        static int seen_kickstand = 0; /* sensor proved it can see 19 deg */
+        static int kickstand_logged = 0;
+        if (!boot_arm_done && g_arm_at_boot)
         {
-            boot_arm_tried = 1;
-            if (g_arm_at_boot && !state.estop_latched && !state.armed)
+            float eff = fabsf(state.theta - state.theta_offset);
+
+            /* Kickstand check. Until the sensor has shown us an out-of-bounds
+             * attitude, we have no evidence it is reading the robot at all. */
+            if (g_imu_samples >= ARM_MIN_SAMPLES && !seen_kickstand)
             {
-                state.armed = 1;
-                state.trying = 1;
-                motor_hal_standby(0);
-                rc_led_set(RC_LED_GREEN, 1);
-                LOG_INFO("arm_at_boot: armed automatically at startup (theta=%.2f)",
-                         state.theta);
+                if (eff > g_oob_angle_deg)
+                {
+                    if (++oob_run >= ARM_OOB_SAMPLES)
+                    {
+                        seen_kickstand = 1;
+                        LOG_WARN("arm_at_boot: kickstand seen (theta=%.2f eff=%.2f). "
+                                 "Arming enabled.",
+                                 state.theta, eff);
+                    }
+                }
+                else
+                {
+                    oob_run = 0;
+                    if (!kickstand_logged)
+                    {
+                        kickstand_logged = 1;
+                        LOG_WARN("arm_at_boot: BLOCKED -- theta=%.2f eff=%.2f reads "
+                                 "in-bounds at boot, but the kickstand holds this bot "
+                                 "past %.1f deg. Sensor is not trustworthy; will not arm.",
+                                 state.theta, eff, (double)g_oob_angle_deg);
+                    }
+                }
+            }
+
+            if (g_imu_samples < ARM_MIN_SAMPLES || !seen_kickstand)
+            {
+                /* No believable measurement yet, or the kickstand was never
+                 * seen. Either way nothing may act on state.theta. */
+                in_range_since_us = 0;
+            }
+            else if (state.estop_latched || state.armed)
+            {
+                in_range_since_us = 0;
+            }
+            else if (eff > ARM_ANGLE_DEG || fabsf(state.theta_dot) > ARM_RATE_DPS)
+            {
+                in_range_since_us = 0;
+                if (!waiting_logged)
+                {
+                    waiting_logged = 1;
+                    LOG_WARN("arm_at_boot: ready, waiting to be stood up "
+                             "(theta=%.2f eff=%.2f, needs |eff|<%.1f and "
+                             "|rate|<%.0f deg/s). Will arm by itself once "
+                             "upright and still.",
+                             state.theta, eff, (double)ARM_ANGLE_DEG,
+                             (double)ARM_RATE_DPS);
+                }
+            }
+            else
+            {
+                if (in_range_since_us == 0)
+                    in_range_since_us = now_us;
+
+                if (now_us - in_range_since_us >= ARM_STEADY_US)
+                {
+                    boot_arm_done = 1;
+                    state.armed = 1;
+                    state.trying = 1;
+                    motor_hal_standby(0);
+                    rc_led_set(RC_LED_GREEN, 1);
+                    /* WARN, not INFO: the service runs --quiet, so INFO is
+                     * dropped. Motors starting with nobody pressing anything
+                     * earns a line at any verbosity. */
+                    LOG_WARN("arm_at_boot: armed (theta=%.2f theta_offset=%.2f "
+                             "eff=%.2f rate=%.1f, held inside %.1f deg for "
+                             "%llums, %u samples)",
+                             state.theta, state.theta_offset, eff,
+                             state.theta_dot, (double)ARM_ANGLE_DEG,
+                             (unsigned long long)(ARM_STEADY_US / 1000),
+                             (unsigned)g_imu_samples);
+                }
             }
         }
 
@@ -518,18 +753,18 @@ void robot_run(void)
             pending_left_duty = 0.0f;
             pending_right_duty = 0.0f;
             motor_output_ready = 0;
-            motor_hal_set_both(0.0f, 0.0f);
+            motor_hal_coast(); /* off, not "hold zero speed" */
             pid_reset(&pitch_pid);
             pid_reset(&yaw_pid);
             last_left_duty = 0.0f;
             last_right_duty = 0.0f;
             state.enc_pos_target = state.enc_pos;
-            pos_integ = 0.0f;   /* target moved — accumulated error is stale */
+            pos_integ = 0.0f; /* target moved — accumulated error is stale */
         }
         if (!prev_armed && state.armed)
         {
             state.enc_pos_target = state.enc_pos;
-            pos_integ = 0.0f;   /* target moved — accumulated error is stale */
+            pos_integ = 0.0f; /* target moved — accumulated error is stale */
             state.theta_ref = 0.0f;
             // trying is persistent now -- tracks armed directly, no angle gate.
             // The ISR's own eff_angle>g_oob_angle_deg check (imu_interrupt, above
@@ -601,7 +836,7 @@ void robot_run(void)
              *
              * Delete the extra candidates once a window has been chosen. */
             static int32_t vel_hist[POS_VEL_WIN_MAX];
-            static int vel_head = 0;   /* next write slot == oldest sample */
+            static int vel_head = 0; /* next write slot == oldest sample */
             static int vel_fill = 0;
 
             /* ticks-per-control-tick -> ticks/100ms */
@@ -666,10 +901,10 @@ void robot_run(void)
                     int src = g_pos_config.vel_src;
                     if (src < 0 || src > 3)
                         src = 0;
-                    state.enc_velocity     = (src == 0) ? vel_claw : lsq[src - 1];
-                    state.enc_velocity_raw = (src == 0) ? lsq[0]   : vel_claw;
+                    state.enc_velocity = (src == 0) ? vel_claw : lsq[src - 1];
+                    state.enc_velocity_raw = (src == 0) ? lsq[0] : vel_claw;
                 }
-                state.enc_vel_lsq_mid  = lsq[1];
+                state.enc_vel_lsq_mid = lsq[1];
                 state.enc_vel_lsq_long = lsq[2];
             }
         }
@@ -712,7 +947,6 @@ void robot_run(void)
          * of at most MAX_YAW_CMD = 1 degree of wheel differential -- roughly
          * 1.3 mm of differential travel, and completely invisible. That is why
          * the bot would not turn no matter how the channels were mapped. */
-        static float yaw_target = 0.0f;
 
         /* Fractional carry for target-mode drive: at 100 Hz a full-stick
          * advance is only a few ticks per loop, so truncating every tick would
@@ -861,14 +1095,65 @@ void robot_run(void)
         if (eff_angle > g_oob_angle_deg)
         {
             // OOB: always stop motors, every tick, regardless of was_oob.
-            motor_hal_set_both(0.0f, 0.0f);
-            motor_hal_standby(1);
+            /* motor_hal_coast(), not set_both(0,0): in velocity mode a zero
+             * there is MIXEDSPEED asking the RoboClaw's velocity PID to HOLD
+             * zero, which is an active loop that winds up against stiction and
+             * pushes. The safety cutoff has to remove power, not regulate to
+             * zero. One write per tick now instead of two. */
+            motor_hal_coast();
+            /* Report what was actually written. last_*_duty is what telemetry
+             * publishes, and it is otherwise only assigned on the normal motor
+             * write and the disarm path -- so across an OOB excursion the
+             * dashboard kept showing the duty from the instant it went out of
+             * bounds, frozen, while the motors were dead. A 2026-09-13 push run
+             * read 0.534 duty RMS during the cut and 0.277 while actually
+             * driving, which inverts the truth and makes any log containing an
+             * excursion unanalysable. */
+            last_left_duty = 0.0f;
+            last_right_duty = 0.0f;
             if (!was_oob)
             {
                 was_oob = 1;
                 rc_led_set(RC_LED_GREEN, 0);
+
+                /* Zero the encoders outright, not just the target.
+                 *
+                 * Setting enc_pos_target = enc_pos makes the ERROR zero, which
+                 * is what the controller reads, but enc_pos itself keeps
+                 * whatever it accumulated across every fall of the session --
+                 * -203 to +121 ticks in the 2026-09-13 capture, wandering
+                 * further with each excursion. Once the bot is on its side and
+                 * the wheels have been dragged across the floor, that number
+                 * describes nothing. "Back to spot" then means back to a spot
+                 * chosen by the last tumble.
+                 *
+                 * An excursion is the natural place to redefine the origin:
+                 * wherever it ends up is the new home. Edge-triggered, so this
+                 * is one serial write per excursion, not per tick, and it runs
+                 * in the main loop where blocking I/O is already the norm
+                 * (motor_hal_set_both above does the same).
+                 *
+                 * Same bookkeeping as the zero_encoders IPC command -- the
+                 * hardware counters and the software's idea of them have to
+                 * move together or enc_velocity reads as a huge step on the
+                 * next tick. */
+                /* REVERTED 2026-09-13: motor_hal_encoder_reset_all() was here.
+                 *
+                 * It fires on the OOB EDGE, and the bot parks at ~83 deg, so
+                 * the edge trips within the first tick of every startup --
+                 * meaning the first thing the service did was reset the
+                 * encoder counters underneath a RoboClaw running in velocity
+                 * mode (motor mode=1). Its internal loop sees the count jump
+                 * as a velocity discontinuity and drives on it. Result: motors
+                 * pushing from the moment the service comes up, with nothing
+                 * in balance_bot commanding them, and not stopping.
+                 *
+                 * Zeroing the encoders is still the right idea, but it cannot
+                 * be done blind while the drive is live. It needs to happen
+                 * with the RoboClaw in standby AND with its velocity target
+                 * re-commanded to 0 afterwards, or not at all. */
                 state.enc_pos_target = state.enc_pos;
-                pos_integ = 0.0f;   /* target moved — accumulated error is stale */
+                pos_integ = 0.0f; /* target moved — accumulated error is stale */
                 state.enc_velocity = 0;
                 state.enc_vel_reset = 1;
                 state.theta_ref = 0.0f;
@@ -878,19 +1163,54 @@ void robot_run(void)
         }
         else if (was_oob)
         {
-            // Back in range: clear the edge, resume standby if still armed, and
-            // reset both PIDs so whatever the (now-ungated) loop accumulated
-            // while OOB does not slam through as a kick on the first actuated
-            // tick -- same clean-restart guarantee the disarm/arm path already
-            // gives via pid_reset() above.
             was_oob = 0;
+
+            // Position: wherever we are now is home.
+            state.enc_pos_target = state.enc_pos;
+            state.pos_setpoint = state.pos;
+            pos_integ = 0.0f;
+            pos_last_correction = 0.0f;
+            vel_damp_filt = 0.0f;
+            state.enc_velocity = 0;
+            state.enc_vel_reset = 1;
+
+            // Heading: wherever we're pointing now is home.
+            yaw_target = (state.phi_right - state.phi_left) / 2.0f;
+            state.yaw = yaw_target;
+            state.steering_latch = 0.0f;
+            state.yaw_latched = 0;
+
+            // Start recovery at the natural balance point,
+            // not with an old D2 lean command.
+            state.theta_ref = 0.0f;
+
+            // No stale PID history.
             pid_reset(&pitch_pid);
             pid_reset(&yaw_pid);
+
+            // NOW give the motors back.
             if (state.armed)
                 motor_hal_standby(0);
+
             rc_led_set(RC_LED_GREEN, state.armed ? 1 : 0);
-            LOG_INFO("IN RANGE — armed=%d", state.armed);
+            LOG_INFO("IN RANGE — controls rebased, armed=%d", state.armed);
         }
+
+        // else if (was_oob)
+        // {
+        //     // Back in range: clear the edge, resume standby if still armed, and
+        //     // reset both PIDs so whatever the (now-ungated) loop accumulated
+        //     // while OOB does not slam through as a kick on the first actuated
+        //     // tick -- same clean-restart guarantee the disarm/arm path already
+        //     // gives via pid_reset() above.
+        //     was_oob = 0;
+        //     pid_reset(&pitch_pid);
+        //     pid_reset(&yaw_pid);
+        //     if (state.armed)
+        //         motor_hal_standby(0);
+        //     rc_led_set(RC_LED_GREEN, state.armed ? 1 : 0);
+        //     LOG_INFO("IN RANGE — armed=%d", state.armed);
+        // }
 
         // ── D2 position (drive) controller ───────────────────────────────
         // When D2 is enabled: the stick command sets a *rate* (ticks/s target).
@@ -913,12 +1233,11 @@ void robot_run(void)
             static int prev_armed_d2 = 0;
             if (g_controllers.position && state.armed)
             {
-                static float last_correction = 0.0f;
 
                 // Reset accumulated correction on re-arm so stale last_correction
                 // doesn't slam theta_ref immediately after a fall/recovery.
                 if (!prev_armed_d2)
-                    last_correction = 0.0f;
+                    pos_last_correction = 0.0f;
                 float correction = 0.0f;
 
                 // Use raw stick only — exclude D2's own correction so it doesn't
@@ -967,7 +1286,7 @@ void robot_run(void)
                                  pos_err,
                                  state.enc_velocity,
                                  g_pos_config.stopped_vel,
-                                 last_correction,
+                                 pos_last_correction,
                                  state.theta_ref);
                     }
                 }
@@ -987,15 +1306,15 @@ void robot_run(void)
                         const float fc = g_pos_config.vel_damp_fc;
                         if (fc > 0.0f)
                         {
-                            const float dt  = 1.0f / (float)SAMPLE_RATE_HZ;
-                            const float rc  = 1.0f / (2.0f * (float)M_PI * fc);
-                            const float a   = dt / (dt + rc);
-                            vel_damp_filt  += a * (vel_damp - vel_damp_filt);
-                            vel_damp        = vel_damp_filt;
+                            const float dt = 1.0f / (float)SAMPLE_RATE_HZ;
+                            const float rc = 1.0f / (2.0f * (float)M_PI * fc);
+                            const float a = dt / (dt + rc);
+                            vel_damp_filt += a * (vel_damp - vel_damp_filt);
+                            vel_damp = vel_damp_filt;
                         }
                         else
                         {
-                            vel_damp_filt = vel_damp;   /* track, so enabling it mid-run does not step */
+                            vel_damp_filt = vel_damp; /* track, so enabling it mid-run does not step */
                         }
                         /* Cap AFTER filtering: the filter shapes which
                          * frequencies the term acts on, this bounds how far it
@@ -1003,8 +1322,10 @@ void robot_run(void)
                         const float vdmax = g_pos_config.vel_damp_max;
                         if (vdmax > 0.0f)
                         {
-                            if (vel_damp >  vdmax) vel_damp =  vdmax;
-                            if (vel_damp < -vdmax) vel_damp = -vdmax;
+                            if (vel_damp > vdmax)
+                                vel_damp = vdmax;
+                            if (vel_damp < -vdmax)
+                                vel_damp = -vdmax;
                         }
                     }
 
@@ -1046,7 +1367,7 @@ void robot_run(void)
                             // target rather than correcting toward it.
                             state.pos_scale = 0.0f;
                             state.enc_pos_target = state.enc_pos;
-                            pos_integ = 0.0f;   /* target moved — accumulated error is stale */
+                            pos_integ = 0.0f; /* target moved — accumulated error is stale */
                         }
                     }
 
@@ -1062,13 +1383,15 @@ void robot_run(void)
                     if (g_pos_config.pos_ki > 0.0f && state.pos_scale > 0.0f)
                     {
                         const float dt = 1.0f / (float)SAMPLE_RATE_HZ;
-                        if (fabsf(last_correction) < g_pos_config.max_correction * 0.98f)
+                        if (fabsf(pos_last_correction) < g_pos_config.max_correction * 0.98f)
                             pos_integ += g_pos_config.pos_ki * (float)err * dt;
                         const float ilim = g_pos_config.pos_i_max;
                         if (ilim > 0.0f)
                         {
-                            if (pos_integ >  ilim) pos_integ =  ilim;
-                            if (pos_integ < -ilim) pos_integ = -ilim;
+                            if (pos_integ > ilim)
+                                pos_integ = ilim;
+                            if (pos_integ < -ilim)
+                                pos_integ = -ilim;
                         }
                         correction += pos_integ;
                     }
@@ -1076,16 +1399,16 @@ void robot_run(void)
                     {
                         pos_integ = 0.0f;
                     }
-                    state.pos_i_term = -pos_integ;   /* sign matches thetaAdj */
+                    state.pos_i_term = -pos_integ; /* sign matches thetaAdj */
 
                     // Rate-limit the position correction — prevents slamming theta_ref
-                    float delta = correction - last_correction;
+                    float delta = correction - pos_last_correction;
                     if (delta > g_pos_config.max_angle_rate)
                         delta = g_pos_config.max_angle_rate;
                     if (delta < -g_pos_config.max_angle_rate)
                         delta = -g_pos_config.max_angle_rate;
-                    correction = last_correction + delta;
-                    last_correction = correction;
+                    correction = pos_last_correction + delta;
+                    pos_last_correction = correction;
 
                     // Apply vel_damp after rate limiter so decel/accel acts at full speed.
                     //
@@ -1124,7 +1447,7 @@ void robot_run(void)
                      * and the bot spins the moment it arms. Yaw owns enc_pol;
                      * position compensates here. */
                     state.pos_output = -correction;
-                    state.theta_ref  = -correction;
+                    state.theta_ref = -correction;
                 }
                 else
                 {
@@ -1137,7 +1460,7 @@ void robot_run(void)
                         correction += vel_comp;
                     }
                     state.enc_pos_target = state.enc_pos;
-                    pos_integ = 0.0f;   /* target moved — accumulated error is stale */
+                    pos_integ = 0.0f; /* target moved — accumulated error is stale */
 
                     // Position hold is not running while driving. Clear the hold
                     // telemetry so it does not sit at stale values from the last
@@ -1168,7 +1491,7 @@ void robot_run(void)
                     }
                 }
                 state.enc_pos_target = state.enc_pos;
-                pos_integ = 0.0f;   /* target moved — accumulated error is stale */
+                pos_integ = 0.0f; /* target moved — accumulated error is stale */
                 state.pos_setpoint = state.pos;
 
                 // Turning D2 off zeroed g_controllers.position, but nothing here
@@ -1185,8 +1508,10 @@ void robot_run(void)
                 {
                     float d = 0.0f - state.theta_ref;
                     float lim = g_pos_config.max_angle_rate;
-                    if (d > lim) d = lim;
-                    if (d < -lim) d = -lim;
+                    if (d > lim)
+                        d = lim;
+                    if (d < -lim)
+                        d = -lim;
                     state.theta_ref += d;
                 }
             }
@@ -1236,8 +1561,10 @@ void robot_run(void)
 
             float d = state.pose_lean - pose_ramp;
             float lim = g_pos_config.max_angle_rate;
-            if (d > lim) d = lim;
-            if (d < -lim) d = -lim;
+            if (d > lim)
+                d = lim;
+            if (d < -lim)
+                d = -lim;
             pose_ramp += d;
 
             /* Only take over once there is something to apply, so a zero pose
@@ -1276,7 +1603,7 @@ void robot_run(void)
          * tick's command. */
         looplog_tick();
 
-        uint64_t now_sched_us = rc_nanos_since_boot() / 1000;   // microseconds
+        uint64_t now_sched_us = rc_nanos_since_boot() / 1000; // microseconds
 
         /* Scheduling in MICROSECONDS with a phase accumulator, not milliseconds
          * with a "have we waited long enough" test.
@@ -1303,8 +1630,10 @@ void robot_run(void)
          * defaults for anything being graphed. */
         {
             int tel_hz = g_debug_config.rates.pid_states;
-            if (tel_hz < 1) tel_hz = 1;
-            if (tel_hz > SAMPLE_RATE_HZ) tel_hz = SAMPLE_RATE_HZ;
+            if (tel_hz < 1)
+                tel_hz = 1;
+            if (tel_hz > SAMPLE_RATE_HZ)
+                tel_hz = SAMPLE_RATE_HZ;
             uint64_t period_us = 1000000ULL / (uint64_t)tel_hz;
 
             if (now_sched_us >= next_telemetry_us)
@@ -1328,9 +1657,11 @@ void robot_run(void)
          * (~280 bytes) so this is cheaper than it sounds. */
         {
             int rc_hz = g_debug_config.rates.rc;
-            if (rc_hz < 1) rc_hz = 1;
-            if (rc_hz > SAMPLE_RATE_HZ) rc_hz = SAMPLE_RATE_HZ; /* above the loop
-                                             * rate we would resend identical data */
+            if (rc_hz < 1)
+                rc_hz = 1;
+            if (rc_hz > SAMPLE_RATE_HZ)
+                rc_hz = SAMPLE_RATE_HZ; /* above the loop
+                                         * rate we would resend identical data */
             uint64_t period_us = 1000000ULL / (uint64_t)rc_hz;
 
             if (now_sched_us >= next_rc_us)
@@ -1350,6 +1681,23 @@ void robot_run(void)
         display_update();
 
         /* Outside the tick: writes the file once, when the capture fills. */
+        /* Report the sensor watchdog from here, not the ISR. */
+        {
+            static int stale_logged = 0;
+            if (g_imu_stale && !stale_logged)
+            {
+                stale_logged = 1;
+                LOG_WARN("IMU STALE -- theta stuck at %.2f. Motors cut, will not "
+                         "actuate until it moves again.",
+                         state.theta);
+            }
+            else if (!g_imu_stale && stale_logged)
+            {
+                stale_logged = 0;
+                LOG_WARN("IMU recovered -- theta moving again.");
+            }
+        }
+
         looplog_write_if_full();
 
         loop_counter++;
@@ -1367,7 +1715,7 @@ void robot_cleanup(void)
 {
     LOG_INFO("Cleaning up robot...");
 
-    motor_hal_set_both(0.0f, 0.0f);
+    motor_hal_coast(); /* off on the way out, not "hold zero speed" */
     motor_hal_cleanup();
     rc_mpu_power_off();
 

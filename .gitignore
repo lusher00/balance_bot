@@ -27,6 +27,13 @@ pidconfig.txt
 # git status and eventually gets committed by a stray 'git add -A'.
 _to_delete/
 
+# ── Claude's output folder ──────────────────────────────────────────────────
+# The desktop app mirrors anything Claude hands back in chat into this folder
+# at the repo root. They are conversation artifacts -- plots, screenshots --
+# not source, and they are also excluded from the rsync in .vscode/tasks.json
+# so they never reach the bot's flash.
+Claude outputs/
+
 # ── editor / OS / scratch ───────────────────────────────────────────────────
 .DS_Store
 **/.DS_Store

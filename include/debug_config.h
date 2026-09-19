@@ -159,6 +159,13 @@ typedef enum
     BATT_WARNING = 2,
     BATT_CRITICAL = 3,
 } batt_status_t;
+/* "No sensor" is not "0 °C". sys_temp_c used to be left at its zeroed value on
+ * a board with no thermal zone, so the HUD painted a confident 0 °C and the
+ * >80 °C threshold could never fire -- a dead reading that looks like a healthy
+ * one. This sentinel is negative because no real reading can be, which lets
+ * every consumer test one thing instead of guessing. */
+#define SYS_TEMP_NONE (-1000.0f)
+
 
 typedef struct
 {
@@ -172,6 +179,20 @@ typedef struct
     batt_status_t batt_status;
     float claw_voltage; // RoboClaw main battery voltage (V), 0 if unavailable
     float claw_temp;    // RoboClaw board temperature (°C), 0 if unavailable
+
+    /* Motor current, read from the RoboClaw at 20 Hz. Signed — braking and
+     * back-driving read negative.
+     *
+     * The peaks are a running max since the last dashboard reset, because a
+     * 20 Hz sample cannot catch a millisecond edge. It does not need to: the
+     * RoboClaw's own limit handles the fast stuff in hardware, and what these
+     * are here to expose is a SUSTAINED draw, which lasts hundreds of ms and
+     * shows up in several consecutive samples. */
+    float claw_m1_amps;
+    float claw_m2_amps;
+    float claw_m1_amps_peak;
+    float claw_m2_amps_peak;
+    float claw_max_amps; // per-motor limit currently set on the controller
 
     /* ── board health ─────────────────────────────────────────────────────
      * Sampled at 1 Hz from /proc and the thermal zone. On a single-core
@@ -189,7 +210,7 @@ typedef struct
     float load1;         // 1-minute load average
     uint32_t mem_avail_kb;
     uint32_t mem_total_kb;
-    float sys_temp_c;    // SoC temperature
+    float sys_temp_c;    // SoC temperature (°C), SYS_TEMP_NONE if unavailable
     uint32_t ctxt_per_s; // context switches/sec
     uint32_t procs_running;
 

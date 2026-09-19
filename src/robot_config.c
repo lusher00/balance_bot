@@ -34,6 +34,7 @@
 
 #include "balance_bot.h"
 #include "debug_config.h"
+#include "motor_hal.h"   /* motor_config_apply pushes max_amps to the controller */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -118,6 +119,7 @@ void robot_config_defaults(robot_config_t *c)
     c->motor.mode = MOTOR_HAL_MODE_DEFAULT;
     c->motor.qpps_max = MOTOR_QPPS_MAX_DEFAULT;
     c->motor.accel_qpps = MOTOR_ACCEL_QPPS_DEFAULT;
+    c->motor.max_amps = MOTOR_MAX_AMPS_DEFAULT;
     c->motor.pol_l = 1.0f;
     c->motor.pol_r = 1.0f;
     c->motor.enc_pol_l = 1.0f;
@@ -255,6 +257,7 @@ int robot_config_load(const char *path, robot_config_t *c)
             if (KEY("mode")) c->motor.mode = (int)fv;
             else if (KEY("qpps_max")) c->motor.qpps_max = (int)fv;
             else if (KEY("accel_qpps")) c->motor.accel_qpps = (int)fv;
+            else if (KEY("max_amps")) c->motor.max_amps = fv;
             else if (KEY("pol_l")) c->motor.pol_l = fv;
             else if (KEY("pol_r")) c->motor.pol_r = fv;
             else if (KEY("enc_pol_l")) c->motor.enc_pol_l = fv;
@@ -385,6 +388,7 @@ int robot_config_save(const char *path, const robot_config_t *c)
     fprintf(f, "mode       = %d\n", c->motor.mode);
     fprintf(f, "qpps_max   = %d\n", c->motor.qpps_max);
     fprintf(f, "accel_qpps = %d\n", c->motor.accel_qpps);
+    fprintf(f, "max_amps   = %.2f\n", c->motor.max_amps);
     fprintf(f, "pol_l      = %.1f\n", c->motor.pol_l);
     fprintf(f, "pol_r      = %.1f\n", c->motor.pol_r);
     fprintf(f, "enc_pol_l  = %.1f\n", c->motor.enc_pol_l);
@@ -468,9 +472,13 @@ void motor_config_apply(const motor_config_t *cfg)
 {
     g_motor_config = *cfg;
     LOG_INFO("motor_config applied: mode=%d qpps_max=%d accel_qpps=%d pol_l=%.1f pol_r=%.1f "
-             "enc_pol_l=%.1f enc_pol_r=%.1f claw_kp=%.4f claw_ki=%.4f claw_kd=%.4f",
+             "enc_pol_l=%.1f enc_pol_r=%.1f claw_kp=%.4f claw_ki=%.4f claw_kd=%.4f max_amps=%.2f",
              cfg->mode, cfg->qpps_max, cfg->accel_qpps, cfg->pol_l, cfg->pol_r,
-             cfg->enc_pol_l, cfg->enc_pol_r, cfg->claw_kp, cfg->claw_ki, cfg->claw_kd);
+             cfg->enc_pol_l, cfg->enc_pol_r, cfg->claw_kp, cfg->claw_ki, cfg->claw_kd,
+             cfg->max_amps);
+    /* Config changes reach the controller here, not just this struct. */
+    if (cfg->max_amps > 0.0f)
+        motor_hal_set_current_limit(cfg->max_amps);
 }
 
 /* ── migration ────────────────────────────────────────────────────────────── */
@@ -538,6 +546,7 @@ static int load_legacy_pid(const char *path, robot_config_t *c)
         else if (ieq(k, "mode")) c->motor.mode = (int)v;
         else if (ieq(k, "qpps_max")) c->motor.qpps_max = (int)v;
         else if (ieq(k, "accel_qpps")) c->motor.accel_qpps = (int)v;
+        else if (ieq(k, "max_amps")) c->motor.max_amps = v;
         else if (ieq(k, "pol_l")) c->motor.pol_l = v;
         else if (ieq(k, "pol_r")) c->motor.pol_r = v;
         else if (ieq(k, "enc_pol_l")) c->motor.enc_pol_l = v;

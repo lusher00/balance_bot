@@ -140,6 +140,25 @@ int motor_hal_read_temp(float *temp_c)
     return -1;
 }
 
+int motor_hal_read_currents(float *m1_amps, float *m2_amps)
+{
+    *m1_amps = 0.0f;
+    *m2_amps = 0.0f;
+    return -1;
+}
+
+int motor_hal_set_current_limit(float amps)
+{
+    (void)amps;
+    return 0;
+}
+
+int motor_hal_read_current_limit(float *amps)
+{
+    *amps = 0.0f;
+    return -1;
+}
+
 int motor_hal_set_baud(int baud)
 {
     (void)baud;

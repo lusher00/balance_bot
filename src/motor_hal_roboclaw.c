@@ -202,7 +202,16 @@ int motor_hal_init(const char *device, int baud)
 
     roboclaw_estop_init();
 
-    motor_hal_set_both(0.0f, 0.0f);
+    /* Coast, not set_both(0,0): in velocity mode the latter is the FIRST thing
+     * that ever commands this controller, and it commands a closed loop to hold
+     * zero rather than leaving the motors unpowered. */
+    motor_hal_coast();
+
+    /* Push the current limit before anything can command motion. This is the
+     * real overcurrent protection: it acts in hardware in microseconds, where
+     * a fuse acts on I2t over seconds and a capacitor covers microseconds only. */
+    if (g_motor_config.max_amps > 0.0f)
+        motor_hal_set_current_limit(g_motor_config.max_amps);
 
     if (roboclaw_reset_encoders(g_rc, RC_ADDRESS) != ROBOCLAW_OK)
         LOG_WARN("motor_hal_roboclaw: encoder reset at init failed");
@@ -217,7 +226,7 @@ void motor_hal_cleanup(void)
 {
     if (!g_rc)
         return;
-    motor_hal_set_both(0.0f, 0.0f);
+    motor_hal_coast();      /* off, not a velocity hold — see motor_hal_coast */
     roboclaw_close(g_rc);
     g_rc = NULL;
     LOG_INFO("motor_hal_roboclaw: cleaned up");
@@ -336,14 +345,39 @@ int motor_hal_set(int motor, float duty)
 
 int motor_hal_free_spin(void)
 {
-    return motor_hal_set_both(0.0f, 0.0f);
+    /* Free spin means UNPOWERED. In velocity mode set_both(0,0) was the exact
+     * opposite: a closed loop actively resisting any attempt to turn the
+     * wheels by hand. */
+    return motor_hal_coast();
+}
+
+int motor_hal_coast(void)
+{
+    if (g_stub)
+        return 0;
+    if (!g_rc)
+        return -1;
+    if (link_blocked())
+        return -1;
+
+    /* MIXEDDUTY 0 regardless of g_motor_config.mode. See the header for why
+     * this cannot go through motor_hal_set_both(): in velocity mode a zero
+     * there is a closed-loop request to HOLD zero, not an absence of drive. */
+    pthread_mutex_lock(&g_rc_mutex);
+    int ret = roboclaw_duty_m1m2(g_rc, RC_ADDRESS, 0, 0);
+    pthread_mutex_unlock(&g_rc_mutex);
+    if (ret != ROBOCLAW_OK)
+        LOG_WARN_EVERY(2000, "motor_hal_roboclaw: coast (duty 0) failed (%d)", ret);
+    link_result(ret == ROBOCLAW_OK);
+    return (ret == ROBOCLAW_OK) ? 0 : -1;
 }
 
 int motor_hal_standby(int standby)
 {
-    /* RoboClaw has no standby pin — zeroing motors is the equivalent */
+    /* RoboClaw has no standby pin. Cutting power is the equivalent -- NOT
+     * commanding zero speed, which is a live controller holding a setpoint. */
     if (standby)
-        return motor_hal_set_both(0.0f, 0.0f);
+        return motor_hal_coast();
     return 0;
 }
 
@@ -502,6 +536,66 @@ int motor_hal_read_encoder_speeds(int32_t *m1_qpps, int32_t *m2_qpps)
 }
 
 /* ── Temperature ────────────────────────────────────────────────── */
+
+int motor_hal_read_currents(float *m1_amps, float *m2_amps)
+{
+    *m1_amps = 0.0f;
+    *m2_amps = 0.0f;
+    if (g_stub || !g_rc)
+        return -1;
+    if (link_blocked())
+        return -1;
+    float a1 = 0.0f, a2 = 0.0f;
+    pthread_mutex_lock(&g_rc_mutex);
+    int ret = roboclaw_currents(g_rc, RC_ADDRESS, &a1, &a2);
+    pthread_mutex_unlock(&g_rc_mutex);
+    if (ret != ROBOCLAW_OK)
+        return -1;
+    /* M1 = RIGHT, M2 = LEFT (see the header) — reported in that order so the
+     * labels line up with the encoder convention used everywhere else. */
+    *m1_amps = a1;
+    *m2_amps = a2;
+    return 0;
+}
+
+int motor_hal_set_current_limit(float amps)
+{
+    if (amps <= 0.0f)
+        return 0; /* leave whatever the controller already has */
+    if (g_stub)
+    {
+        g_motor_config.max_amps = amps;
+        return 0;
+    }
+    if (!g_rc)
+        return -1;
+    pthread_mutex_lock(&g_rc_mutex);
+    int ret = roboclaw_set_max_current(g_rc, RC_ADDRESS, 0, amps);
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_set_max_current(g_rc, RC_ADDRESS, 1, amps);
+    pthread_mutex_unlock(&g_rc_mutex);
+    if (ret != ROBOCLAW_OK)
+    {
+        LOG_WARN("motor_hal_set_current_limit: failed (%d) at %.2f A", ret, amps);
+        return -1;
+    }
+    g_motor_config.max_amps = amps;
+    LOG_INFO("RoboClaw current limit: %.2f A per motor (%.2f A total)", amps, amps * 2.0f);
+    return 0;
+}
+
+int motor_hal_read_current_limit(float *amps)
+{
+    *amps = 0.0f;
+    if (g_stub || !g_rc)
+        return -1;
+    if (link_blocked())
+        return -1;
+    pthread_mutex_lock(&g_rc_mutex);
+    int ret = roboclaw_read_max_current(g_rc, RC_ADDRESS, 0, amps);
+    pthread_mutex_unlock(&g_rc_mutex);
+    return (ret == ROBOCLAW_OK) ? 0 : -1;
+}
 
 int motor_hal_read_temp(float *temp_c)
 {

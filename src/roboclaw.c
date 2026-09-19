@@ -759,6 +759,77 @@ int roboclaw_temperature(struct roboclaw *rc, uint8_t address, float *temp_c)
 	return ROBOCLAW_OK;
 }
 
+/* ── Motor current ──────────────────────────────────────────────────
+ * GETCURRENTS (49) returns two signed 16-bit values in 10 mA units, so the
+ * full scale is ±327.67 A and the resolution is 0.01 A.
+ *
+ * SIGNED IS THE POINT. A motor that is braking or being back-driven pushes
+ * current back into the pack and reads negative. Decoding these as unsigned
+ * turns a -2 A regen into 653 A of nonsense, which is how you end up chasing
+ * a measurement bug instead of a robot.
+ *
+ * Reply is 4 data bytes + 2 CRC = 6. */
+int roboclaw_currents(struct roboclaw *rc, uint8_t address, float *m1_amps, float *m2_amps)
+{
+	uint8_t bytes = 0;
+	uint16_t crc;
+	rc->buffer[bytes++] = address;
+	rc->buffer[bytes++] = GETCURRENTS;
+	crc = calculate_crc16(rc->buffer, bytes);
+	int ret = send_cmd_wait_answer(rc, bytes, 6, crc);
+	if (ret != ROBOCLAW_OK)
+		return ret;
+	int16_t raw1 = (int16_t)decode_uint16(rc->buffer + bytes);
+	int16_t raw2 = (int16_t)decode_uint16(rc->buffer + bytes + 2);
+	*m1_amps = raw1 / 100.0f;
+	*m2_amps = raw2 / 100.0f;
+	return ROBOCLAW_OK;
+}
+
+/* SETM1MAXCURRENT (133) / SETM2MAXCURRENT (134):
+ *     address, cmd, max(4 bytes, 10 mA units), min(4 bytes, must be 0), CRC(2)
+ * The controller limits in hardware, far faster than anything this firmware
+ * could do over a 1 ms serial round trip. This is the protection that matters;
+ * the fuse is backup for a dead short, not an operating limit. */
+static int encode_set_max_current(uint8_t *buffer, uint8_t address, uint8_t cmd, uint32_t max_10ma)
+{
+	uint8_t bytes = 0;
+	buffer[bytes++] = address;
+	buffer[bytes++] = cmd;
+	bytes += encode_uint32(buffer, bytes, max_10ma);
+	bytes += encode_uint32(buffer, bytes, 0u);
+	bytes += encode_checksum(buffer, bytes);
+
+	return bytes;
+}
+
+int roboclaw_set_max_current(struct roboclaw *rc, uint8_t address, int motor, float amps)
+{
+	if (amps < 0.0f)
+		amps = 0.0f;
+	if (amps > 300.0f)
+		amps = 300.0f;
+	uint32_t raw = (uint32_t)(amps * 100.0f + 0.5f);
+	uint8_t cmd = (motor == 0) ? SETM1MAXCURRENT : SETM2MAXCURRENT;
+	int bytes = encode_set_max_current(rc->buffer, address, cmd, raw);
+	return send_cmd_wait_answer(rc, bytes, ROBOCLAW_ACK_BYTES, 0);
+}
+
+/* GETM1MAXCURRENT (135) / GETM2MAXCURRENT (136): max(4) + min(4) + CRC(2). */
+int roboclaw_read_max_current(struct roboclaw *rc, uint8_t address, int motor, float *amps)
+{
+	uint8_t bytes = 0;
+	uint16_t crc;
+	rc->buffer[bytes++] = address;
+	rc->buffer[bytes++] = (motor == 0) ? GETM1MAXCURRENT : GETM2MAXCURRENT;
+	crc = calculate_crc16(rc->buffer, bytes);
+	int ret = send_cmd_wait_answer(rc, bytes, 10, crc);
+	if (ret != ROBOCLAW_OK)
+		return ret;
+	*amps = (float)decode_uint32_t(rc->buffer + bytes) / 100.0f;
+	return ROBOCLAW_OK;
+}
+
 /* ── Reading what the RoboClaw ACTUALLY has ────────────────────────────────
  * Everything above writes settings.  These read them back out of the
  * controller, which is a different question and the one that matters when the

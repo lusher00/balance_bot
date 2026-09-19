@@ -109,5 +109,20 @@
         "key": "ctrl+alt+shift+u",
         "command": "workbench.action.tasks.runTask",
         "args": "service: status"
+    },
+    {
+        "key": "ctrl+alt+v",
+        "command": "workbench.action.tasks.runTask",
+        "args": "run verbose (service stopped)"
+    },
+    {
+        "key": "ctrl+alt+r",
+        "command": "workbench.action.tasks.runTask",
+        "args": "service: restart + watch log"
+    },
+    {
+        "key": "ctrl+alt+w",
+        "command": "workbench.action.tasks.runTask",
+        "args": "watch: arm + safety events"
     }
 ]

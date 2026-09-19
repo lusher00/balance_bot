@@ -5,7 +5,7 @@
             "label": "sync and build",
             "detail": "\u2303\u2325B \u2014 rsync to the bot, then make && make install",
             "type": "shell",
-            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
+            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -34,7 +34,7 @@
             "label": "sync and build (no install)",
             "detail": "\u2303\u2325N \u2014 rsync to the bot, then make only -- never touches the running service, even if the binary changed",
             "type": "shell",
-            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make'",
+            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make'",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -60,7 +60,7 @@
             "label": "clean sync and build",
             "detail": "\u2303\u2325\u21e7B \u2014 make clean on the bot, then sync, build and install",
             "type": "shell",
-            "command": "ssh boneblue-0 'cd ~/balance_bot && make clean' && rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
+            "command": "ssh boneblue-0 'cd ~/balance_bot && make clean' && rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -98,7 +98,7 @@
             "label": "sync",
             "detail": "\u2303\u2325S \u2014 rsync to the bot only, no build",
             "type": "shell",
-            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/",
+            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -287,6 +287,42 @@
                 "panel": "shared"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "run verbose (service stopped)",
+            "detail": "Stops the service, runs balance_bot in the foreground with the SAME args minus -q, plus IMU+system blocks. Ctrl-C to quit; service stays stopped.",
+            "type": "shell",
+            "command": "ssh -t boneblue-0 'sudo systemctl stop balance_bot balance_bot_server; . /etc/default/balance_bot 2>/dev/null; ARGS=$(echo \"$BOT_ARGS\" | sed s/-q//); echo \"launching: balance_bot $ARGS -d imu -d sys\"; echo; sudo /usr/local/bin/balance_bot $ARGS -d imu -d sys'",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            }
+        },
+        {
+            "label": "service: restart + watch log",
+            "detail": "Restarts the service and follows its journal live. Production path \u2014 same args the bot boots with.",
+            "type": "shell",
+            "command": "ssh -t boneblue-0 'sudo systemctl restart balance_bot balance_bot_server; journalctl -u balance_bot -u balance_bot_server -f -n 0 -o short-precise'",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            }
+        },
+        {
+            "label": "watch: arm + safety events",
+            "detail": "Follows the journal filtered to arming, kickstand, IMU-stale, OOB and e-stop lines. Use while power-cycling.",
+            "type": "shell",
+            "command": "ssh -t boneblue-0 'journalctl -u balance_bot -f -n 300 -o short-precise | grep --line-buffered -iE \"arm_at_boot|kickstand|BLOCKED|STALE|OOB|estop|IMU|motors cut\"'",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            }
         }
     ]
 }

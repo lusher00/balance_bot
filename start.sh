@@ -129,7 +129,18 @@ echo "  bot args : $BOT_ARGS"
 sudo systemctl stop balance_bot_server balance_bot 2>/dev/null
 sudo pkill -f "$BALANCE_BOT" 2>/dev/null
 pkill -f server.js    2>/dev/null
-pkill -f serve_web.py 2>/dev/null
+
+# The dashboard is a systemd unit (balance_bot_web.service), not a loose
+# process. `pkill -f serve_web.py` SIGTERMs the unit's own child; systemd
+# counts SIGTERM as a clean exit, so Restart=on-failure never fires and the
+# dashboard stays dead for good once this run ends. Stop the unit properly,
+# remember whether it was up, and put it back in cleanup.
+WEB_UNIT_WAS_ACTIVE=0
+if systemctl is-active --quiet balance_bot_web 2>/dev/null; then
+    WEB_UNIT_WAS_ACTIVE=1
+    sudo systemctl stop balance_bot_web 2>/dev/null
+fi
+pkill -f serve_web.py 2>/dev/null       # any hand-started copy (bweb) on 8888
 sleep 0.5
 
 # ── RoboClaw: reset, THEN clear the latched e-stop ─────────────────
@@ -158,6 +169,10 @@ cleanup() {
     stamp "bbot_run END id=$RUN_ID input=$INPUT elapsed=${elapsed}s label='$LABEL'"
     [ -n "$SERVER_PID" ] && { kill "$SERVER_PID" 2>/dev/null; wait "$SERVER_PID" 2>/dev/null; }
     [ -n "$WEB_PID" ]    && { kill "$WEB_PID"    2>/dev/null; wait "$WEB_PID"    2>/dev/null; }
+    if [ "$WEB_UNIT_WAS_ACTIVE" = 1 ]; then
+        echo "  restoring balance_bot_web.service"
+        sudo systemctl start balance_bot_web 2>/dev/null
+    fi
     echo
     echo "  run $RUN_ID ($INPUT) lasted ${elapsed}s = $(( elapsed / 60 ))m $(( elapsed % 60 ))s"
     echo "  If the board died instead of you quitting, that END line never got"

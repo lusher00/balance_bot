@@ -444,12 +444,52 @@ static void update_board_health(void)
         fclose(f);
     }
 
-    if ((f = fopen("/sys/class/thermal/thermal_zone0/temp", "r")))
+    /* SoC temperature. Two things the previous version got wrong:
+     *
+     *  1. The path is not the same on every image. tools/bbot_watch.py already
+     *     tries both spellings; this tried only one, so on an image carrying
+     *     just the /sys/devices form the read silently never happened.
+     *  2. A failed read left sys_temp_c at 0.0, which is indistinguishable
+     *     from a real 0 °C. That is what the HUD has been showing.
+     *
+     * The probe is cached: a board with no thermal zone would otherwise pay
+     * two failed opens every second, forever, to learn what it already knows. */
     {
-        long milli = 0;
-        if (fscanf(f, "%ld", &milli) == 1)
-            g_telemetry_data.system.sys_temp_c = milli / 1000.0f;
-        fclose(f);
+        static const char *temp_path = NULL;
+        static int temp_probed = 0;
+
+        if (!temp_probed)
+        {
+            static const char *const candidates[] = {
+                "/sys/class/thermal/thermal_zone0/temp",
+                "/sys/devices/virtual/thermal/thermal_zone0/temp",
+            };
+            for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++)
+            {
+                if (access(candidates[i], R_OK) == 0)
+                {
+                    temp_path = candidates[i];
+                    break;
+                }
+            }
+            temp_probed = 1;
+            if (temp_path)
+                LOG_INFO("telemetry: SoC temperature from %s", temp_path);
+            else
+                LOG_INFO("telemetry: no thermal zone on this board, "
+                         "SoC temperature reported as unavailable");
+        }
+
+        /* Reset every sample: a sensor that disappears must stop reporting the
+         * last good value as if it were current. */
+        g_telemetry_data.system.sys_temp_c = SYS_TEMP_NONE;
+        if (temp_path && (f = fopen(temp_path, "r")))
+        {
+            long milli = 0;
+            if (fscanf(f, "%ld", &milli) == 1)
+                g_telemetry_data.system.sys_temp_c = milli / 1000.0f;
+            fclose(f);
+        }
     }
 
     /* The other bot processes. Matching on cmdline: "node" alone would match
@@ -539,6 +579,39 @@ static void update_system_telemetry(void)
             if (motor_hal_read_temp(&t) == 0)
                 g_telemetry_data.system.claw_temp = t;
             last_claw_poll_us = now_us;
+        }
+    }
+
+    /* Motor current — polled at 20 Hz, one serial round trip each.
+     *
+     * 20 Hz cannot see a millisecond edge and is not trying to. The RoboClaw's
+     * own current limit handles fast events in hardware. What this is for is
+     * the SUSTAINED draw — a stalled motor, a bot driving into the floor —
+     * which lasts hundreds of milliseconds and therefore lands in several
+     * consecutive samples. That is the load that heats wiring and connectors,
+     * and it is the one a bench supply's averaging meter hides completely.
+     *
+     * The peaks are a running max, cleared from the dashboard, so a spike that
+     * happened while you were looking away is still on screen when you look
+     * back. */
+    {
+        static uint64_t last_amp_poll_us = 0;
+        uint64_t now_us = rc_nanos_since_boot() / 1000;
+        if (now_us - last_amp_poll_us >= 50000ULL)
+        {
+            float a1 = 0.0f, a2 = 0.0f;
+            if (motor_hal_read_currents(&a1, &a2) == 0)
+            {
+                g_telemetry_data.system.claw_m1_amps = a1;
+                g_telemetry_data.system.claw_m2_amps = a2;
+                /* Track magnitude: a -6 A regen is as interesting as +6 A. */
+                float m1 = fabsf(a1), m2 = fabsf(a2);
+                if (m1 > g_telemetry_data.system.claw_m1_amps_peak)
+                    g_telemetry_data.system.claw_m1_amps_peak = m1;
+                if (m2 > g_telemetry_data.system.claw_m2_amps_peak)
+                    g_telemetry_data.system.claw_m2_amps_peak = m2;
+            }
+            last_amp_poll_us = now_us;
         }
     }
 }

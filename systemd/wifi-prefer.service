@@ -1,0 +1,15 @@
+[Unit]
+Description=Prefer the bot's own AP over the house network
+# iwd must be up to be talked to; ordering only, not a hard dependency --
+# if iwd is not running there is nothing to prefer and the script exits 0.
+After=iwd.service
+Wants=iwd.service
+
+[Service]
+Type=oneshot
+# Root: iwd's D-Bus interface is not open to the debian user.
+User=root
+ExecStart=/home/debian/balance_bot/tools/wifi_prefer.sh
+# A failed switch is not a reason to mark the unit failed and stop the timer;
+# the next tick tries again.
+SuccessExitStatus=0 1

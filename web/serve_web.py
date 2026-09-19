@@ -16,6 +16,7 @@ Run from the balance_bot directory:
 Then open http://boneblue-0:8888 in any browser on the network.
 """
 import http.server, socketserver, os, sys
+from email.utils import formatdate
 
 PORT = 8888
 # abspath: os.path.dirname(__file__) is '' when this is run as
@@ -94,7 +95,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(404)
                 self.send_header("Content-Type", "text/plain")
                 self.end_headers()
-                self.wfile.write(b"no capture yet - press CAPTURE AT LOOP RATE first\n")
+                self.wfile.write(b"no /tmp/bbot.csv on this host yet - press the 100Hz button first, and check this is the bot\n")
                 return
             with open(path, "rb") as fh:
                 body = fh.read()
@@ -103,6 +104,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Content-Disposition", 'attachment; filename="bbot.csv"')
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
+            # Last-Modified so the dashboard can tell THIS capture from the one
+            # before it. The path is fixed and overwritten every run, so without
+            # a timestamp a poll cannot distinguish "the new file has landed"
+            # from "the old file is still sitting there" -- and handing over a
+            # stale capture that looks like a fresh one is worse than failing.
+            self.send_header("Last-Modified", formatdate(os.path.getmtime(path),
+                                                         usegmt=True))
             self.end_headers()
             self.wfile.write(body)
             return

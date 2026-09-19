@@ -41,8 +41,9 @@ alias bb='cd ~/balance_bot'   #: cd to the project
 #   <svc>s   status      s<svc>   stop        r<svc>   restart
 # bbb_oled is included in the all-group. It used to be missing from it, so
 # 'sbots' left the display running and it kept showing a service that was no
-# longer there.
-BB_SERVICES='balance_bot balance_bot_server batt_monitor bbb_oled'
+# longer there. balance_bot_web was missing for the same reason -- 'botss'
+# showed four healthy services while the dashboard was down and unlisted.
+BB_SERVICES='balance_bot balance_bot_server balance_bot_web batt_monitor bbb_oled'
 
 alias botss="systemctl status -n 0 --no-pager $BB_SERVICES"           #: status ALL bot services
 alias sbots="sudo systemctl stop $BB_SERVICES"        #: stop ALL bot services
@@ -64,6 +65,10 @@ alias oleds='systemctl status -n 0 --no-pager bbb_oled'               #: status 
 alias soled='sudo systemctl stop bbb_oled'            #: stop OLED display
 alias roled='sudo systemctl restart bbb_oled'         #: restart OLED display
 
+alias webs='systemctl status -n 0 --no-pager balance_bot_web'         #: status the web dashboard
+alias sweb='sudo systemctl stop balance_bot_web'      #: stop the web dashboard
+alias rweb='sudo systemctl restart balance_bot_web'   #: restart the web dashboard
+
 alias watchs='systemctl status -n 0 --no-pager bbot-watch'            #: status system recorder
 alias swatch='sudo systemctl stop bbot-watch'         #: stop system recorder
 alias rwatch='sudo systemctl restart bbot-watch'      #: restart system recorder
@@ -73,6 +78,7 @@ alias botlog='journalctl -u balance_bot -f'           #: follow balance_bot
 alias serverlog='journalctl -u balance_bot_server -f' #: follow the bridge
 alias battlog='journalctl -u batt_monitor -f'         #: follow battery monitor
 alias oledlog='journalctl -u bbb_oled -f'             #: follow the OLED display
+alias weblog='journalctl -u balance_bot_web -f'       #: follow the web dashboard
 alias watchlog='journalctl -u bbot-watch -f'          #: follow the system recorder
 
 #:: Balance Bot tools

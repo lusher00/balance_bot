@@ -582,6 +582,29 @@ int display_init(void)
         return 0;
     }
 
+    /* No terminal -> no TUI, and critically, NO REDIRECT.
+     *
+     * Under systemd stdout is a journal stream, not a tty. Drawing ncurses at
+     * it produces escape sequences nobody will ever render, costs CPU on a
+     * single-core AM335x for nothing, and -- the part that actually hurt --
+     * redirect_output() below dup2's BOTH stdout and stderr into a pipe that
+     * the collector drains to /tmp/balance_bot.log. Everything the control loop
+     * prints from this point on therefore leaves the journal entirely.
+     *
+     * That cost an evening on 2026-09-12: arm_at_boot and the OOB cutoff were
+     * both logging correctly the whole time, at WARN, into a file nobody was
+     * looking at, while `journalctl -u balance_bot` showed the startup banner
+     * and then nothing -- because the banner is printed just before this call
+     * and every log line comes after it. Silence read as "the code never ran".
+     *
+     * Run it from a terminal and the TUI behaves exactly as before. */
+    if (!isatty(STDOUT_FILENO)) {
+        g_enabled = 0;
+        LOG_INFO("display: no tty on stdout — TUI disabled, logs go to "
+                 "stdout/stderr (the journal) instead of %s", LOG_FILE);
+        return 0;
+    }
+
     /* redirect stdout/stderr before starting ncurses */
     redirect_output();
 

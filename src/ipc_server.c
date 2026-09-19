@@ -435,15 +435,27 @@ static int parse_json_command(const char *json_cmd)
                 state.trying = 1;
                 motor_hal_standby(0);
                 rc_led_set(RC_LED_GREEN, 1);
-                LOG_INFO("iPhone: ARMED (theta=%.2f trying=%d)", state.theta, state.trying);
+                // WARN, not INFO. The service runs with --quiet, which sets
+                // the level to WARN, so this line was being dropped too.
+                //
+                // There are exactly two things in this program that can set
+                // state.armed -- this and arm_at_boot in robot.c. If neither
+                // leaves a line in the journal, a bot that started driving has
+                // no attributable cause at all, which is where we just spent an
+                // evening. Both now log at WARN, both carry the angle and the
+                // bounds check they were let through on.
+                LOG_WARN("IPC: ARMED (theta=%.2f theta_offset=%.2f eff=%.2f "
+                         "oob_limit=%.1f)",
+                         state.theta, state.theta_offset,
+                         fabsf(state.theta - state.theta_offset),
+                         g_oob_angle_deg);
             }
         }
         else
         {
             state.trying = 0;
             state.armed = 0;
-            motor_hal_set_both(0.0f, 0.0f);
-            motor_hal_standby(1);
+            motor_hal_coast();
             rc_led_set(RC_LED_GREEN, 0);
             LOG_INFO("iPhone: DISARMED");
         }
@@ -456,8 +468,7 @@ static int parse_json_command(const char *json_cmd)
         state.armed        = 0;
         state.trying       = 0;
         state.estop_latched = 1;
-        motor_hal_set_both(0.0f, 0.0f);
-        motor_hal_standby(1);
+        motor_hal_coast();
         roboclaw_estop_assert();
         rc_led_set(RC_LED_GREEN, 0);
         LOG_INFO("iPhone: E-STOP asserted");
@@ -519,7 +530,15 @@ static int parse_json_command(const char *json_cmd)
         state.enc_pos_target = 0;
         state.enc_velocity = 0;
         state.enc_vel_reset = 1;
-        LOG_INFO("iPhone: encoders zeroed");
+        /* The steering loop measures heading as (phi_right - phi_left)/2, so
+         * wiping the encoders wipes its measurement. Without this the heading
+         * TARGET survived and the error stepped to the full accumulated
+         * heading in a single tick -- 113 deg of wheel differential in the
+         * 16 Sep log, which at kp=0.005 is 0.57 of duty differential applied
+         * instantly. That is the "zeroing the encoders makes it spin" report:
+         * not stored energy, just a setpoint left behind by its measurement. */
+        robot_reset_heading();
+        LOG_INFO("iPhone: encoders zeroed (heading target cleared)");
         return 0;
     }
 
@@ -861,6 +880,7 @@ static int parse_json_command(const char *json_cmd)
         MCFG_FLOAT("pol_r", pol_r);
         MCFG_FLOAT("enc_pol_l", enc_pol_l);
         MCFG_FLOAT("enc_pol_r", enc_pol_r);
+        MCFG_FLOAT("max_amps", max_amps);
 
         /* Baud rate change: close and reopen serial at new rate */
         {
@@ -889,11 +909,31 @@ static int parse_json_command(const char *json_cmd)
             cfg.qpps_max = 1;
         if (cfg.accel_qpps < 1)
             cfg.accel_qpps = 1;
+        /* 0 means "leave the controller alone". Anything above 30 A is almost
+         * certainly a typo on a bot this size, and the cost of a typo here is
+         * a melted connector, so refuse rather than clamp silently. */
+        if (cfg.max_amps < 0.0f)
+            cfg.max_amps = 0.0f;
+        if (cfg.max_amps > 30.0f)
+        {
+            LOG_WARN("set_motor_config: max_amps %.2f A rejected (30 A ceiling)", cfg.max_amps);
+            return -1;
+        }
 
         motor_config_apply(&cfg);
-        LOG_INFO("iPhone: motor_config updated — mode=%d qpps_max=%d accel=%d baud=%d pol=%.1f/%.1f",
-                 cfg.mode, cfg.qpps_max, cfg.accel_qpps, cfg.baud, cfg.pol_l, cfg.pol_r);
+        LOG_INFO("iPhone: motor_config updated — mode=%d qpps_max=%d accel=%d baud=%d pol=%.1f/%.1f max_amps=%.2f",
+                 cfg.mode, cfg.qpps_max, cfg.accel_qpps, cfg.baud, cfg.pol_l, cfg.pol_r, cfg.max_amps);
         ipc_config_touch();
+        return 0;
+    }
+
+    // {"type":"reset_amp_peaks"}
+    // Clears the running current maxima so the next run starts from zero.
+    if (strstr(json_cmd, "\"type\":\"reset_amp_peaks\""))
+    {
+        g_telemetry_data.system.claw_m1_amps_peak = 0.0f;
+        g_telemetry_data.system.claw_m2_amps_peak = 0.0f;
+        LOG_INFO("current peaks cleared");
         return 0;
     }
 
@@ -956,12 +996,33 @@ static int parse_json_command(const char *json_cmd)
      * Capture every control-loop tick to /tmp/bbot.csv. Fixed path, overwritten
      * each run. Fires and returns immediately -- the loop fills a RAM buffer and
      * writes the file when it is full, so nothing here blocks. */
+    if (strstr(json_cmd, "\"type\":\"looplog_stop\""))
+    {
+        if (looplog_stop() != 0)
+        {
+            LOG_WARN("looplog: nothing to stop");
+            return -1;
+        }
+        return 0;
+    }
+
+    /* {"type":"looplog","seconds":20}          — one-shot, fixed length
+     * {"type":"looplog","mode":"free"}         — ring, until looplog_stop */
     if (strstr(json_cmd, "\"type\":\"looplog\""))
     {
-        int secs = 20;
-        const char *p = strstr(json_cmd, "\"seconds\":");
-        if (p) sscanf(p + strlen("\"seconds\":"), "%d", &secs);
-        if (looplog_start(secs) != 0)
+        int rc;
+        if (strstr(json_cmd, "\"mode\":\"free\""))
+        {
+            rc = looplog_start_free();
+        }
+        else
+        {
+            int secs = 20;
+            const char *p = strstr(json_cmd, "\"seconds\":");
+            if (p) sscanf(p + strlen("\"seconds\":"), "%d", &secs);
+            rc = looplog_start(secs);
+        }
+        if (rc != 0)
         {
             LOG_WARN("looplog: already running");
             return -1;
@@ -1087,6 +1148,12 @@ static int parse_json_command(const char *json_cmd)
  * truncates cleanly and every later append becomes a no-op.
  */
 __attribute__((format(printf, 4, 5)))
+/* Tell the compiler this is printf-shaped so it checks every call site.
+ * Without this, a format/argument mismatch in the telemetry JSON is a runtime
+ * surprise on the bot rather than a build error on the desk. */
+static size_t json_append(char *buf, size_t pos, size_t size, const char *fmt, ...)
+    __attribute__((format(printf, 4, 5)));
+
 static size_t json_append(char *buf, size_t pos, size_t size, const char *fmt, ...)
 {
     if (pos >= size)
@@ -1116,6 +1183,8 @@ static void build_telemetry_json(char *buffer, size_t size)
         pos = json_append(buffer, pos, size,
                         "\"system\":{\"claw_link\":%s,\"battery\":%.2f,\"armed\":%s,\"arm_at_boot\":%s,\"oob_angle_deg\":%.1f,\"mode\":%d,\"loop_hz\":%.1f,\"theta_offset\":%.4f,\"pose_lean\":%.4f,"
                         "\"batt_voltage\":%.3f,\"batt_status\":%d,\"claw_voltage\":%.2f,\"claw_temp\":%.1f,"
+                        "\"m1_amps\":%.2f,\"m2_amps\":%.2f,\"m1_amps_pk\":%.2f,\"m2_amps_pk\":%.2f,"
+                        "\"max_amps\":%.2f,"
                         /* Telemetry packets the kernel refused because the
                          * client was not draining. Non-zero means holes in the
                          * graphs, and it means the bridge or the link is behind
@@ -1148,6 +1217,11 @@ static void build_telemetry_json(char *buffer, size_t size)
                         (int)g_telemetry_data.system.batt_status,
                         g_telemetry_data.system.claw_voltage,
                         g_telemetry_data.system.claw_temp,
+                        g_telemetry_data.system.claw_m1_amps,
+                        g_telemetry_data.system.claw_m2_amps,
+                        g_telemetry_data.system.claw_m1_amps_peak,
+                        g_telemetry_data.system.claw_m2_amps_peak,
+                        g_motor_config.max_amps,
                         ipc_get_tx_drops(),
                         g_telemetry_data.system.cpu_pct,
                         g_telemetry_data.system.bot_cpu_pct,
@@ -1379,7 +1453,8 @@ static void build_config_json(char *buffer, size_t size)
     pos = json_append(buffer, pos, size,
                     "\"motor_config\":{\"mode\":%d,\"qpps_max\":%d,\"accel_qpps\":%d,"
                     "\"pol_l\":%.1f,\"pol_r\":%.1f,\"enc_pol_l\":%.1f,\"enc_pol_r\":%.1f,"
-                    "\"claw_kp\":%.6f,\"claw_ki\":%.6f,\"claw_kd\":%.6f,\"baud\":%d},",
+                    "\"claw_kp\":%.6f,\"claw_ki\":%.6f,\"claw_kd\":%.6f,\"baud\":%d,"
+                    "\"max_amps\":%.2f},",
                     g_motor_config.mode,
                     g_motor_config.qpps_max,
                     g_motor_config.accel_qpps,
@@ -1390,7 +1465,8 @@ static void build_config_json(char *buffer, size_t size)
                     g_motor_config.claw_kp,
                     g_motor_config.claw_ki,
                     g_motor_config.claw_kd,
-                    g_motor_config.baud);
+                    g_motor_config.baud,
+                    g_motor_config.max_amps);
 
     /* What the CONTROLLER reports, as opposed to what we told it.  Separate
      * key on purpose -- conflating the two is how you end up trusting

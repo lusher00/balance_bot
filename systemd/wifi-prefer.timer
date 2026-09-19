@@ -1,0 +1,15 @@
+[Unit]
+Description=Pick the best available wifi network once, after boot
+
+[Timer]
+# 45s after boot, once. The GL router is powered with the Blue but finishes
+# booting after it does -- which is exactly why the bot lands on the house AP
+# -- so this waits for it. Raise it if the router needs longer.
+#
+# There is deliberately no OnUnitActiveSec. If the router is off, the house APs
+# are the right answer and they do not stop being the right answer ten minutes
+# later, and a repeating check would scan the radio off-channel for nothing.
+OnBootSec=45s
+
+[Install]
+WantedBy=timers.target

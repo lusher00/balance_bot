@@ -90,6 +90,21 @@ int motor_hal_free_spin(void);
  */
 int motor_hal_standby(int standby);
 
+/* A REAL stop: raw duty zero (MIXEDDUTY, cmd 34), whatever mode is configured.
+ *
+ * This exists because motor_hal_set_both(0,0) is not one. In velocity mode it
+ * sends MIXEDSPEED with a target of zero, which hands the RoboClaw's own
+ * velocity PID (kp=15 ki=2 kd=0.5) the job of HOLDING zero -- an active
+ * closed loop that drives the motors to make the encoders read what it wants,
+ * winds its integral up against stiction, overshoots, and reverses. On the
+ * bench that is a robot that starts pushing the moment the service comes up
+ * and never stops, which is exactly what it did on 2026-09-13.
+ *
+ * Duty zero removes power instead of regulating to zero. Use this anywhere the
+ * intent is "motors off": startup, the OOB cutoff, disarm, e-stop. Use
+ * motor_hal_set_both() only when the intent is "drive at this value". */
+int motor_hal_coast(void);
+
 /* ── encoder input ──────────────────────────────────────────────── */
 
 /**
@@ -174,6 +189,21 @@ int motor_hal_read_encoder_speeds(int32_t *m1_qpps, int32_t *m2_qpps);
  * @return 0 on success, -1 on error
  */
 int motor_hal_read_temp(float *temp_c);
+
+/**
+ * @brief Read both motor currents in amps (signed; negative = regen/braking).
+ * @return 0 on success, -1 if unavailable.
+ */
+int motor_hal_read_currents(float *m1_amps, float *m2_amps);
+
+/**
+ * @brief Set the per-motor hardware current limit on the controller.
+ * @param amps per-motor limit; <= 0 leaves the controller's setting untouched.
+ */
+int motor_hal_set_current_limit(float amps);
+
+/** @brief Read back the per-motor current limit the controller is enforcing. */
+int motor_hal_read_current_limit(float *amps);
 
 /* What the RoboClaw itself reports, read back over serial -- NOT balance_bot's
  * copy of robot.conf.  If the controller was configured in Ion Studio (motor

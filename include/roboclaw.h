@@ -152,6 +152,24 @@ int roboclaw_encoder_speeds(struct roboclaw *rc, uint8_t address,
  */
 int roboclaw_temperature(struct roboclaw *rc, uint8_t address, float *temp_c);
 
+/**
+ * @brief Read both motor currents in amps.
+ *
+ * Signed: braking / back-driving reads negative. 0.01 A resolution.
+ * One serial round trip (~1 ms at 460800) — not for the control loop.
+ */
+int roboclaw_currents(struct roboclaw *rc, uint8_t address, float *m1_amps, float *m2_amps);
+
+/**
+ * @brief Set a motor's hardware current limit.
+ * @param motor 0 = M1, 1 = M2
+ * @param amps  per-motor limit; the controller enforces this itself
+ */
+int roboclaw_set_max_current(struct roboclaw *rc, uint8_t address, int motor, float amps);
+
+/** @brief Read back a motor's hardware current limit, in amps. */
+int roboclaw_read_max_current(struct roboclaw *rc, uint8_t address, int motor, float *amps);
+
 /* Read settings back OUT of the controller, as opposed to the setters above.
  * robot.conf says what balance_bot does to the numbers; these say what the
  * RoboClaw itself is configured to do, which is the other half and the half

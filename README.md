@@ -21,7 +21,8 @@ dashboard over WebSocket.
 - **Live ncurses display** — SBUS channels, PID state, encoders, IMU, motors, system status
 - **IPC bridge** — Unix domain socket (`/tmp/balance_bot.sock`) to Node.js WebSocket server
 - **RoboClaw motor driver** — packet serial, duty/velocity/velocity+accel modes, hardware e-stop on GPIO1_25 (resolved at runtime, not hardcoded)
-- **Systemd integration** — `make install` deploys and manages both services
+- **Motor current sensing and limiting** — per-motor current read back at 20 Hz with a running peak, and a hardware current limit enforced by the RoboClaw itself (see [Current limiting](#current-limiting))
+- **Systemd integration** — `make install` deploys and manages the services; unit files are only reinstalled when they actually change
 
 ---
 
@@ -119,6 +120,7 @@ a transmitter left out of trim cannot command movement the instant it links.
 | `tools/trim_from_log.py` | Balance trim from measured drift, not by eye |
 | `tools/check_link.sh` | Finds undefined symbols without linking |
 | `tools/bbot_watch.py` | 1 Hz system recorder for diagnosing lockups |
+| `tools/wifi_prefer.sh` | Picks the best available network once, 45 s after boot. `iwd` has no priority field and does not roam between SSIDs, so the ordering has to live outside it |
 | `config/bashrc` | The shell environment: aliases, service control, `bhelp` / `ahelp`. Install with `./config/install_bashrc.sh --apply` |
 
 ---
@@ -159,22 +161,47 @@ sudo make install
 ./start.sh -i xbox            # Xbox controller
 ```
 
-`start.sh` handles the full startup sequence:
-1. Kills any stale processes
-2. Clears the RoboClaw e-stop
-3. Resets the RoboClaw via WriteNVM (`roboclaw_reset.py`) — required after any e-stop latch
-4. Starts `server.js` (WebSocket bridge) in background
-5. Starts `serve_web.py` (web dashboard) in background on port 8888
-6. Runs `balance_bot` in the foreground (ncurses takes over the terminal)
+**`start.sh` is a bench tool that replaces the systemd stack, not an addition
+to it.** It stops the services, stands up its own copy of everything, and runs
+the binary in the foreground so you can watch it and Ctrl-C it. Sequence:
+
+1. Stamps `bbot_run START` into the kernel ring buffer (survives a filesystem death — read it with `dmesg`)
+2. Stops `balance_bot_server` and `balance_bot`, and stops `balance_bot_web` if it was running
+3. Resets the RoboClaw via WriteNVM (`roboclaw_reset.py`)
+4. **Then** clears the latched e-stop (`estop_clear.sh`) — this order matters; clearing before the reset does not take
+5. Starts its own `server.js` (WebSocket bridge) in background
+6. Starts its own `serve_web.py` (web dashboard) in background on port 8888
+7. Runs `balance_bot` in the foreground (ncurses takes over the terminal)
+
+On exit it stamps `bbot_run END`, kills its own children, and restarts
+`balance_bot_web` if it stopped it. It deliberately does **not** restart
+`balance_bot` or `balance_bot_server` — Ctrl-C is how you make the bot stop,
+and bringing it back under systemd would defeat that. Use `rbots` to restore
+everything afterwards.
 
 ### Systemd service (auto-start on boot)
 
 ```bash
-sudo cp systemd/balance_bot.service /etc/systemd/system/
-sudo cp systemd/balance_bot_server.service /etc/systemd/system/
-sudo systemctl daemon-reload
+make install-units          # copies only the units that changed, reloads if any did
 sudo systemctl enable balance_bot balance_bot_server
 ```
+
+Five services make up a running bot. `botss` shows all of them at once; `rbots`
+restarts all of them. Note that `botss` is *status*, not restart.
+
+| Unit | What it is |
+|------|------------|
+| `balance_bot` | The control binary. Args come from `/etc/default/balance_bot`, not from the unit |
+| `balance_bot_server` | Node WebSocket bridge. `Requires=balance_bot` |
+| `balance_bot_web` | `serve_web.py` on port 8888 — the dashboard |
+| `batt_monitor` | Battery supervision |
+| `bbb_oled` | OLED status display |
+
+Only `balance_bot.service` and `balance_bot_server.service` are versioned in
+`systemd/` today. The other three live on the board only.
+
+`systemd/wifi-prefer.{service,timer}` is separate and optional — a one-shot
+network chooser that runs 45 s after boot.
 
 ### Manual
 
@@ -223,11 +250,29 @@ ssh debian@boneblue-0 "cd ~/balance_bot && python3 web/serve_web.py &"
 | Control | ARM/DISARM, E-STOP, CLR ESTOP, Zero IMU, Zero Encoders, mode/motor mode pickers, encoder readout, MJPEG video with cat overlay |
 | PID | Pitch / Position / Yaw picker. Kp/Ki/Kd for pitch and yaw; position shows its zone config instead, since it has no gains. Balance trim lives on the pitch card |
 | Graph | Live scrolling plots, dual-axis combined view, series toggle, CSV record/download |
-| Claw | RoboClaw drive mode, QPPS, polarity, velocity PID |
+| Claw | RoboClaw drive mode, QPPS, acceleration, **current limit**, polarity, velocity PID |
 | RC | Live SBUS channels and switches, channel mapping / scale / invert / deadband, pose (pitch, yaw) and position controls |
 | Tune | Tune-quality report for the last recording, saved run history, and A/B comparison including a config diff |
 | Debug | Syntax-highlighted raw telemetry JSON |
 | Settings | BBB IP/port, Pi 5 IP, video URL, telemetry option toggles |
+
+### Status ribbon
+
+The header ribbon is visible on every tab and carries the things you should
+never have to change tabs to see:
+
+```
+Batt 12.3V   Claw V 12.1V   Amps 0.31/0.28  pk 1.85   Angle 0.4°   Loop 100
+```
+
+`Amps` is live M1/M2 current with a running peak beside it. It is coloured
+against the configured current limit, not an absolute number — amber past 75%
+of the limit, red at it, where the controller is clamping and the bot is no
+longer getting the torque the controller asked for. Click the segment to clear
+the peaks.
+
+Below it, the action bar (ARM, ZERO IMU, ENC 0, E-STOP, CLR ESTOP, and the two
+recorders) is also always visible.
 
 ### ARM button states
 
@@ -297,6 +342,8 @@ require_center = 1
 
 [motor]
 mode = 0               # 0 = duty, 1 = velocity, 2 = velocity + accel
+accel_qpps = 5000      # MODE 2 ONLY — ignored in modes 0 and 1
+max_amps = 2.5         # per-motor hardware current limit, 0 = leave controller alone
 pol_l = -1.0
 enc_pol_l = -1.0
 
@@ -306,6 +353,38 @@ arm_at_boot = 0         # 1 = arm automatically once the control loop starts
 
 Section names changed with the controller rename; `[balance]` and `[steering]`
 are still accepted so an older file keeps loading.
+
+### Current limiting
+
+`max_amps` is pushed to the RoboClaw at init, before anything can command
+motion, and again whenever it changes from the dashboard. The controller
+enforces it in hardware.
+
+**This is the real overcurrent protection.** A fuse opens on I²t over seconds;
+a capacitor covers microseconds; the failure mode in between is a stalled motor
+holding V/R_winding for as long as the fault lasts. With no back-EMF opposing
+it, a small brushed motor at 12 V and ~1 Ω pulls well into double digits, and a
+balancing bot reverses constantly — on a reversal the back-EMF *adds* to the
+supply across the winding. A bot driving into the floor holds that continuously.
+
+The default of 2.5 A per motor is 5 A total, which sits under a 6 A fuse with
+margin. Raise it only after watching real numbers on the ribbon.
+
+Two things worth knowing:
+
+- **Older RoboClaw firmware does not implement the current-limit commands
+  (133/134).** `motor_hal_read_current_limit()` exists so you can confirm the
+  limit actually took. If it does not read back what you set, the limit is a
+  no-op.
+- **`accel_qpps` only applies in mode 2.** In mode 1 every setpoint change is a
+  step and the controller's velocity PID does whatever duty it takes to hit it
+  immediately, so di/dt is unbounded. If current peaks look violent, mode 2
+  with a sane ramp is the first lever.
+
+A bench supply is a poor instrument here: its meter averages over hundreds of
+milliseconds while the events are milliseconds, and a current-limited supply
+clips the transient and then shows you the average of what it allowed through.
+If the board resets when the motors engage, that reset *is* the measurement.
 
 ### Backing it up
 
@@ -389,7 +468,8 @@ Commands are JSON sent over WebSocket to `server.js`, which forwards them to the
 | Zero IMU + encoders | `{"type":"zero_imu"}` |
 | Zero encoders only | `{"type":"zero_encoders"}` |
 | Position hold config | `{"type":"set_pos_config","zone_a":8000,"scale_d":80,...}` |
-| Motor config | `{"type":"set_motor_config","mode":0}` |
+| Motor config | `{"type":"set_motor_config","mode":0,"max_amps":2.5}` — `max_amps` >30 is rejected, not clamped |
+| Clear current peaks | `{"type":"reset_amp_peaks"}` |
 | RC mapping | `{"type":"set_sbus_config","drive_channel":3,"drive_scale":0.25}` |
 | Nudge pose / position | `{"type":"nudge","axis":"pose","delta":0.1}` — axes: `pitch` (trim), `pose` (lean), `yaw`, `fwd` |
 | Telemetry options | `{"type":"set_telemetry","encoders":true,"pid_states":true}` |

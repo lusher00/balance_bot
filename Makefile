@@ -49,7 +49,7 @@ OBJS = $(patsubst src/%.c,$(OBJDIR)/%.o,$(SRCS))
 BINDIR = bin
 OBJDIR = obj
 
-.PHONY: all clean install install-oled uninstall uninstall-oled test
+.PHONY: all clean install install-units install-oled install-oled-force uninstall uninstall-oled test
 
 # Default target
 all: $(BINDIR)/$(TARGET)
@@ -138,17 +138,27 @@ install-config:
 # Install the unit files from systemd/ — these are the versioned copies.
 # Anything machine-specific (device paths, baud, input mode) belongs in
 # $(DEFAULTS), which is deliberately NOT overwritten if it already exists.
+# Only copy a unit that actually differs, and only daemon-reload if one did.
+# Same rule as install below: nothing changed means nothing to do.
 install-units:
-	@echo "Installing unit files to $(UNIT_DIR)..."
-	sudo cp systemd/$(SERVICE) $(UNIT_DIR)/$(SERVICE)
-	sudo cp systemd/$(SERVER_SERVICE) $(UNIT_DIR)/$(SERVER_SERVICE)
-	@if [ ! -f $(DEFAULTS) ]; then \
+	@changed=0; \
+	for u in $(SERVICE) $(SERVER_SERVICE); do \
+		if sudo cmp -s systemd/$$u $(UNIT_DIR)/$$u 2>/dev/null; then :; else \
+			echo "  unit changed: $$u"; \
+			sudo cp systemd/$$u $(UNIT_DIR)/$$u; \
+			changed=1; \
+		fi; \
+	done; \
+	if [ ! -f $(DEFAULTS) ]; then \
 		sudo cp systemd/balance_bot.default.example $(DEFAULTS); \
 		echo "Created $(DEFAULTS) from example — EDIT IT for this board"; \
+	fi; \
+	if [ $$changed -eq 1 ]; then \
+		echo "Reloading systemd..."; \
+		sudo systemctl daemon-reload; \
 	else \
-		echo "Kept existing $(DEFAULTS) (edit by hand; not managed by make)"; \
+		echo "Unit files unchanged."; \
 	fi
-	sudo systemctl daemon-reload
 
 # Install to system
 #
@@ -202,7 +212,20 @@ install: $(BINDIR)/$(TARGET) install-units
 # never clobbers an existing /etc/default/bbb_oled.
 #
 # It cds to its own directory, so it works from here without one.
+# install.sh does real dependency checking and takes a few seconds, so only run
+# it when something it installs has actually changed. Use `make install-oled-force`
+# to run it regardless (after changing deps, or to re-verify the unit).
 install-oled:
+	@if sudo cmp -s $(OLED_DIR)/oled_status.py /usr/local/bin/bbb_oled.py 2>/dev/null && \
+	    sudo cmp -s $(OLED_DIR)/$(OLED_SERVICE) $(UNIT_DIR)/$(OLED_SERVICE) 2>/dev/null; then \
+		echo "OLED display unchanged — skipped (make install-oled-force to run anyway)."; \
+	else \
+		echo "Installing OLED status display ($(OLED_SERVICE))..."; \
+		sudo $(OLED_DIR)/install.sh; \
+		echo "✅ $(OLED_SERVICE): installed to /usr/local/bin, enabled at boot, started"; \
+	fi
+
+install-oled-force:
 	@echo "Installing OLED status display ($(OLED_SERVICE))..."
 	sudo $(OLED_DIR)/install.sh
 	@echo "✅ $(OLED_SERVICE): installed to /usr/local/bin, enabled at boot, started"
