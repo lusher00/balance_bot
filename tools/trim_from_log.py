@@ -191,7 +191,8 @@ def main():
     # the pitch/velocity curve above must not be used to compute a number.
     net = pos[-1] - pos[0]
     dur = tcol[-1] - tcol[0]
-    mm_per_tick = 155.0 * 3.14159 / 145.1
+    # 117.475 mm BaneBots wheel; enc_pos is L+R summed, hence /2.
+    mm_per_tick = 117.475 * 3.14159265 / (2 * 145.1)
     print(f"\n  net travel {net:+.0f} ticks = {net*mm_per_tick/1000:+.2f} m "
           f"over {dur:.1f}s  ({net/dur*mm_per_tick/1000:+.3f} m/s)")
 

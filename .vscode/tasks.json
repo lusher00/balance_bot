@@ -5,7 +5,7 @@
             "label": "sync and build",
             "detail": "\u2303\u2325B \u2014 rsync to the bot, then make && make install",
             "type": "shell",
-            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
+            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='recordings' --exclude='logs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -34,7 +34,7 @@
             "label": "sync and build (no install)",
             "detail": "\u2303\u2325N \u2014 rsync to the bot, then make only -- never touches the running service, even if the binary changed",
             "type": "shell",
-            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make'",
+            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='recordings' --exclude='logs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make'",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -60,7 +60,7 @@
             "label": "clean sync and build",
             "detail": "\u2303\u2325\u21e7B \u2014 make clean on the bot, then sync, build and install",
             "type": "shell",
-            "command": "ssh boneblue-0 'cd ~/balance_bot && make clean' && rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
+            "command": "ssh boneblue-0 'cd ~/balance_bot && make clean' && rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='recordings' --exclude='logs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -84,9 +84,9 @@
         },
         {
             "label": "get log",
-            "detail": "\u2303\u2325L \u2014 scp /tmp/bbot.csv off the bot into logs/",
+            "detail": "\u2303\u2325L \u2014 copy the 100 Hz ring (/dev/shm/bbot_ring_*.csv) off the bot into logs/",
             "type": "shell",
-            "command": "mkdir -p ${workspaceFolder}/logs && scp boneblue-0:/tmp/bbot.csv ${workspaceFolder}/logs/bbot.csv && ls -lh ${workspaceFolder}/logs/bbot.csv",
+            "command": "mkdir -p ${workspaceFolder}/logs && curl -sf http://boneblue-0:8888/bbot_ring.csv -o ${workspaceFolder}/logs/bbot_ring_$(date +%Y%m%d_%H%M%S).csv && ls -lht ${workspaceFolder}/logs | head -3",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -98,7 +98,7 @@
             "label": "sync",
             "detail": "\u2303\u2325S \u2014 rsync to the bot only, no build",
             "type": "shell",
-            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/",
+            "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='recordings' --exclude='logs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"

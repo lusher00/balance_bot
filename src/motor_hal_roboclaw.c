@@ -264,12 +264,39 @@ int motor_hal_roboclaw_reset(void)
 
 /* ── motor output ───────────────────────────────────────────────── */
 
+static motor_hal_gate_fn g_gate = NULL; /* NULL = deny everything */
+
+void motor_hal_set_motion_gate(motor_hal_gate_fn fn) { g_gate = fn; }
+
 int motor_hal_set_both(float left, float right)
 {
     if (g_stub)
         return 0;
     if (!g_rc)
         return -1;
+
+    /* ── Motion gate ── the single choke point for drive commands. ───────
+     * Checked here, at the last moment before bytes go to the RoboClaw, so no
+     * caller -- present or future, main loop or IPC -- can get motion past it.
+     * Deny sends coast, not nothing: in velocity mode "nothing" leaves the
+     * RoboClaw holding whatever speed it last had. Every permit/deny change is
+     * logged at WARN with the reason, so the log proves whether this program
+     * ever commanded motion. */
+    {
+        static int last_ok = -1;
+        const char *why = "no gate registered";
+        int ok = (g_gate != NULL) && g_gate(&why);
+        if (ok != last_ok)
+        {
+            if (ok)
+                LOG_WARN("motion gate: OPEN (L=%.3f R=%.3f)", left, right);
+            else
+                LOG_WARN("motion gate: CLOSED -- %s", why);
+            last_ok = ok;
+        }
+        if (!ok)
+            return motor_hal_coast();
+    }
 
     /* clamp to ±1.0 */
     if (left > 1.0f)

@@ -26,6 +26,8 @@
 #include <math.h>
 #include <unistd.h>   /* sysconf(_SC_CLK_TCK) for CPU accounting */
 #include <dirent.h>   /* scanning /proc for the other bot processes */
+#include <sys/stat.h> /* stat() on /run/batt_status.json */
+#include <time.h>
 
 // Global telemetry data (shared with IPC server)
 telemetry_data_t g_telemetry_data = {0};
@@ -169,7 +171,13 @@ static void update_pid_telemetry(void)
     // Steering controller
     g_telemetry_data.yaw.enabled = g_controllers.yaw;
     g_telemetry_data.yaw.setpoint = state.yaw;
-    g_telemetry_data.yaw.measurement = (state.phi_left - state.phi_right) / 2.0f;  // deg diff
+    /* Same sign as the control loop. This was (phi_left - phi_right)/2 while
+     * robot.c closes on (phi_right - phi_left)/2, so every log and every
+     * dashboard reading had yaw_measurement NEGATED relative to yaw_setpoint
+     * and yaw_error -- yaw_error did not equal setpoint minus measurement, and
+     * reading the columns at face value gave the wrong answer about which way
+     * the robot was turning. */
+    g_telemetry_data.yaw.measurement = (state.phi_right - state.phi_left) / 2.0f;  // deg diff
     g_telemetry_data.yaw.error = yaw_pid.prev_error;
     g_telemetry_data.yaw.p_term = yaw_pid.last_p_term;
     g_telemetry_data.yaw.i_term = yaw_pid.last_i_term;
@@ -530,7 +538,15 @@ static void update_system_telemetry(void)
 
     // Read external battery monitor status (written by batt_monitor service)
     {
-        FILE *f = fopen("/run/batt_status.json", "r");
+        /* A file much older than batt_monitor's write interval is not a
+         * reading -- without this the dashboard showed the last voltage
+         * forever after batt_monitor stopped. The limit must sit well above
+         * that interval: batt_monitor runs --interval 60, and a 30 s limit
+         * (first version of this) blanked BATT for half of every minute. */
+        struct stat bst;
+        FILE *f = NULL;
+        if (stat("/run/batt_status.json", &bst) == 0 && time(NULL) - bst.st_mtime <= 150)
+            f = fopen("/run/batt_status.json", "r");
         if (f)
         {
             char buf[128] = {0};

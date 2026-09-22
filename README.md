@@ -22,6 +22,8 @@ dashboard over WebSocket.
 - **IPC bridge** — Unix domain socket (`/tmp/balance_bot.sock`) to Node.js WebSocket server
 - **RoboClaw motor driver** — packet serial, duty/velocity/velocity+accel modes, hardware e-stop on GPIO1_25 (resolved at runtime, not hardcoded)
 - **Motor current sensing and limiting** — per-motor current read back at 20 Hz with a running peak, and a hardware current limit enforced by the RoboClaw itself (see [Current limiting](#current-limiting))
+- **Motion gate** — one choke point in `motor_hal_set_both()`: no drive command reaches the RoboClaw unless armed, in bounds and the IMU is live; otherwise it coasts (see [Motion gate](#motion-gate))
+- **Always-on 100 Hz history** — every control tick kept in a RAM ring on the bot, downloadable after the fact (see [100 Hz history ring](#100-hz-history-ring))
 - **Systemd integration** — `make install` deploys and manages the services; unit files are only reinstalled when they actually change
 
 ---
@@ -34,8 +36,8 @@ dashboard over WebSocket.
 | IMU | Onboard MPU-9250 via custom DMP driver |
 | Motor driver | RoboClaw (packet serial, `/dev/ttyO1` at 460800 baud) |
 | Motors | RS-555 with 5.2:1 planetary gearbox |
-| Encoders | Quadrature, 145.1 PPR, ~3.36mm/tick |
-| Wheels | 155mm diameter |
+| Encoders | Quadrature, 145.1 PPR, ~2.54 mm per wheel tick (enc_pos is L+R summed: 1.27 mm per unit) |
+| Wheels | BaneBots 4-5/8" (117.475 mm) |
 | RC Receiver | FrSky R-XSR (SBUS) |
 | Transmitter | Jumper T16 (OpenTX) |
 | Vision coprocessor | Raspberry Pi 5 + Hailo-8L NPU |
@@ -243,6 +245,23 @@ To run standalone without `start.sh`:
 ssh debian@boneblue-0 "cd ~/balance_bot && python3 web/serve_web.py &"
 ```
 
+### 100 Hz history ring
+
+The control loop appends every tick to `/dev/shm/bbot_ring_0.csv` /
+`bbot_ring_1.csv` — RAM, never the SD card or eMMC. Each segment is 5 MB and
+they alternate, so the last ~4–7 minutes at 100 Hz are always on the bot. `t`
+is seconds since boot (same clock as telemetry). Each segment starts with the
+full config; any config change mid-run writes `# CHANGE t=...` and the new
+config block in place.
+
+- Dashboard: **⤓ RING** with a seconds box (0 = everything)
+- Direct: `http://boneblue-0:8888/bbot_ring.csv?sec=60`
+
+Nothing to start or stop — when something happens, download it. The 20 Hz
+REC CSV likewise marks mid-recording changes with `# CHANGE` lines. Position
+fields on the dashboard always show the bot's values (red only while a typed
+value has not reached the bot).
+
 ### Dashboard tabs
 
 | Tab | Contents |
@@ -312,6 +331,9 @@ kd = 0.005
 kp = 0.010
 ki = 0.005
 kd = 0.000
+gyro_scale = 0.000     # 0 = D from the encoder staircase; else gyro Z, scaled
+                       # into phi_diff deg/s, sign included. See Yaw Derivative
+                       # Source — it is measured from a log, not guessed.
 
 [position]
 zone_a = 8000          # outer threshold, ticks. Contract is A > B > C
@@ -328,6 +350,8 @@ back_to_spot = 0       # 1 = chase the target, 0 = loose hold
 drive_mode = 0         # 0 = stick commands lean, 1 = stick moves the target
 drive_rate = 300.0     # ticks/s at full stick in target mode
 runaway_limit = 300    # max |target - pos|, anti-windup
+lead_max = 0           # return-home carrot: max lead over the wheels, ticks. 0 = off
+return_rate = 100.0    # ticks/s the carrot walks home (1 tick = 1.27 mm)
 
 [imu]
 pitch_offset = 98.5500 # where upright is, from calibration
@@ -348,7 +372,12 @@ pol_l = -1.0
 enc_pol_l = -1.0
 
 [system]
-arm_at_boot = 0         # 1 = arm automatically once the control loop starts
+arm_at_boot = 0         # 1 = arm by itself when stood up (see Arm at boot)
+oob_angle_deg = 15.0    # |theta - trim| beyond this = out of bounds, motors coast
+kick_assist = 1         # 1 = allow the stand-up kick (see Stand-Up Kick)
+kick_max_deg = 25.0     # the kick refuses above this |theta - trim|
+kick_duty = 0.35        # duty it drives both wheels at
+kick_timeout_ms = 1200  # longest single kick before it demands a re-centre
 ```
 
 Section names changed with the controller rename; `[balance]` and `[steering]`
@@ -386,6 +415,50 @@ milliseconds while the events are milliseconds, and a current-limited supply
 clips the transient and then shows you the average of what it allowed through.
 If the board resets when the motors engage, that reset *is* the measurement.
 
+### Approach profile (the carrot)
+
+How the bot travels to its position target — home after a push, or a new spot
+you commanded. Position hold normally chases `enc_pos_target` directly, so the
+spring grows with distance: a big error makes it charge, and past ~4 deg of
+lean this chassis goes over. With `lead_max > 0` it chases a *carrot* instead:
+
+- the carrot travels toward the target at `return_rate`, speeding up and
+  slowing down at `return_accel` so it arrives stopped;
+- it is then clamped to within `lead_max` ticks of the wheels, which caps the
+  spring at `lead_max / scale_d` degrees of lean however far away the target is.
+
+A push is therefore arrested first (carrot held near the wheels, small spring,
+damping does the stopping) and the bot is then walked to the target at a steady
+pace. Dashboard move buttons are paced by the same profile. The damping term
+subtracts the carrot's achieved speed, so a commanded move is not braked while
+it runs, while a push still gets full braking. The carrot restarts at the
+wheels whenever the target is re-snapped (arm, disarm, fall, recovery).
+
+Start at `lead_max = 40`, `return_rate = 150`, `return_accel = 100`.
+`pos_encError` still shows distance from the target; the correction columns and
+the ring's `pos_carrotLead` / `pos_carrotVel` follow the carrot.
+
+### Motion gate
+
+`motor_hal_set_both()` is the only function that sends a non-zero drive command
+to the RoboClaw, and it asks a gate registered by `robot.c` immediately before
+every send: armed, trying, e-stop not latched, IMU has produced 50 samples, IMU
+not stale, `|theta - trim| <= oob_angle_deg`. Any failure sends **coast** (duty
+0) instead — not "nothing", which in velocity mode leaves the controller holding
+its last speed. Default is deny until the control loop registers the gate. Every
+change is logged at WARN: `motion gate: OPEN` / `motion gate: CLOSED -- <reason>`.
+
+### Arm at boot
+
+With `arm_at_boot = 1` the bot sits inert on its kickstand and arms itself when
+stood up and held still. The IMU's fused angle starts far off after boot and
+slews to the true angle over ~10 s; parked on the side where that slew passes
+through 0 it used to arm on the kickstand and drive. So both gates now require
+the *estimate* to be still, not just the gyro: "kickstand seen" needs out of
+bounds with theta steady within 1 deg for 1 s, and arming needs theta steady
+within 1 deg through the 250 ms hold. Rejections log
+`arm_at_boot: theta slewing ... NOT arming`.
+
 ### Backing it up
 
 `robot.conf` exists only on the SD card and is excluded from rsync, so a sync
@@ -396,6 +469,121 @@ make save-config     # on the bot: copies robot.conf into config/machine/
                      # then commit config/machine/
 make install-config  # on a fresh board: restores it, never overwrites
 ```
+
+---
+
+## Stand-Up Kick
+
+Parked on its kickstand the robot rests at 17–20°, well outside
+`oob_angle_deg`, so every actuation path is dead and it cannot be stood up
+without picking it up. The kick drives both wheels briefly, in one direction,
+to pop it upright — once it crosses back inside `oob_angle_deg` the balance
+loop catches it and the kick ends.
+
+Two ways to ask for it, both landing in the same firmware path:
+
+- **Transmitter:** push the drive stick past 25% while it is out of bounds.
+  Stick direction sets the kick direction.
+- **Dashboard:** hold ⇤ KICK or KICK ⇥ in the action bar.
+
+### This is the only thing allowed to turn the wheels outside the cutoff
+
+So it is fenced in, in `kick_direction()` (`robot.c`) — not in the callers, so
+both paths get identical treatment and neither can bypass any of it:
+
+| Guard | Why |
+|---|---|
+| `armed`, IMU fresh | same preconditions as any other motion |
+| `oob_angle_deg < angle ≤ kick_max_deg` | inside, the balance loop owns the wheels; above, it is lying down and a kick only throws it |
+| stick/button seen released before each kick | a failsafe frame, a stale packet or a ratcheted throttle resting at its stop cannot hold the wheels on |
+| `kick_timeout_ms` per kick | then it refuses until released — a stuck stick cannot spin the wheels indefinitely |
+| dashboard request expires after 300 ms | the page repeats the level while held, so a dropped socket or a closed lid stops the wheels rather than latching them |
+| goes through `motor_hal_set_both()` | the motion gate still gets its say |
+
+`kick_assist = 0` disables the whole path.
+
+Start with `kick_duty` low and raise it — too little and it rocks without
+coming up, too much and it overshoots through vertical and goes over the other
+way. The angle it rests at on the kickstand should sit comfortably inside
+`kick_max_deg`; if it rests steeper than that, the kick will refuse rather than
+attempt a throw from a bad angle.
+
+---
+
+## Yaw Derivative Source
+
+The steering loop closes on `phi_diff = (phi_right - phi_left) / 2`, in degrees
+of wheel rotation. That signal has exactly one resolution:
+
+```
+360 / ENCODER_TICKS_PER_REV / 2  =  360 / 145.1 / 2  =  1.2405 deg per count
+```
+
+Every value it can ever take is a multiple of 1.2405. It is a staircase, and
+numerically differentiating a staircase gives an impulse per step, not a rate.
+At `yaw kd = 0.0005` and 100 Hz one count produces
+
+```
+0.0005 * 1.2405 / 0.01  =  0.060  of duty differential
+```
+
+while the proportional response to the same count is `0.005 * 1.2405 = 0.0062`.
+The derivative kicks ten times harder than the proportional term, off a signal
+that carries no rate information at all.
+
+Measured, 2026-09-20 (`bbot_ring_1789927479098`, 65 s parked and upright,
+heading wandering +/-5 counts):
+
+| | |
+|---|---|
+| yaw `d_term` rms | 0.0338 |
+| yaw `p_term` rms | 0.0081 |
+| yaw output rms | 0.0363 (i.e. almost entirely D) |
+| output sign reversals | 25 / s |
+| `mot_dutyDiff` rms | 7% |
+| wheel travel | 1786 counts, to net out 5 |
+
+That is a quantisation limit cycle: one count -> D impulse -> duty differential
+-> the wheels move -> the next count. It is what the idle yaw jitter has always
+been, and it is worse on the kickstand because the wheels are unloaded.
+
+The IMU measures chassis yaw rate directly (gyro Z, `state.psi_dot`), smoothly
+and with no staircase. `yaw_gyro_scale` converts it into `phi_diff` units so
+`kd` keeps its meaning:
+
+```
+phi_diff_rate [deg/s] = psi_dot [deg/s] * yaw_gyro_scale
+yaw_gyro_scale        ~ track_width_mm / WHEEL_DIAMETER_MM     (magnitude)
+```
+
+**`yaw_gyro_scale = 0` keeps the old encoder derivative**, which is the default
+— the sign depends on how the IMU is mounted, so it is measured, not assumed.
+
+### Calibrating it
+
+The ring logs `yaw_psiDot` (raw gyro Z, deg/s) and `yaw_encRate` (the
+differenced staircase) every tick, so one ordinary run gives both sign and
+magnitude. The scale does **not** have to be set first — `yaw_psiDot` is the
+unscaled sensor, so it is populated even while `yaw_gyro_scale` is 0.
+
+1. Kickstand. Turn the bot left and right by hand for ~20 s, at any point
+   during a normal capture.
+2. Dump the ring and run `python3 tools/yaw_gyro_scale.py <ring.csv>`.
+3. It fits `yaw_encRate = k * yaw_psiDot` through the origin over the whole run
+   and prints `k`, sign included. A negative `k` means the IMU is mounted so
+   +gyro Z is −phi_diff; that is expected, not a mistake. It refuses to give a
+   number if the correlation is weak, which would mean gyro Z is not the axis
+   the wheels turn about.
+4. Enter the value at Tuning → steering → **D src**. The dashboard shows both
+   rates live underneath the box; they should now trace the same curve.
+
+Sanity check before trusting it: with the wheels off the ground and the loop
+enabled, idle `mot_dutyDiff` should collapse from ~7% rms to near zero, and the
+yaw output should stop reversing sign tens of times a second.
+
+Even with this fixed, heading itself is still only known to 1.2405 deg — the
+loop cannot hold tighter than about +/-0.6 deg. The gyro fixes the *damping*,
+not the *resolution*.
 
 ---
 

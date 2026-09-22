@@ -37,6 +37,7 @@
 #include <errno.h>
 #include <time.h>
 #include <pthread.h>
+#include <sched.h>
 #include <sys/ioctl.h>
 #include <linux/i2c-dev.h>
 #include <linux/i2c.h>
@@ -1152,5 +1153,17 @@ void _mpu_set_callback(void (*cb)(void))
     /* Start thread now that g_data and g_callback are both set */
     g_running = 1;
     if (pthread_create(&g_thread, NULL, mpu_thread, NULL) != 0)
+    {
         fprintf(stderr, "mpu_dmp: failed to start thread\n");
+        return;
+    }
+    /* The IMU thread runs the pitch/yaw PIDs (imu_interrupt callback), so it
+     * gets real-time priority too, one above the main loop. It sleeps between
+     * samples (sleep_until_us / usleep), never spins. */
+    {
+        struct sched_param sp = { .sched_priority = 60 };
+        int rc = pthread_setschedparam(g_thread, SCHED_FIFO, &sp);
+        if (rc != 0)
+            fprintf(stderr, "mpu_dmp: SCHED_FIFO 60 for IMU thread failed (%d)\n", rc);
+    }
 }

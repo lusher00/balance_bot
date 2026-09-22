@@ -77,12 +77,12 @@ TH = {
     "loop_bad":        10.0,
 }
 
-# Wheel 4.75 in = 120.65 mm dia, 145.1 counts per wheel revolution.
+# Wheel 4-5/8 in = 117.475 mm dia (BaneBots), 145.1 counts per wheel revolution.
 # The /2 matters: robot.c does `enc_pos = left_ticks + right_ticks`, so one
 # unit of enc_pos is half a wheel-tick of travel. Without it every distance
 # in this report reads 2x high -- and with the old 155 mm diameter it read
 # 2.57x high, which is why 5 inches of real wander printed as 12.6.
-MM_PER_TICK = 120.65 * math.pi / (2 * 145.1)
+MM_PER_TICK = 117.475 * math.pi / (2 * 145.1)
 
 
 def verdict(value, ok, bad, lower_is_better=True):

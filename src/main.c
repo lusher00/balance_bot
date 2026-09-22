@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <sched.h>
+#include <errno.h>
 
 /* ── input mode ─────────────────────────────────────────────────── */
 
@@ -389,6 +391,23 @@ int main(int argc, char *argv[])
     /* ncurses display thread */
     if (display_init() < 0)
         LOG_WARN("Display thread failed — continuing without live display");
+
+    /* Real-time priority for the control loop. Until now it ran at normal
+     * priority, so anything else on this single-core board that wanted the CPU
+     * -- serve_web.py joining a 10 MB ring for a download, a compile, a busy ssh
+     * -- could delay control ticks and drop the bot. SCHED_FIFO means no
+     * ordinary process can pre-empt it. Set HERE, after the IPC and display
+     * threads were created, so they stay at normal priority (threads inherit
+     * the creator's policy). Safe because the loop sleeps every tick
+     * (rc_usleep) and its serial I/O blocks in the kernel -- it never spins. */
+    {
+        struct sched_param sp = { .sched_priority = 50 };
+        if (sched_setscheduler(0, SCHED_FIFO, &sp) != 0)
+            LOG_WARN("control loop: SCHED_FIFO 50 failed (%s) -- running at normal "
+                     "priority, other processes can stall balancing", strerror(errno));
+        else
+            LOG_WARN("control loop: SCHED_FIFO priority 50");
+    }
 
     /* Blocking main loop */
     robot_run();

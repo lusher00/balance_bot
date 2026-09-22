@@ -72,9 +72,77 @@ def _stale_names():
 
 STALE = _stale_names()
 
+# Never compete with the control loop. (balance_bot also runs SCHED_FIFO now,
+# so this is belt and braces.)
+try:
+    os.nice(19)
+except OSError:
+    pass
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # quiet — balance_bot owns the console
+
+    def _serve_ring(self):
+        """Last N seconds of the 100 Hz ring, done with byte slicing only --
+        no per-line Python work. The old version parsed all ~10 MB line by line
+        on this single-core board. Output: the config block in force (segment
+        header, or the last '# CHANGE' block before the window), the column row,
+        then the rows. ?sec=0 returns everything."""
+        from urllib.parse import urlparse, parse_qs
+        segs = [p for p in ("/dev/shm/bbot_ring_0.csv", "/dev/shm/bbot_ring_1.csv")
+                if os.path.isfile(p)]
+        if not segs:
+            self._text(404, "no 100 Hz ring in /dev/shm - is balance_bot running a build with ring_tick?")
+            return
+        segs.sort(key=os.path.getmtime)                 # oldest first
+        try:
+            sec = max(0.0, float(parse_qs(urlparse(self.path).query).get("sec", ["60"])[0]))
+        except ValueError:
+            sec = 60.0
+        data = [open(p, "rb").read() for p in segs]     # 10 MB max, from RAM
+        # drop a partially written last line of the newest segment
+        cut = data[-1].rfind(b"\n")
+        data[-1] = data[-1][:cut + 1] if cut >= 0 else b""
+
+        def split_header(buf):
+            i = buf.find(b"\nt,")
+            if i < 0:
+                return b"", buf
+            j = buf.find(b"\n", i + 1)
+            return buf[:j + 1], buf[j + 1:]
+
+        hdr, _ = split_header(data[0])
+        rows = b"".join(split_header(d)[1] for d in data)
+        if sec > 0:
+            want = int(sec * 100 * 260)                 # ~260 bytes/row, generous
+            if len(rows) > want:
+                start = rows.find(b"\n", len(rows) - want) + 1
+                before, rows = rows[:start], rows[start:]
+                k = before.rfind(b"# CHANGE")            # config changed before window?
+                if k >= 0:
+                    blk = before[k:]
+                    cfg = b"".join(l + b"\n" for l in blk.split(b"\n") if l.startswith(b"#"))
+                    cols = hdr[hdr.find(b"\nt,") + 1:]
+                    hdr = cfg + cols
+        body = hdr + rows
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv")
+        self.send_header("Content-Disposition", 'attachment; filename="bbot_ring.csv"')
+        # The dashboard may be opened from a file on the Mac, not served from here.
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _text(self, code, msg):
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write((msg + "\n").encode())
 
     def do_GET(self):
         if self.path in ("/", "/index.html"):
@@ -85,34 +153,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         name = self.path.lstrip("/").split("?")[0]
 
-        # The loop-rate capture lands in /tmp on the bot, which is nowhere the
-        # operator can reach from a browser. Serve it from here so the dashboard
-        # can just hand over the file -- no scp, no second tool, no wondering
-        # where it went.
-        if name == "bbot.csv":
-            path = "/tmp/bbot.csv"
-            if not os.path.isfile(path):
-                self.send_response(404)
-                self.send_header("Content-Type", "text/plain")
-                self.end_headers()
-                self.wfile.write(b"no /tmp/bbot.csv on this host yet - press the 100Hz button first, and check this is the bot\n")
-                return
-            with open(path, "rb") as fh:
-                body = fh.read()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/csv")
-            self.send_header("Content-Disposition", 'attachment; filename="bbot.csv"')
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            # Last-Modified so the dashboard can tell THIS capture from the one
-            # before it. The path is fixed and overwritten every run, so without
-            # a timestamp a poll cannot distinguish "the new file has landed"
-            # from "the old file is still sitting there" -- and handing over a
-            # stale capture that looks like a fresh one is worse than failing.
-            self.send_header("Last-Modified", formatdate(os.path.getmtime(path),
-                                                         usegmt=True))
-            self.end_headers()
-            self.wfile.write(body)
+        # Always-on 100 Hz ring (robot.c ring_tick): two segments in /dev/shm.
+        # Joined oldest-first into one CSV. ?sec=N keeps only the last N seconds.
+        if name == "bbot_ring.csv":
+            self._serve_ring()
             return
         if name in STALE and os.path.isfile(name):
             with open(name, "rb") as fh:

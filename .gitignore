@@ -34,6 +34,15 @@ _to_delete/
 # so they never reach the bot's flash.
 Claude outputs/
 
+# ── captured runs ───────────────────────────────────────────────────────────
+# Ring and REC downloads dropped here for analysis. Minutes of 100 Hz telemetry
+# is megabytes per file and says nothing about the code -- the conclusions
+# belong in TUNING_LOG.md, not the raw rows. Also excluded from the rsync in
+# .vscode/tasks.json so they never reach the bot's flash.
+recordings/
+logs/
+*.csv
+
 # ── editor / OS / scratch ───────────────────────────────────────────────────
 .DS_Store
 **/.DS_Store

@@ -31,6 +31,7 @@ SRCS = src/main.c \
        src/pid.c \
        src/robot_config.c \
        src/uart_input.c \
+       src/pi_drive.c \
        src/roboclaw.c \
        src/roboclaw_estop.c \
 	   src/ipc_server.c \
@@ -260,3 +261,9 @@ help:
 	@echo "  make test     - Test build only"
 	@echo "  make help     - Show this help"
 	@echo ""
+
+# Host test for the Pi drive arbitration (no hardware needed).
+test-pi-drive:
+	$(CC) -Wall -Wextra -O2 -Iinclude -o /tmp/test_pi_drive tests/test_pi_drive.c src/pi_drive.c -lm -lpthread
+	/tmp/test_pi_drive
+.PHONY: test-pi-drive

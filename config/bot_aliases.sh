@@ -43,7 +43,8 @@ alias bb='cd ~/balance_bot'   #: cd to the project
 # 'sbots' left the display running and it kept showing a service that was no
 # longer there. balance_bot_web was missing for the same reason -- 'botss'
 # showed four healthy services while the dashboard was down and unlisted.
-BB_SERVICES='balance_bot balance_bot_server balance_bot_web batt_monitor bbb_oled'
+# robot-link-boned is the Pi link (~/robot-link, rsynced from the Mac).
+BB_SERVICES='balance_bot balance_bot_server balance_bot_web batt_monitor bbb_oled robot-link-boned'
 
 alias botss="systemctl status -n 0 --no-pager $BB_SERVICES"           #: status ALL bot services
 alias sbots="sudo systemctl stop $BB_SERVICES"        #: stop ALL bot services
@@ -69,6 +70,10 @@ alias webs='systemctl status -n 0 --no-pager balance_bot_web'         #: status 
 alias sweb='sudo systemctl stop balance_bot_web'      #: stop the web dashboard
 alias rweb='sudo systemctl restart balance_bot_web'   #: restart the web dashboard
 
+alias links='systemctl status -n 0 --no-pager robot-link-boned'      #: status the Pi link
+alias slink='sudo systemctl stop robot-link-boned'    #: stop the Pi link
+alias rlink='sudo systemctl restart robot-link-boned' #: restart the Pi link
+
 alias watchs='systemctl status -n 0 --no-pager bbot-watch'            #: status system recorder
 alias swatch='sudo systemctl stop bbot-watch'         #: stop system recorder
 alias rwatch='sudo systemctl restart bbot-watch'      #: restart system recorder
@@ -80,6 +85,33 @@ alias battlog='journalctl -u batt_monitor -f'         #: follow battery monitor
 alias oledlog='journalctl -u bbb_oled -f'             #: follow the OLED display
 alias weblog='journalctl -u balance_bot_web -f'       #: follow the web dashboard
 alias watchlog='journalctl -u bbot-watch -f'          #: follow the system recorder
+alias linklog='journalctl -u robot-link-boned -f'     #: follow the Pi link
+
+#:: Robot Link (Pi link)
+# robot-linkctl talks to robot-link-boned over /run/robot-link/bone.sock, which
+# is root-only, hence sudo. The Pi has the same names for its side.
+RL_CTL='sudo robot-linkctl --socket /run/robot-link/bone.sock'
+alias rl='cd ~/robot-link'                             #: cd to robot-link
+alias lstat="$RL_CTL status"                           #: link up?, Bone voltage, last Pi drive command
+alias lsay="$RL_CTL speak"                             #: speak on the Pi:  lsay "hello"
+alias lsound="$RL_CTL sound"                           #: play a Pi WAV:   lsound beep.wav
+alias pioff="$RL_CTL shutdown --reason manual"         #: ask the Pi to shut down (5 s delay)
+alias battj='cat /run/batt_status.json; echo'          #: battery file robot-link forwards to the Pi
+linkfg() {                                             #: run the link in the foreground (-v); service restarts after
+    # Subshell with an INT *handler* (not ignore, which the daemon would
+    # inherit): Ctrl-C stops the daemon, then the restart still runs.
+    (
+        trap 'true' INT
+        sudo systemctl stop robot-link-boned || exit
+        sudo bash -c 'set -a; [ -f /etc/default/robot-link-bone ] && . /etc/default/robot-link-bone; set +a; exec /usr/local/bin/robot-link-boned -v'
+        sudo systemctl start robot-link-boned && echo "robot-link-boned restarted"
+    )
+}
+linkenv() {                                            #: edit /etc/default/robot-link-bone, then restart
+    sudoedit /etc/default/robot-link-bone &&
+        sudo systemctl restart robot-link-boned &&
+        systemctl status -n 0 --no-pager robot-link-boned
+}
 
 #:: Balance Bot tools
 alias btune='python3 ~/balance_bot/tools/analyze_tune.py'    #: analyse a recorded tuning run

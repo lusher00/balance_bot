@@ -58,6 +58,60 @@
 #define YAW_KI 0.000f
 #define YAW_KD 0.002f
 
+/* Where the steering loop's DERIVATIVE comes from.
+ *
+ * The loop closes on phi_diff = (phi_R - phi_L)/2, which moves in steps of
+ * 360/ENCODER_TICKS_PER_REV/2 = 1.2405 deg -- one encoder count. That is the
+ * whole resolution of the signal. Differentiating it numerically turns each
+ * count into a one-tick impulse of kd * 1.2405 / dt: at kd 0.0005 and 100 Hz
+ * that is 0.060 of duty differential, while kp * 1.2405 = 0.0062 -- the
+ * derivative kicks TEN TIMES harder than the proportional response to the same
+ * count. Log 2026-09-20 bbot_ring_1789927479098, 65 s parked and upright with
+ * the heading wandering +/-5 counts: yaw d_term rms 0.0338 vs p_term 0.0081,
+ * output reversing sign 25x/s, 7% rms duty differential, and 1786 counts of
+ * wheel travel to net out 5. A quantisation limit cycle, and it is what the
+ * bot's idle yaw jitter has always been.
+ *
+ * The IMU already measures chassis yaw rate directly (gyro Z, state.psi_dot),
+ * continuous and with no staircase. yaw_gyro_scale converts it into the
+ * phi_diff units the loop works in, so kd keeps its meaning:
+ *
+ *     phi_diff_rate [deg/s] = psi_dot [deg/s] * TRACK_WIDTH_MM / WHEEL_DIAMETER_MM
+ *
+ * The SIGN is part of the scale and depends on how the IMU is mounted, so the
+ * default is 0 = use the encoder derivative, exactly as before. Set it nonzero
+ * to switch the D term to the gyro. The ring logs yaw_gyroRate and yaw_encRate
+ * side by side so one run tells you both sign and magnitude -- see
+ * README.md "Yaw derivative source". */
+#define YAW_GYRO_SCALE_DEFAULT 0.0f
+
+/* ── Stand-up kick ────────────────────────────────────────────────────────
+ * Parked on the kickstand the robot rests at 17-20 deg, well outside
+ * oob_angle_deg, so every actuation path is dead and it cannot be stood up
+ * without picking it up. This lets the drive stick (or the dashboard's
+ * hold-to-kick button) drive both wheels briefly to pop it upright, at which
+ * point it crosses back inside oob and the balance loop catches it.
+ *
+ * This is the ONLY thing allowed to turn the wheels outside the out-of-bounds
+ * cutoff, so it is fenced in hard:
+ *   - armed, IMU fresh, and |theta - trim| inside (oob_angle_deg, kick_max_deg]
+ *   - never above kick_max_deg: past that it is lying down, not resting, and a
+ *     kick just throws it
+ *   - the stick must be seen at centre before each kick, so a failsafe frame,
+ *     a stale packet or a ratcheted throttle sitting at its stop cannot hold
+ *     the wheels on
+ *   - one kick may run for kick_timeout_ms at most, then it refuses until the
+ *     stick (or button) returns to centre
+ *   - it goes through motor_hal_set_both(), so the motion gate still applies
+ *   - the instant the angle comes back inside oob the kick stops and the
+ *     balance loop owns the wheels again
+ * Set kick_assist = 0 to disable the whole path. */
+#define KICK_ASSIST_DEFAULT 1
+#define KICK_MAX_DEG_DEFAULT 25.0f
+#define KICK_DUTY_DEFAULT 0.35f
+#define KICK_TIMEOUT_MS_DEFAULT 1200
+#define KICK_STICK_DEADBAND 0.25f   /* stick deflection that counts as a request */
+
 #define DRIVE_PHI_DEADZONE 2.0f
 
 // position hold controller — encoder-tick-based hold/drive
@@ -83,6 +137,10 @@
 #define POS_DRIVE_MODE_DEFAULT 0
 #define POS_DRIVE_RATE_DEFAULT 300.0f
 #define POS_RUNAWAY_LIMIT_DEFAULT 300
+/* Approach profile / carrot (see robot.c). 0 = off, the old behaviour. */
+#define POS_LEAD_MAX_DEFAULT 0
+#define POS_RETURN_RATE_DEFAULT 100.0f   /* ticks/s ~ 127 mm/s (1 enc_pos tick = 1.27 mm) */
+#define POS_RETURN_ACCEL_DEFAULT 200.0f  /* ticks/s^2 ~ 0.25 m/s^2, ~1.5 deg of lean */
 #define POS_BACK_TO_SPOT_DEFAULT 1       // Full zone hold by default
 #define POS_KI_DEFAULT     0.0f          // off — opt in from the dashboard
 #define POS_I_MAX_DEFAULT  2.0f          // deg; ~4x the standing lean seen so far
@@ -285,6 +343,14 @@ typedef struct
                              // this, a blocked or lifted wheel lets the target
                              // run away and the debt discharges violently when
                              // traction returns.
+
+    /* Approach profile: how the bot travels to its position target, whether
+     * that is home after a push or a new spot you commanded. The hold chases a
+     * carrot that moves toward enc_pos_target at return_rate (ramped by
+     * return_accel) and never leads the wheels by more than lead_max. */
+    int32_t lead_max;        // ticks; 0 = off (chase home directly)
+    float return_rate;       // ticks/s the carrot walks toward home (cruise)
+    float return_accel;      // ticks/s^2 the carrot speeds up / slows down at
 } pos_config_t;
 
 #define DRIVE_MODE_LEAN   0
@@ -295,7 +361,7 @@ typedef struct
 // RS-555 brushed DC, 5.2:1 planetary gearbox, Hall effect quadrature encoder
 //   Motor:   1,150 RPM no-load @ 12V, stall torque 7.9 kg·cm @ 9.2A
 //   Encoder: 28 PPR pre-gearbox → 145.1 PPR at output shaft
-//   Wheel:   155mm diameter (patented)
+//   Wheel:   BaneBots 4-5/8 in = 117.475 mm diameter (was wrongly 155 here)
 //
 // Change WHEEL_DIAMETER_MM if you swap wheels — everything else recalculates.
 // ============================================================================
@@ -303,9 +369,9 @@ typedef struct
 #define GEAR_RATIO 5.2f                                              // (1 + 46/11)
 #define ENCODER_PPR_MOTOR 28.0f                                      // pulses/rev at motor shaft
 #define ENCODER_TICKS_PER_REV 145.1f                                 // PPR at output shaft (GEAR_RATIO * 28)
-#define WHEEL_DIAMETER_MM 155.0f                                     // ← change here if you swap wheels
-#define WHEEL_CIRCUMFERENCE_MM (WHEEL_DIAMETER_MM * 3.14159265f)     // ~487mm
-#define MM_PER_TICK (WHEEL_CIRCUMFERENCE_MM / ENCODER_TICKS_PER_REV) // ~3.36 mm
+#define WHEEL_DIAMETER_MM 117.475f                                   // ← change here if you swap wheels
+#define WHEEL_CIRCUMFERENCE_MM (WHEEL_DIAMETER_MM * 3.14159265f)     // ~369mm
+#define MM_PER_TICK (WHEEL_CIRCUMFERENCE_MM / ENCODER_TICKS_PER_REV) // ~2.54 mm per WHEEL tick (enc_pos is L+R: half that per enc_pos unit)
 
 // Derived QPPS ceiling — theoretical max encoder speed at no-load full throttle
 // 1150 RPM / 60 * 145.1 PPR = ~2781 QPPS.  Use ~90% for headroom.
@@ -431,6 +497,13 @@ typedef struct
     float last_i_term;
     float last_d_term;
     float last_output;
+
+    // 0 after init/reset: the next pid_update() seeds prev_error from the
+    // current error instead of differentiating against 0. See pid_update().
+    int primed;
+
+    // Derivative is taken on the MEASUREMENT, not the error. See pid_update().
+    float prev_measurement;
 } pid_controller_t;
 
 /**
@@ -454,6 +527,7 @@ typedef struct
     float theta_dot; // Body pitch rate   (deg/s)
     float phi;       // Body roll angle   (deg)
     float psi;       // Body yaw angle    (deg)
+    float psi_dot;   // Body yaw rate     (deg/s, gyro Z) -- see yaw_gyro_scale
 
     // Encoders
     int32_t enc_left; // Raw encoder ticks (always updated)
@@ -530,6 +604,23 @@ extern int g_arm_at_boot;
 // robot_config_t.oob_angle_deg; set_oob_angle applies and persists it
 // immediately, unlike arm_at_boot which only takes effect on next boot.
 extern float g_oob_angle_deg;
+/* Steering-loop derivative source. 0 = difference the encoder heading (the
+ * original, quantised, jittery path). Nonzero = gyro Z * this, in phi_diff
+ * deg/s. Sign included. See YAW_GYRO_SCALE_DEFAULT. */
+extern float g_yaw_gyro_scale;
+
+/* Stand-up kick. See KICK_ASSIST_DEFAULT. g_kick_request is the dashboard's
+ * hold-to-kick: -1 / 0 / +1, set by IPC, cleared when the kick ends. */
+extern int g_kick_assist;
+extern float g_kick_max_deg;
+extern float g_kick_duty;
+extern int g_kick_timeout_ms;
+extern volatile int g_kick_request;
+extern volatile uint64_t g_kick_request_us;   /* when it was last refreshed */
+/* A held kick must be REPEATED by the sender at least this often or it is
+ * treated as released. Deadman: a dropped socket or a closed laptop lid stops
+ * the wheels instead of latching them on. */
+#define KICK_REQUEST_STALE_US 300000ULL
 /* Set when theta stops changing; blocks actuation. See robot.c. */
 extern volatile int g_imu_stale;
 
@@ -539,6 +630,12 @@ extern volatile int g_imu_stale;
 
 void pid_init(pid_controller_t *pid, float kp, float ki, float kd, float dt);
 float pid_update(pid_controller_t *pid, float setpoint, float measurement);
+/* Same loop, but the derivative comes from a rate you measured instead of
+ * being differenced out of `measurement`. For a quantised measurement with a
+ * clean rate sensor beside it -- see YAW_GYRO_SCALE_DEFAULT above. `rate` is
+ * d(measurement)/dt in measurement units per second. */
+float pid_update_rate(pid_controller_t *pid, float setpoint, float measurement,
+                      float rate);
 void pid_reset(pid_controller_t *pid);
 void pid_set_gains(pid_controller_t *pid, float kp, float ki, float kd);
 
@@ -556,6 +653,36 @@ void pid_set_gains(pid_controller_t *pid, float kp, float ki, float kd);
  */
 int uart_input_init(const char *device, int baud, int timeout_ms);
 int uart_input_get(input_packet_t *pkt); // 1=valid, 0=stale
+
+/* ── Pi drive (pi_drive.c) ─────────────────────────────────────────────
+ * Drive commands proposed by the Raspberry Pi over robot-link. Same units as
+ * the SBUS stick: x = turn (-1..1, + = right), y = drive (-1..1, + = forward).
+ * robot.c decides every tick whether they are used; see pi_drive.c. */
+#define PI_DRIVE_TTL_MIN_MS 50
+#define PI_DRIVE_TTL_MAX_MS 1000
+
+typedef enum
+{
+    PI_DRIVE_DISARMED = 0,
+    PI_DRIVE_GATE_CLOSED,
+    PI_DRIVE_RC_KILL,
+    PI_DRIVE_STICK,
+    PI_DRIVE_NO_COMMAND,
+    PI_DRIVE_APPLYING
+} pi_drive_state_t;
+
+void pi_drive_set(float x, float y, int ttl_ms);   /* IPC thread           */
+int pi_drive_get(float *x, float *y);              /* 1 = fresh command    */
+void pi_drive_set_gate(int open);
+int pi_drive_gate(void);
+void pi_drive_set_state(pi_drive_state_t s);       /* control loop, per tick */
+/* Pure: who drives this tick. Stick values are the deadbanded, kill/arm-gated
+ * sbus_get_drive()/sbus_get_turn() (0 when no transmitter). */
+pi_drive_state_t pi_drive_decide(int armed, int gate, int sbus_connected,
+                                 int sbus_kill, float stick_drive,
+                                 float stick_turn, int pi_fresh);
+pi_drive_state_t pi_drive_state(void);
+const char *pi_drive_state_name(pi_drive_state_t s);
 void uart_input_cleanup(void);
 
 // ============================================================================
@@ -602,16 +729,9 @@ void ipc_broadcast_config(void);
  * loop does the send via ipc_broadcast_config_if_dirty(). */
 void ipc_config_touch(void);
 
-/* Loop-rate capture to /tmp/bbot.csv. The websocket telemetry is 20 Hz against
- * a 100 Hz loop, so anything above 10 Hz aliases; this is the only honest view
- * of what the derivative term is actually doing. RAM buffer during the run,
- * file written when it fills. Fixed path, overwritten each time. */
-int looplog_start(int seconds);
-/* Free run: keep the most recent LOOPLOG_MAX_SEC in a ring until stop() writes
- * it out. For catching something you cannot predict the timing of. */
-int looplog_start_free(void);
-int looplog_stop(void);
-int looplog_active(void);
+/* 100 Hz history: robot.c ring_tick() appends every control tick to
+ * /dev/shm/bbot_ring_{0,1}.csv (served as /bbot_ring.csv). The old one-shot /
+ * free looplog was removed: its dump wrote ~900 KB inside the control loop. */
 void ipc_broadcast_config_if_dirty(void);
 
 /* Worst telemetry-drop count across connected clients. Reported in the
@@ -780,6 +900,11 @@ typedef struct
     imu_offsets_t imu;
     sbus_config_t sbus;
     float theta_trim;       /* was balance_angle; applied as state.theta_offset */
+    float yaw_gyro_scale;   /* 0 = yaw D from encoders; else gyro Z, scaled+signed */
+    int kick_assist;        /* 1 = allow the stand-up kick (see KICK_* below)    */
+    float kick_max_deg;     /* assist refuses above this |theta - trim|          */
+    float kick_duty;        /* duty it drives at, both wheels, same sign         */
+    int kick_timeout_ms;    /* longest single kick before it insists on a recentre */
     int arm_at_boot;        /* 1 = auto-arm on startup instead of waiting for ARM */
     float oob_angle_deg;    /* hard safety cutoff -- see g_oob_angle_deg */
 } robot_config_t;

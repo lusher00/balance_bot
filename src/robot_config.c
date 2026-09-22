@@ -83,6 +83,11 @@ void robot_config_defaults(robot_config_t *c)
     c->yaw.kp = YAW_KP;
     c->yaw.ki = YAW_KI;
     c->yaw.kd = YAW_KD;
+    c->yaw_gyro_scale = YAW_GYRO_SCALE_DEFAULT;
+    c->kick_assist = KICK_ASSIST_DEFAULT;
+    c->kick_max_deg = KICK_MAX_DEG_DEFAULT;
+    c->kick_duty = KICK_DUTY_DEFAULT;
+    c->kick_timeout_ms = KICK_TIMEOUT_MS_DEFAULT;
 
     c->imu.pitch_offset = 0.0f;
     c->imu.yaw_offset = 0.0f;
@@ -115,6 +120,9 @@ void robot_config_defaults(robot_config_t *c)
     c->position.drive_mode = POS_DRIVE_MODE_DEFAULT;
     c->position.drive_rate = POS_DRIVE_RATE_DEFAULT;
     c->position.runaway_limit = POS_RUNAWAY_LIMIT_DEFAULT;
+    c->position.lead_max = POS_LEAD_MAX_DEFAULT;
+    c->position.return_rate = POS_RETURN_RATE_DEFAULT;
+    c->position.return_accel = POS_RETURN_ACCEL_DEFAULT;
 
     c->motor.mode = MOTOR_HAL_MODE_DEFAULT;
     c->motor.qpps_max = MOTOR_QPPS_MAX_DEFAULT;
@@ -200,6 +208,7 @@ int robot_config_load(const char *path, robot_config_t *c)
             if (KEY("kp")) c->yaw.kp = fv;
             else if (KEY("ki")) c->yaw.ki = fv;
             else if (KEY("kd")) c->yaw.kd = fv;
+            else if (KEY("gyro_scale")) c->yaw_gyro_scale = fv;
         }
         else if (ieq(section, "imu"))
         {
@@ -234,10 +243,17 @@ int robot_config_load(const char *path, robot_config_t *c)
             else if (KEY("drive_mode")) c->position.drive_mode = (int)fv;
             else if (KEY("drive_rate")) c->position.drive_rate = fv;
             else if (KEY("runaway_limit")) c->position.runaway_limit = (int32_t)fv;
+            else if (KEY("lead_max")) c->position.lead_max = (int32_t)fv;
+            else if (KEY("return_rate")) c->position.return_rate = fv;
+            else if (KEY("return_accel")) c->position.return_accel = fv;
         }
         else if (ieq(section, "system"))
         {
             if (KEY("arm_at_boot")) c->arm_at_boot = (int)fv;
+            else if (KEY("kick_assist")) c->kick_assist = (int)fv;
+            else if (KEY("kick_max_deg")) c->kick_max_deg = fv;
+            else if (KEY("kick_duty")) c->kick_duty = fv;
+            else if (KEY("kick_timeout_ms")) c->kick_timeout_ms = (int)fv;
             else if (KEY("oob_angle_deg")) c->oob_angle_deg = fv;
         }
         else if (ieq(section, "sbus"))
@@ -306,6 +322,10 @@ int robot_config_save(const char *path, const robot_config_t *c)
     fprintf(f, "[system]\n");
     fprintf(f, "arm_at_boot = %d\n", c->arm_at_boot);
     fprintf(f, "oob_angle_deg = %.1f\n", c->oob_angle_deg);
+    fprintf(f, "kick_assist = %d\n", c->kick_assist);
+    fprintf(f, "kick_max_deg = %.1f\n", c->kick_max_deg);
+    fprintf(f, "kick_duty = %.2f\n", c->kick_duty);
+    fprintf(f, "kick_timeout_ms = %d\n", c->kick_timeout_ms);
     fprintf(f, "\n");
     fprintf(f, "[pitch]\n");
     fprintf(f, "kp = %.4f\n", c->pitch.kp);
@@ -318,6 +338,7 @@ int robot_config_save(const char *path, const robot_config_t *c)
     fprintf(f, "kp = %.4f\n", c->yaw.kp);
     fprintf(f, "ki = %.4f\n", c->yaw.ki);
     fprintf(f, "kd = %.4f\n", c->yaw.kd);
+    fprintf(f, "gyro_scale = %.4f\n", c->yaw_gyro_scale);
     fprintf(f, "\n");
 
     fprintf(f, "# Position hold: encoder error -> lean-angle bias.\n");
@@ -348,6 +369,9 @@ int robot_config_save(const char *path, const robot_config_t *c)
     fprintf(f, "drive_mode        = %d\n", c->position.drive_mode);
     fprintf(f, "drive_rate        = %.1f\n", c->position.drive_rate);
     fprintf(f, "runaway_limit     = %d\n", c->position.runaway_limit);
+    fprintf(f, "lead_max          = %d\n", c->position.lead_max);
+    fprintf(f, "return_rate       = %.1f\n", c->position.return_rate);
+    fprintf(f, "return_accel      = %.1f\n", c->position.return_accel);
     fprintf(f, "\n");
 
     fprintf(f, "# IMU mounting calibration. pitch_offset is the RAW pitch angle at\n");
@@ -424,6 +448,11 @@ void robot_config_get_current(robot_config_t *c)
     c->yaw.kp = yaw_pid.kp;
     c->yaw.ki = yaw_pid.ki;
     c->yaw.kd = yaw_pid.kd;
+    c->yaw_gyro_scale = g_yaw_gyro_scale;
+    c->kick_assist = g_kick_assist;
+    c->kick_max_deg = g_kick_max_deg;
+    c->kick_duty = g_kick_duty;
+    c->kick_timeout_ms = g_kick_timeout_ms;
     c->position = g_pos_config;
     c->motor = g_motor_config;
     c->imu = g_imu_offsets;
@@ -437,6 +466,11 @@ void robot_config_apply(const robot_config_t *c)
 {
     pid_set_gains(&pitch_pid, c->pitch.kp, c->pitch.ki, c->pitch.kd);
     pid_set_gains(&yaw_pid, c->yaw.kp, c->yaw.ki, c->yaw.kd);
+    g_yaw_gyro_scale = c->yaw_gyro_scale;
+    g_kick_assist = c->kick_assist;
+    g_kick_max_deg = c->kick_max_deg;
+    g_kick_duty = c->kick_duty;
+    g_kick_timeout_ms = c->kick_timeout_ms;
     g_pos_config = c->position;
     g_motor_config = c->motor;
     g_imu_offsets = c->imu;
@@ -542,6 +576,9 @@ static int load_legacy_pid(const char *path, robot_config_t *c)
         else if (ieq(k, "drive_mode")) c->position.drive_mode = (int)v;
         else if (ieq(k, "drive_rate")) c->position.drive_rate = v;
         else if (ieq(k, "runaway_limit")) c->position.runaway_limit = (int32_t)v;
+        else if (ieq(k, "lead_max")) c->position.lead_max = (int32_t)v;
+        else if (ieq(k, "return_rate")) c->position.return_rate = v;
+        else if (ieq(k, "return_accel")) c->position.return_accel = v;
         else if (ieq(k, "pos_deadband")) c->position.pos_deadband = (int32_t)v;
         else if (ieq(k, "mode")) c->motor.mode = (int)v;
         else if (ieq(k, "qpps_max")) c->motor.qpps_max = (int)v;
@@ -573,6 +610,7 @@ static int load_legacy_imu(const char *path, robot_config_t *c)
     {
         if (ieq(k, "pitch_offset")) { c->imu.pitch_offset = v; n++; }
         else if (ieq(k, "yaw_offset")) { c->imu.yaw_offset = v; n++; }
+        else if (ieq(k, "yaw_gyro_scale")) { c->yaw_gyro_scale = v; n++; }
         else if (ieq(k, "pitch_dot_offset")) { c->imu.pitch_dot_offset = v; n++; }
         else if (ieq(k, "pitch_axis")) { c->imu.pitch_axis = (int)v; n++; }
     }

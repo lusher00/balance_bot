@@ -176,11 +176,75 @@ static void *server_thread_func(void *arg __attribute__((unused)))
 /**
  * @brief Client handler thread - reads commands from one client
  */
+/* Hand every complete JSON object in acc[0..len) to handle_command() and
+ * return how many bytes are left over (an object still arriving).
+ *
+ * A read() is not a message. The dashboard bridge sends one command at a time,
+ * but robot-link relays Pi drive commands at 10 Hz, so two can land in one
+ * read, or one can straddle two. Objects are cut where the brace depth returns
+ * to zero, string-aware; newlines and anything between objects are skipped,
+ * so newline-terminated and bare senders both work. */
+static size_t dispatch_messages(int fd, char *acc, size_t len)
+{
+    char response[BUFFER_SIZE];
+    size_t pos = 0;
+
+    for (;;)
+    {
+        while (pos < len && acc[pos] != '{')
+            pos++;
+        if (pos >= len)
+            return 0; /* nothing but separators left */
+
+        size_t i = pos;
+        int depth = 0, in_str = 0, esc = 0, done = 0;
+        for (; i < len; i++)
+        {
+            const char c = acc[i];
+            if (in_str)
+            {
+                if (esc)
+                    esc = 0;
+                else if (c == '\\')
+                    esc = 1;
+                else if (c == '"')
+                    in_str = 0;
+            }
+            else if (c == '"')
+                in_str = 1;
+            else if (c == '{')
+                depth++;
+            else if (c == '}' && --depth == 0)
+            {
+                done = 1;
+                break;
+            }
+        }
+        if (!done)
+        {
+            /* Incomplete: keep it for the next read. */
+            memmove(acc, acc + pos, len - pos);
+            return len - pos;
+        }
+
+        const char saved = acc[i + 1];
+        acc[i + 1] = '\0';
+        LOG_DEBUG("Received command: %s", acc + pos);
+        if (handle_command(acc + pos, response, sizeof(response)) == 0)
+        {
+            ssize_t written = write(fd, response, strlen(response));
+            (void)written;
+        }
+        acc[i + 1] = saved;
+        pos = i + 1;
+    }
+}
+
 static void *client_handler_thread(void *arg)
 {
     client_connection_t *client = (client_connection_t *)arg;
-    char buffer[BUFFER_SIZE];
-    char response[BUFFER_SIZE];
+    char acc[BUFFER_SIZE];
+    size_t acc_len = 0;
     int bytes_read;
 
     LOG_DEBUG("Client handler started for fd=%d", client->socket_fd);
@@ -205,7 +269,13 @@ static void *client_handler_thread(void *arg)
         if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL))
             break;
 
-        bytes_read = read(client->socket_fd, buffer, sizeof(buffer) - 1);
+        if (acc_len >= sizeof(acc) - 1)
+        {
+            /* One "object" larger than the buffer: not a command we send. */
+            LOG_WARN("IPC fd=%d: oversize message dropped", client->socket_fd);
+            acc_len = 0;
+        }
+        bytes_read = read(client->socket_fd, acc + acc_len, sizeof(acc) - 1 - acc_len);
 
         if (bytes_read < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
             continue;
@@ -219,16 +289,7 @@ static void *client_handler_thread(void *arg)
             break;
         }
 
-        buffer[bytes_read] = '\0';
-        LOG_DEBUG("Received command: %s", buffer);
-
-        // Process command
-        if (handle_command(buffer, response, sizeof(response)) == 0)
-        {
-            // Send response
-            ssize_t written = write(client->socket_fd, response, strlen(response));
-            (void)written; // Suppress unused warning
-        }
+        acc_len = dispatch_messages(client->socket_fd, acc, acc_len + (size_t)bytes_read);
     }
 
     LOG_INFO("Client disconnected (fd=%d)", client->socket_fd);
@@ -414,6 +475,86 @@ static int parse_json_command(const char *json_cmd)
             LOG_WARN("set_oob_angle: save failed, value=%.1f not persisted", g_oob_angle_deg);
         else
             LOG_INFO("oob_angle_deg set to %.1f and saved", g_oob_angle_deg);
+        return 0;
+    }
+
+    // {"type":"set_yaw_gyro_scale","value":0.0}
+    //
+    // Where the steering loop's D term comes from. 0 keeps the original
+    // encoder difference; nonzero switches it to gyro Z scaled into phi_diff
+    // deg/s, sign included. Geometry says |scale| is roughly
+    // track_width / wheel_diameter, but the mounting decides the sign, so the
+    // value is calibrated from a log (yaw_gyroRate vs yaw_encRate) rather than
+    // derived. Clamped wide enough for any sane chassis and no wider: a huge
+    // value would turn the damping term into an oscillator.
+    if (strstr(json_cmd, "\"type\":\"set_yaw_gyro_scale\""))
+    {
+        float v = g_yaw_gyro_scale;
+        const char *vp = strstr(json_cmd, "\"value\":");
+        if (vp)
+            sscanf(vp + strlen("\"value\":"), "%f", &v);
+        if (v < -20.0f) v = -20.0f;
+        if (v > 20.0f) v = 20.0f;
+        g_yaw_gyro_scale = v;
+        /* The D source is changing under a live loop: drop the stored history
+         * so the first tick after the switch does not differentiate across it. */
+        pid_reset(&yaw_pid);
+        if (robot_config_save_current(NULL) != 0)
+            LOG_WARN("set_yaw_gyro_scale: save failed, value=%.4f not persisted", v);
+        else
+            LOG_INFO("yaw_gyro_scale set to %.4f (%s) and saved", v,
+                     (v == 0.0f) ? "D from encoders" : "D from gyro Z");
+        return 0;
+    }
+
+    // {"type":"kick","value":1}   +1 / -1 to hold, 0 to release
+    //
+    // The dashboard's hold-to-kick. This is a LEVEL, not a pulse: the page
+    // sends +/-1 on mousedown and 0 on mouseup/leave, and the control loop
+    // stops the moment it reads 0. Everything that makes it safe -- armed,
+    // angle window, centre-before-each-kick, timeout, motion gate -- lives in
+    // kick_direction() in robot.c and applies identically to this path and to
+    // the transmitter's. Nothing here can bypass it.
+    //
+    // Deliberately NOT persisted: a held button is not a setting, and a kick
+    // surviving a restart would be dangerous.
+    if (strstr(json_cmd, "\"type\":\"kick\""))
+    {
+        float v = 0.0f;
+        const char *vp = strstr(json_cmd, "\"value\":");
+        if (vp)
+            sscanf(vp + strlen("\"value\":"), "%f", &v);
+        g_kick_request = (v > 0.5f) ? 1 : (v < -0.5f ? -1 : 0);
+        g_kick_request_us = rc_nanos_since_boot() / 1000;
+        return 0;
+    }
+
+    /* {"type":"drive","x":0.2,"y":0.3,"ttl_ms":300} -- a Pi drive command,
+     * relayed by robot-link-boned about 10 times a second. Stored only;
+     * robot.c decides each tick whether it is used (armed, gate open, stick
+     * centred, RC kill at RUN) and it expires after ttl_ms. */
+    if (strstr(json_cmd, "\"type\":\"drive\""))
+    {
+        float x = 0.0f, y = 0.0f;
+        int ttl = 300;
+        const char *p;
+        if ((p = strstr(json_cmd, "\"x\":")))
+            sscanf(p + 4, "%f", &x);
+        if ((p = strstr(json_cmd, "\"y\":")))
+            sscanf(p + 4, "%f", &y);
+        if ((p = strstr(json_cmd, "\"ttl_ms\":")))
+            sscanf(p + 9, "%d", &ttl);
+        pi_drive_set(x, y, ttl);
+        return 0;
+    }
+
+    /* {"type":"pi_drive","value":true} -- the Pi-drive gate. It only stays
+     * open while armed: robot.c shuts it on disarm, e-stop and at boot. */
+    if (strstr(json_cmd, "\"type\":\"pi_drive\""))
+    {
+        if (strstr(json_cmd, "\"value\":true") && !state.armed)
+            LOG_WARN("Pi drive gate: arm first -- it closes whenever disarmed");
+        pi_drive_set_gate(strstr(json_cmd, "\"value\":true") != NULL);
         return 0;
     }
 
@@ -822,6 +963,9 @@ static int parse_json_command(const char *json_cmd)
         PCFG_INT("drive_mode", drive_mode);
         PCFG_FLOAT("drive_rate", drive_rate);
         PCFG_INT("runaway_limit", runaway_limit);
+        PCFG_INT("lead_max", lead_max);
+        PCFG_FLOAT("return_rate", return_rate);
+        PCFG_FLOAT("return_accel", return_accel);
 
 #undef PCFG_FLOAT
 #undef PCFG_INT
@@ -991,45 +1135,6 @@ static int parse_json_command(const char *json_cmd)
         return 0;
     }
 
-    /* {"type":"looplog","seconds":20}
-     *
-     * Capture every control-loop tick to /tmp/bbot.csv. Fixed path, overwritten
-     * each run. Fires and returns immediately -- the loop fills a RAM buffer and
-     * writes the file when it is full, so nothing here blocks. */
-    if (strstr(json_cmd, "\"type\":\"looplog_stop\""))
-    {
-        if (looplog_stop() != 0)
-        {
-            LOG_WARN("looplog: nothing to stop");
-            return -1;
-        }
-        return 0;
-    }
-
-    /* {"type":"looplog","seconds":20}          — one-shot, fixed length
-     * {"type":"looplog","mode":"free"}         — ring, until looplog_stop */
-    if (strstr(json_cmd, "\"type\":\"looplog\""))
-    {
-        int rc;
-        if (strstr(json_cmd, "\"mode\":\"free\""))
-        {
-            rc = looplog_start_free();
-        }
-        else
-        {
-            int secs = 20;
-            const char *p = strstr(json_cmd, "\"seconds\":");
-            if (p) sscanf(p + strlen("\"seconds\":"), "%d", &secs);
-            rc = looplog_start(secs);
-        }
-        if (rc != 0)
-        {
-            LOG_WARN("looplog: already running");
-            return -1;
-        }
-        return 0;
-    }
-
     /* {"type":"read_claw_hw"}
      *
      * Read the RoboClaw's OWN settings back over serial and stash them for the
@@ -1176,6 +1281,17 @@ static void build_telemetry_json(char *buffer, size_t size)
     pos = json_append(buffer, pos, size, "\"type\":\"telemetry\",");
     pos = json_append(buffer, pos, size, "\"timestamp\":%llu,",
                     (unsigned long long)(rc_nanos_since_boot() / 1000));
+
+    /* Always sent, whatever the telemetry toggles: robot-link-boned reads
+     * this to tell the Pi whether its drive commands are being applied. */
+    {
+        const pi_drive_state_t pds = pi_drive_state();
+        pos = json_append(buffer, pos, size,
+                          "\"pi_drive\":{\"gate\":%s,\"state\":\"%s\",\"applying\":%s},",
+                          pi_drive_gate() ? "true" : "false",
+                          pi_drive_state_name(pds),
+                          pds == PI_DRIVE_APPLYING ? "true" : "false");
+    }
 
     // System status (always included)
     if (g_debug_config.telemetry.system_status)
@@ -1346,7 +1462,8 @@ static void build_telemetry_json(char *buffer, size_t size)
                         "\"steering\":{\"enabled\":%s,\"setpoint\":%.4f,"
                         "\"measurement\":%.4f,\"error\":%.4f,\"output\":%.4f,"
                         "\"p_term\":%.4f,\"i_term\":%.4f,\"d_term\":%.4f,"
-                        "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f},",
+                        "\"kp\":%.4f,\"ki\":%.4f,\"kd\":%.4f,"
+                        "\"gyro_scale\":%.4f,\"gyro_rate\":%.3f},",
                         g_telemetry_data.yaw.enabled ? "true" : "false",
                         g_telemetry_data.yaw.setpoint,
                         g_telemetry_data.yaw.measurement,
@@ -1357,7 +1474,9 @@ static void build_telemetry_json(char *buffer, size_t size)
                         g_telemetry_data.yaw.d_term,
                         g_telemetry_data.yaw.kp,
                         g_telemetry_data.yaw.ki,
-                        g_telemetry_data.yaw.kd);
+                        g_telemetry_data.yaw.kd,
+                        g_yaw_gyro_scale,
+                        state.psi_dot * g_yaw_gyro_scale);
     }
 
     // Cat position
@@ -1497,7 +1616,7 @@ static void build_config_json(char *buffer, size_t size)
                     "\"stopped_vel\":%d,\"max_correction\":%.2f,"
                     "\"max_angle_rate\":%.2f,\"back_to_spot\":%d,"
                     "\"drive_mode\":%d,\"drive_rate\":%.1f,\"runaway_limit\":%d,"
-                    "\"pos_deadband\":%d},",
+                    "\"pos_deadband\":%d,\"lead_max\":%d,\"return_rate\":%.1f,\"return_accel\":%.1f},",
                     g_pos_config.zone_a, g_pos_config.zone_b, g_pos_config.zone_c,
                     g_pos_config.scale_a, g_pos_config.scale_b,
                     g_pos_config.scale_c, g_pos_config.scale_d,
@@ -1508,7 +1627,9 @@ static void build_config_json(char *buffer, size_t size)
                     g_pos_config.stopped_vel, g_pos_config.max_correction,
                     g_pos_config.max_angle_rate, g_pos_config.back_to_spot,
                     g_pos_config.drive_mode, g_pos_config.drive_rate,
-                    g_pos_config.runaway_limit, g_pos_config.pos_deadband);
+                    g_pos_config.runaway_limit, g_pos_config.pos_deadband,
+                    g_pos_config.lead_max, g_pos_config.return_rate,
+                    g_pos_config.return_accel);
 
     pos = json_append(buffer, pos, size,
                       "\"sbus_config\":{\"drive_channel\":%d,\"turn_channel\":%d,"

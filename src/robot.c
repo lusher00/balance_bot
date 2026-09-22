@@ -18,6 +18,7 @@
 #include "display.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 #include <stdbool.h>
 #include <pthread.h>
@@ -46,6 +47,14 @@ static float yaw_target = 0.0f;
 /* Clear the steering loop's heading target and latch. Call whenever the wheel
  * positions that the measurement is derived from are reset out from under it,
  * so setpoint and measurement are zeroed together and no step appears. */
+/* Last tick's yaw rates, both in phi_diff deg/s, for the log. enc is what the
+ * loop differentiates today; gyro is what it can use instead. Logging both is
+ * how yaw_gyro_scale gets calibrated without any guessing. */
+static float yaw_rate_gyro = 0.0f;
+static float yaw_rate_enc = 0.0f;
+static float yaw_phi_prev = 0.0f;
+static int yaw_phi_primed = 0;
+
 void robot_reset_heading(void)
 {
     yaw_target = 0.0f;
@@ -55,6 +64,12 @@ void robot_reset_heading(void)
     /* The integral has been winding against the old heading; carrying it over
      * would reintroduce a fraction of the same kick. */
     pid_reset(&yaw_pid);
+    /* phi_left/right are about to be (or have just been) zeroed, so the stored
+     * previous phi_diff is meaningless -- differencing against it would put one
+     * enormous rate spike through the D term on the next tick. */
+    yaw_phi_primed = 0;
+    yaw_rate_enc = 0.0f;
+    yaw_rate_gyro = 0.0f;
 }
 
 /* Low-pass state for the position hold's velocity damping term. File scope so
@@ -64,6 +79,35 @@ static float vel_damp_filt = 0.0f;
 /* Integral accumulator for the position hold, in DEGREES of lean (not raw
  * tick-seconds) so pos_i_max is a limit you can reason about directly. */
 static float pos_integ = 0.0f;
+
+/* Approach profile ("the carrot"). Position hold chases this, not
+ * enc_pos_target -- the target itself.
+ * It walks toward home at return_rate and is never allowed more than lead_max
+ * ticks from the wheels. So a push is ARRESTED first (carrot held near the
+ * wheels: small spring, the damping does the stopping) and then the bot is
+ * WALKED home at a steady pace, with the error never above lead_max.
+ * lead_max = 0 disables it: the controller chases home directly, as before. */
+static float carrot = 0.0f;
+static float carrot_v = 0.0f;   /* carrot's PLANNED speed, enc_pos ticks/s (signed) */
+static int carrot_valid = 0;
+/* The carrot has reached the target and parks there until a new one is set.
+ * Without this the lead clamp kept shoving it back out to (wheels +/- lead)
+ * after an overshoot, the trapezoid re-planned a full-speed run from wherever
+ * it landed, and the bot got a fresh acceleration command every time it blew
+ * through the target -- a growing oscillation. Log 2026-09-20
+ * bbot_ring_1789928811195: overshoot 176 -> 211 -> 440 ticks over three
+ * half-cycles at ~0.22 Hz, with pos_carrotVel visibly flipping +89.7 -> -11.3
+ * -> -30.2 mid-move as the runaway rewrote the plan. */
+static int carrot_arrived = 0;
+/* The target the running plan was built for. A move command just assigns
+ * state.enc_pos_target (ipc_server.c "nudge fwd", among ~10 other sites) and
+ * cannot be expected to reach in here, so the plan notices the change itself.
+ * Without this carrot_arrived latched on the first tick -- standing still IS
+ * "arrived" -- and never cleared, so every later move ran with carrot_v = 0:
+ * no plan, no feed-forward, and the damper fighting the whole speed. The bot
+ * crept at the ~33 ticks/s where a 1 deg spring balances vel_scale_stop, which
+ * looks exactly like not moving at all. */
+static int32_t carrot_home_prev = 0;
 
 static float pos_last_correction = 0.0f;
 
@@ -128,6 +172,80 @@ static volatile int motor_output_ready = 0;
 // loads or if the key is absent.
 float g_oob_angle_deg = 15.0f;
 
+/* 0 = steering derivative from the encoder staircase (original behaviour).
+ * Nonzero = from gyro Z, multiplied by this to reach phi_diff units. The sign
+ * is part of it. See YAW_GYRO_SCALE_DEFAULT in balance_bot.h. */
+float g_yaw_gyro_scale = YAW_GYRO_SCALE_DEFAULT;
+
+/* Stand-up kick. See KICK_ASSIST_DEFAULT in balance_bot.h for the fencing. */
+int g_kick_assist = KICK_ASSIST_DEFAULT;
+float g_kick_max_deg = KICK_MAX_DEG_DEFAULT;
+float g_kick_duty = KICK_DUTY_DEFAULT;
+int g_kick_timeout_ms = KICK_TIMEOUT_MS_DEFAULT;
+volatile int g_kick_request = 0;   /* dashboard hold-to-kick: -1, 0, +1 */
+volatile uint64_t g_kick_request_us = 0;
+
+/* Returns the kick direction (-1, 0, +1) this tick, or 0 for "do not kick".
+ * Holds the centre-seen latch and the timeout, so it must be called exactly
+ * once per main-loop tick while out of bounds. */
+static int kick_direction(float eff_angle)
+{
+    static int centred_since_last = 1;  /* must see centre before each kick */
+    static uint64_t kick_started_us = 0;
+
+    /* A request from either source. The dashboard button sets g_kick_request
+     * directly; the transmitter uses the drive stick past a deadband. */
+    float stick = 0.0f;
+    if (sbus_is_connected() && !sbus_get_failsafe())
+        stick = sbus_get_drive();
+    int want = 0;
+    const uint64_t now_us = rc_nanos_since_boot() / 1000;
+    /* The dashboard request expires unless it keeps being refreshed, so a
+     * dropped websocket cannot leave the wheels driving. */
+    const int dash = (g_kick_request != 0 &&
+                      (now_us - g_kick_request_us) < KICK_REQUEST_STALE_US)
+                         ? g_kick_request
+                         : 0;
+    if (dash != 0)
+        want = (dash > 0) ? 1 : -1;
+    else if (fabsf(stick) > KICK_STICK_DEADBAND)
+        want = (stick > 0.0f) ? 1 : -1;
+
+    if (want == 0)
+    {
+        /* Released: re-arm the latch and forget the timer. */
+        centred_since_last = 1;
+        kick_started_us = 0;
+        return 0;
+    }
+
+    if (!g_kick_assist || !state.armed || g_imu_stale)
+        return 0;
+    /* Inside oob the balance loop owns the wheels; above kick_max_deg it is
+     * lying down and a kick only throws it. */
+    if (eff_angle <= g_oob_angle_deg || eff_angle > g_kick_max_deg)
+        return 0;
+    if (!centred_since_last)
+        return 0;   /* held over from a previous kick -- recentre first */
+
+    if (kick_started_us == 0)
+    {
+        kick_started_us = now_us;
+        LOG_WARN("kick: standing up, dir=%+d eff=%.1f deg", want, eff_angle);
+    }
+    else if ((now_us - kick_started_us) > (uint64_t)g_kick_timeout_ms * 1000ULL)
+    {
+        /* Long enough. Either it is stuck or the stick is stuck; either way
+         * stop, and refuse to start again until it has been released. */
+        centred_since_last = 0;
+        kick_started_us = 0;
+        LOG_WARN("kick: timed out after %d ms, release and retry", g_kick_timeout_ms);
+        return 0;
+    }
+    return want;
+}
+
+
 /* Sensor watchdog: while armed, theta must move by at least this much within
  * this long, or the reading is stale and the motors are cut. The threshold is
  * well below real IMU noise on purpose -- this is meant to catch a frozen
@@ -153,6 +271,7 @@ static void imu_interrupt(void)
     state.theta = t.pitch;         // deg
     state.theta_dot = t.pitch_dot; // deg/s
     state.psi = t.yaw;             // deg
+    state.psi_dot = t.yaw_dot;     // deg/s, gyro Z -- the steering loop's D source
     g_imu_samples++;               // proof that theta is a measurement
 
     // Ungated: PID runs every tick regardless of armed/trying, so telemetry
@@ -178,7 +297,38 @@ static void imu_interrupt(void)
     if (g_controllers.yaw)
     {
         float phi_diff = (state.phi_right - state.phi_left) / 2.0f;
-        yaw_output = pid_update(&yaw_pid, state.yaw, phi_diff);
+
+        /* Anti-windup: the loop may be asked to correct at most MAX_YAW_LEAD
+         * degrees of heading at once. Applied to the MEASUREMENT the PID sees
+         * rather than by moving state.yaw, so the real target survives a twist
+         * bigger than the clamp and the robot keeps working its way back. */
+        {
+            const float lead = state.yaw - phi_diff;
+            if (lead > MAX_YAW_LEAD)
+                phi_diff = state.yaw - MAX_YAW_LEAD;
+            else if (lead < -MAX_YAW_LEAD)
+                phi_diff = state.yaw + MAX_YAW_LEAD;
+        }
+
+        /* Both rates, every tick, whichever one the loop is using. */
+        if (!yaw_phi_primed)
+        {
+            yaw_phi_prev = phi_diff;
+            yaw_phi_primed = 1;
+        }
+        yaw_rate_enc = (phi_diff - yaw_phi_prev) / yaw_pid.dt;
+        yaw_phi_prev = phi_diff;
+        yaw_rate_gyro = state.psi_dot * g_yaw_gyro_scale;
+
+        /* phi_diff moves in whole encoder counts (1.2405 deg each), so
+         * differencing it makes a one-tick impulse per count that swamps kp --
+         * the idle yaw dither. Gyro Z measures the same rotation continuously.
+         * Off by default: the scale carries the mounting sign. */
+        if (g_yaw_gyro_scale != 0.0f)
+            yaw_output = pid_update_rate(&yaw_pid, state.yaw, phi_diff,
+                                         yaw_rate_gyro);
+        else
+            yaw_output = pid_update(&yaw_pid, state.yaw, phi_diff);
     }
     else
     {
@@ -258,9 +408,6 @@ static void imu_interrupt(void)
  * Columns are byte-identical to the dashboard's CSV export so tools/analyze_tune.py
  * and every existing plot work on it unchanged. */
 
-#define LOOPLOG_MAX_SEC 40
-#define LOOPLOG_MAX (LOOPLOG_MAX_SEC * SAMPLE_RATE_HZ)
-#define LOOPLOG_PATH "/tmp/bbot.csv"
 
 typedef struct
 {
@@ -273,85 +420,17 @@ typedef struct
     float left_duty, right_duty;
     float loop_hz;
     int32_t link_down;
+    float carrot_lead;   /* carrot - enc_pos, ticks (0 when the carrot is off) */
+    float carrot_vel;    /* carrot's planned speed, enc_pos ticks/s */
+    float yaw_gyro_rate; /* gyro Z * yaw_gyro_scale, phi_diff deg/s */
+    float yaw_enc_rate;  /* d(phi_diff)/dt differenced, phi_diff deg/s */
+    float yaw_psi_dot;   /* RAW chassis yaw rate from gyro Z, deg/s */
 } looplog_row_t;
 
-/* Two capture modes.
- *
- * ONESHOT is the original: fill N seconds of rows, write, stop. You know in
- * advance how long the thing you want to see will take.
- *
- * FREE is for when you do not. The buffer is a fixed array -- 40 s of RAM is
- * 40 s of RAM -- so "free running" cannot mean "record forever"; it means keep
- * overwriting the oldest row and, when you press stop, write out the most
- * recent 40 s. That is the useful shape for "it just did the thing, get me the
- * log", which is exactly the case a fixed countdown cannot catch. */
-#define LOOPLOG_OFF 0
-#define LOOPLOG_ONESHOT 1
-#define LOOPLOG_FREE 2
-
-static looplog_row_t looplog_buf[LOOPLOG_MAX];
-static uint64_t looplog_n = 0; /* rows ever written this capture */
-static int looplog_want = 0;   /* ONESHOT: rows to capture */
-static volatile int looplog_mode = LOOPLOG_OFF;
-static volatile int looplog_flush = 0; /* set by the loop, cleared after write */
-
-int looplog_start(int seconds)
+/* One row of the 100 Hz log, from this tick's telemetry. Shared by the
+ * one-shot/free capture and the always-on ring. */
+static void looplog_fill_row(looplog_row_t *r, uint64_t now)
 {
-    if (looplog_mode != LOOPLOG_OFF)
-        return -1; /* already running */
-    if (seconds < 1)
-        seconds = 1;
-    if (seconds > LOOPLOG_MAX_SEC)
-        seconds = LOOPLOG_MAX_SEC;
-    looplog_n = 0;
-    looplog_flush = 0;
-    looplog_want = seconds * SAMPLE_RATE_HZ;
-    looplog_mode = LOOPLOG_ONESHOT;
-    LOG_WARN("looplog: one-shot, %d s at %d Hz -> %s", seconds, SAMPLE_RATE_HZ, LOOPLOG_PATH);
-    return 0;
-}
-
-int looplog_start_free(void)
-{
-    if (looplog_mode != LOOPLOG_OFF)
-        return -1;
-    looplog_n = 0;
-    looplog_flush = 0;
-    looplog_want = 0;
-    looplog_mode = LOOPLOG_FREE;
-    LOG_WARN("looplog: free running, keeping the last %d s -> %s", LOOPLOG_MAX_SEC, LOOPLOG_PATH);
-    return 0;
-}
-
-/* Stop a free run and write what is in the buffer. Harmless on a one-shot:
- * it just ends it early with however many rows it had. */
-int looplog_stop(void)
-{
-    if (looplog_mode == LOOPLOG_OFF)
-        return -1;
-    if (looplog_n == 0)
-    {
-        looplog_mode = LOOPLOG_OFF;
-        return -1;
-    }
-    looplog_flush = 1;
-    return 0;
-}
-
-int looplog_active(void) { return looplog_mode != LOOPLOG_OFF; }
-
-/* Called every loop tick. Cheap by construction: a bounds test and a copy. */
-static void looplog_tick(void)
-{
-    if (looplog_mode == LOOPLOG_OFF)
-        return;
-    if (looplog_mode == LOOPLOG_ONESHOT && looplog_n >= (uint64_t)looplog_want)
-        return;
-
-    uint64_t now = rc_nanos_since_boot() / 1000;
-
-    /* FREE wraps; ONESHOT cannot reach the wrap because want <= LOOPLOG_MAX. */
-    looplog_row_t *r = &looplog_buf[looplog_n++ % LOOPLOG_MAX];
     r->t_us = now;
     r->pit_sp = g_telemetry_data.pitch.setpoint;
     r->pit_meas = g_telemetry_data.pitch.measurement;
@@ -387,42 +466,28 @@ static void looplog_tick(void)
      * gains in robot.conf. */
     r->loop_hz = g_telemetry_data.system.loop_hz;
     r->link_down = motor_hal_link_down();
-
-    if (looplog_mode == LOOPLOG_ONESHOT && looplog_n >= (uint64_t)looplog_want)
-        looplog_flush = 1;
+    /* What the carrot is asking for. Without these two a log cannot say
+     * whether the bot was tracking the planned move or running away from it. */
+    r->carrot_lead = carrot_valid ? (carrot - (float)state.enc_pos) : 0.0f;
+    r->carrot_vel = carrot_valid ? carrot_v : 0.0f;
+    /* Both yaw rates. Plot them together: same shape and same sign means
+     * yaw_gyro_scale is right, mirrored means flip its sign, and a constant
+     * ratio is the factor to multiply it by. */
+    r->yaw_gyro_rate = yaw_rate_gyro;
+    r->yaw_enc_rate = yaw_rate_enc;
+    /* And the raw gyro, unscaled. yaw_gyro_rate is psi_dot TIMES
+     * yaw_gyro_scale, so while the scale is still 0 -- which is exactly the
+     * state you are in when you need to calibrate it -- that column is all
+     * zeros and the fit has nothing to work with. Logging psi_dot itself means
+     * the scale can be fitted from any capture in which the robot was turned:
+     * no special run, no temporary scale of 1. */
+    r->yaw_psi_dot = state.psi_dot;
 }
 
-/* Called from the loop OUTSIDE the timing-critical section, once, when the
- * capture is full. Writing 4000 rows takes a few ms -- fine here, not fine
- * inside the tick. */
-static void looplog_write_if_full(void)
+
+/* Config block ("# ..." lines): the settings a run was recorded under. */
+static void looplog_write_config(FILE *f)
 {
-    if (!looplog_flush)
-        return;
-    looplog_flush = 0;
-
-    /* Oldest row first. After a wrap the oldest live row is the one about to be
-     * overwritten next, not index 0 -- writing 0..n-1 on a wrapped buffer would
-     * splice the newest seconds in front of the oldest and produce a log whose
-     * time column jumps backwards in the middle. */
-    const int wrapped = (looplog_n > (uint64_t)LOOPLOG_MAX);
-    const int rows = wrapped ? LOOPLOG_MAX : (int)looplog_n;
-    const int first = wrapped ? (int)(looplog_n % LOOPLOG_MAX) : 0;
-    const uint64_t t0 = looplog_buf[first].t_us;
-
-    FILE *f = fopen(LOOPLOG_PATH, "w");
-    if (!f)
-    {
-        LOG_WARN("looplog: cannot open %s", LOOPLOG_PATH);
-        looplog_want = 0;
-        return;
-    }
-
-    /* Header carries the config the run was made under. A log that cannot say
-     * what it was recorded with cannot be compared against another log. */
-    fprintf(f, "# bbot loop-rate log\n");
-    fprintf(f, "# rate_hz=%d rows=%d mode=%s\n", SAMPLE_RATE_HZ, rows,
-            wrapped ? "free" : "oneshot");
     fprintf(f, "# pit_gains: kp=%g ki=%g kd=%g\n",
             g_telemetry_data.pitch.kp, g_telemetry_data.pitch.ki, g_telemetry_data.pitch.kd);
     fprintf(f, "# yaw_gains: kp=%g ki=%g kd=%g\n",
@@ -446,41 +511,149 @@ static void looplog_write_if_full(void)
     fprintf(f, "#   max_correction=%g max_angle_rate=%g pos_deadband=%d back_to_spot=%d\n",
             g_pos_config.max_correction, g_pos_config.max_angle_rate,
             g_pos_config.pos_deadband, g_pos_config.back_to_spot);
+    fprintf(f, "#   lead_max=%d return_rate=%g return_accel=%g\n",
+            g_pos_config.lead_max, g_pos_config.return_rate, g_pos_config.return_accel);
+    fprintf(f, "# yaw_gyro_scale=%g (0 = D from encoders)\n", g_yaw_gyro_scale);
+    fprintf(f, "# theta_trim=%g oob_angle_deg=%g\n",
+            state.theta_offset, g_oob_angle_deg);
     fprintf(f, "# motor: mode=%d qpps_max=%d claw_kp=%g claw_ki=%g claw_kd=%g\n",
             g_motor_config.mode, g_motor_config.qpps_max,
             g_motor_config.claw_kp, g_motor_config.claw_ki, g_motor_config.claw_kd);
 
+}
+
+static void looplog_write_columns(FILE *f)
+{
     /* Same column names as the dashboard CSV export, on purpose. */
     fprintf(f, "t,pit_setpoint,pit_measurement,pit_error,pit_pTerm,pit_iTerm,pit_dTerm,"
                "pit_output,pos_encTarget,pos_encPos,pos_encError,pos_encVel,pos_encVelRaw,"
                "pos_encVelMid,pos_encVelLong,pos_posCorr,pos_velDamp,pos_posIterm,pos_thetaAdj,"
                "pos_activeScale,yaw_setpoint,yaw_measurement,yaw_error,yaw_pTerm,yaw_iTerm,"
                "yaw_dTerm,yaw_output,mot_leftDuty,mot_rightDuty,mot_dutyDiff,"
-               "sys_loopHz,sys_linkDown\n");
+               "sys_loopHz,sys_linkDown,pos_carrotLead,pos_carrotVel,"
+               "yaw_gyroRate,yaw_encRate,yaw_psiDot\n");
 
-    for (int k = 0; k < rows; k++)
-    {
-        const looplog_row_t *r = &looplog_buf[(first + k) % LOOPLOG_MAX];
-        fprintf(f,
-                "%.4f,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,"
-                "%d,%d,%d,%.4f,%.4f,%.4f,%.4f,"
-                "%.4f,%.4f,%.4f,%.4f,%.4f,"
-                "%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,"
-                "%.4f,%.4f,%.4f,%.1f,%d\n",
-                (double)(r->t_us - t0) / 1e6, r->pit_sp, r->pit_meas, r->pit_err, r->pit_p, r->pit_i, r->pit_d, r->pit_out,
-                r->enc_target, r->enc_pos, r->enc_err,
-                r->enc_vel, r->enc_vel_raw, r->enc_vel_mid, r->enc_vel_long,
-                r->pos_corr, r->vel_damp, r->pos_iterm, r->theta_adj, r->active_scale,
-                r->yaw_sp, r->yaw_meas, r->yaw_err, r->yaw_p, r->yaw_i, r->yaw_d, r->yaw_out,
-                r->left_duty, r->right_duty, r->right_duty - r->left_duty,
-                r->loop_hz, r->link_down);
-    }
-    fclose(f);
-    LOG_WARN("looplog: wrote %d rows (%s) to %s", rows,
-             wrapped ? "free run, last window" : "one-shot", LOOPLOG_PATH);
-    looplog_want = 0;
-    looplog_mode = LOOPLOG_OFF;
 }
+
+/* One CSV row. t is written as given (seconds). */
+static int looplog_write_row(FILE *f, const looplog_row_t *r, double t)
+{
+    return fprintf(f,
+                   "%.4f,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,"
+                   "%d,%d,%d,%.4f,%.4f,%.4f,%.4f,"
+                   "%.4f,%.4f,%.4f,%.4f,%.4f,"
+                   "%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,"
+                   "%.4f,%.4f,%.4f,%.1f,%d,%.2f,%.1f,%.3f,%.3f,%.3f\n",
+                   t, r->pit_sp, r->pit_meas, r->pit_err, r->pit_p, r->pit_i, r->pit_d, r->pit_out,
+                   r->enc_target, r->enc_pos, r->enc_err,
+                   r->enc_vel, r->enc_vel_raw, r->enc_vel_mid, r->enc_vel_long,
+                   r->pos_corr, r->vel_damp, r->pos_iterm, r->theta_adj, r->active_scale,
+                   r->yaw_sp, r->yaw_meas, r->yaw_err, r->yaw_p, r->yaw_i, r->yaw_d, r->yaw_out,
+                   r->left_duty, r->right_duty, r->right_duty - r->left_duty,
+                   r->loop_hz, r->link_down, r->carrot_lead, r->carrot_vel,
+                   r->yaw_gyro_rate, r->yaw_enc_rate, r->yaw_psi_dot);
+}
+
+/* ── Always-on 100 Hz ring ─────────────────────────────────────────────────
+ * Every control tick is appended to a file in /dev/shm (RAM -- never the SD
+ * card or eMMC, so no wear and nothing for a power cut to corrupt). Two
+ * segments of RING_SEG_BYTES each: when the current one fills, the older one
+ * is truncated and becomes current. So the last 5-10 MB of history (roughly
+ * 4-7 minutes at 100 Hz) is always on the bot, and whatever just happened --
+ * a takeoff, a jump -- is already recorded before anyone thinks to press a
+ * button. serve_web.py joins the two into /bbot_ring.csv.
+ *
+ * Cost per tick: one formatted row into a stdio buffer; a write() to tmpfs
+ * every RING_FLUSH_ROWS rows. No thread, no burst.
+ *
+ * t is ABSOLUTE seconds since boot (same clock as the telemetry "timestamp"),
+ * so the two segments line up and rows can be matched to a dashboard CSV.
+ * Any config change is written in-stream as "# CHANGE t=..." followed by the
+ * full config block, so a knob turned mid-run is visible where it happened. */
+#define RING_DIR "/dev/shm"
+#define RING_SEG_BYTES (5L * 1024 * 1024)
+#define RING_FLUSH_ROWS 10
+
+typedef struct
+{
+    float pk, pi, pd, yk, yi, yd, trim;
+    pos_config_t pos;
+    motor_config_t mot;
+} ring_cfg_t;
+
+static void ring_cfg_now(ring_cfg_t *c)
+{
+    memset(c, 0, sizeof(*c));
+    c->pk = g_telemetry_data.pitch.kp;
+    c->pi = g_telemetry_data.pitch.ki;
+    c->pd = g_telemetry_data.pitch.kd;
+    c->yk = g_telemetry_data.yaw.kp;
+    c->yi = g_telemetry_data.yaw.ki;
+    c->yd = g_telemetry_data.yaw.kd;
+    c->trim = state.theta_offset;
+    memcpy(&c->pos, &g_pos_config, sizeof(c->pos));
+    memcpy(&c->mot, &g_motor_config, sizeof(c->mot));
+}
+
+static void ring_tick(void)
+{
+    static FILE *f = NULL;
+    static int seg = 0;
+    static long bytes = 0;
+    static int rows = 0;
+    static int dead = 0;
+    static ring_cfg_t last;
+
+    if (dead)
+        return;
+
+    uint64_t now = rc_nanos_since_boot() / 1000;
+    ring_cfg_t cur;
+    ring_cfg_now(&cur);
+
+    if (!f || bytes >= RING_SEG_BYTES)
+    {
+        if (f)
+        {
+            fclose(f);
+            seg ^= 1;
+        }
+        char path[64];
+        snprintf(path, sizeof path, RING_DIR "/bbot_ring_%d.csv", seg);
+        f = fopen(path, "w");
+        if (!f)
+        {
+            LOG_WARN("ring: cannot open %s -- 100 Hz ring disabled", path);
+            dead = 1;
+            return;
+        }
+        bytes = fprintf(f, "# bbot 100 Hz ring segment %d (t = seconds since boot)\n"
+                           "# rate_hz=%d mode=ring\n", seg, SAMPLE_RATE_HZ);
+        looplog_write_config(f);
+        looplog_write_columns(f);
+        bytes += 2048; /* header; exact size does not matter */
+        last = cur;
+    }
+    else if (memcmp(&cur, &last, sizeof cur) != 0)
+    {
+        bytes += fprintf(f, "# CHANGE t=%.3f config changed; now:\n", (double)now / 1e6);
+        looplog_write_config(f);
+        bytes += 1024;
+        last = cur;
+    }
+
+    looplog_row_t r;
+    looplog_fill_row(&r, now);
+    int n = looplog_write_row(f, &r, (double)now / 1e6);
+    if (n > 0)
+        bytes += n;
+    if (++rows >= RING_FLUSH_ROWS)
+    {
+        fflush(f);
+        rows = 0;
+    }
+}
+
 
 /**
  * @brief Initialize robot hardware and control system
@@ -523,6 +696,9 @@ int robot_init(void)
     g_pos_config.drive_mode = POS_DRIVE_MODE_DEFAULT;
     g_pos_config.drive_rate = POS_DRIVE_RATE_DEFAULT;
     g_pos_config.runaway_limit = POS_RUNAWAY_LIMIT_DEFAULT;
+    g_pos_config.lead_max = POS_LEAD_MAX_DEFAULT;
+    g_pos_config.return_rate = POS_RETURN_RATE_DEFAULT;
+    g_pos_config.return_accel = POS_RETURN_ACCEL_DEFAULT;
 
     g_motor_config.mode = MOTOR_HAL_MODE_DEFAULT;
     g_motor_config.qpps_max = MOTOR_QPPS_MAX_DEFAULT;
@@ -606,8 +782,34 @@ static int read_battery_voltage(float *volts)
 /**
  * @brief Main control loop (~100 Hz)
  */
+/* The motion gate (see motor_hal.h). Every condition is read fresh at the
+ * moment a drive command is about to be sent. All must hold; any one failing
+ * turns the command into a coast. This duplicates the ISR's own actuation
+ * check on purpose: that check decides what to ASK for, this one decides what
+ * the RoboClaw is allowed to RECEIVE, whoever asked. */
+static int robot_motion_gate(const char **why)
+{
+    if (!state.armed)            { *why = "not armed"; return 0; }
+    if (!state.trying)           { *why = "not trying"; return 0; }
+    if (state.estop_latched)     { *why = "e-stop latched"; return 0; }
+    if (g_imu_samples < 50u)     { *why = "IMU has not produced 50 samples"; return 0; }
+    if (g_imu_stale)             { *why = "IMU stale"; return 0; }
+    float eff = fabsf(state.theta - state.theta_offset);
+    if (!(eff <= g_oob_angle_deg)) /* also catches NaN */
+    {
+        static char buf[96];
+        snprintf(buf, sizeof buf, "out of bounds (theta=%.2f eff=%.2f limit=%.1f)",
+                 state.theta, eff, (double)g_oob_angle_deg);
+        *why = buf;
+        return 0;
+    }
+    return 1;
+}
+
 void robot_run(void)
 {
+    motor_hal_set_motion_gate(robot_motion_gate);
+
     uint64_t loop_counter = 0;
     uint64_t last_loop_us = 0;
 
@@ -650,17 +852,30 @@ void robot_run(void)
         // a frozen theta never sets the latch, so it never arms.
 #define ARM_MIN_SAMPLES 50u     /* samples before theta is believed at all */
 #define ARM_STEADY_US 250000ULL /* held inside the window this long */
-#define ARM_OOB_SAMPLES 25u     /* consecutive OOB samples = kickstand seen */
 /* Arm INSIDE this window, which is deliberately tighter than g_oob_angle_deg:
  * the OOB limit is where motors get cut, not a sane place to start balancing.
  * The rate limit stops it arming while swinging through on the way elsewhere. */
 #define ARM_ANGLE_DEG 3.0f
 #define ARM_RATE_DPS 15.0f
+/* The fused DMP theta takes seconds to converge after boot, slewing from a
+ * wrong start (75 deg logged 2026-09-19) toward the real kickstand angle while
+ * the robot sits perfectly still. The rate gate above uses the RAW GYRO, which
+ * correctly reads ~0 the whole time, so it cannot see the slew. A slew toward
+ * -19 passes through 0, and at ~7 deg/s it sits inside the 3 deg window for
+ * well over 250 ms -- so the old code armed ON THE KICKSTAND ("armed theta=0.28
+ * rate=-0.4") and drove the wheels until the estimate crossed the OOB limit.
+ * Fix: the estimate itself must be still. theta's own span over the window,
+ * not the gyro, decides. */
+#define ARM_THETA_SPAN_DEG 1.0f      /* max theta span while "still" */
+#define KICKSTAND_SETTLE_US 1000000ULL /* kickstand must read steady this long */
         static int boot_arm_done = 0; /* once per run: a deliberate
                                          disarm must stay disarmed */
         static uint64_t in_range_since_us = 0;
         static int waiting_logged = 0;
-        static unsigned oob_run = 0;   /* consecutive OOB samples */
+        static uint64_t ks_since_us = 0; /* kickstand steady-window start */
+        static float ks_min = 0.0f, ks_max = 0.0f;
+        static float hold_min = 0.0f, hold_max = 0.0f;
+        static int slew_logged = 0;
         static int seen_kickstand = 0; /* sensor proved it can see 19 deg */
         static int kickstand_logged = 0;
         if (!boot_arm_done && g_arm_at_boot)
@@ -673,17 +888,34 @@ void robot_run(void)
             {
                 if (eff > g_oob_angle_deg)
                 {
-                    if (++oob_run >= ARM_OOB_SAMPLES)
+                    /* Kickstand = out of bounds AND the estimate has stopped
+                     * moving. A converging estimate is still slewing, so it
+                     * keeps restarting this window until it settles. */
+                    if (ks_since_us == 0)
+                    {
+                        ks_min = ks_max = state.theta;
+                        ks_since_us = now_us;
+                    }
+                    if (state.theta < ks_min) ks_min = state.theta;
+                    if (state.theta > ks_max) ks_max = state.theta;
+                    if (ks_max - ks_min > ARM_THETA_SPAN_DEG)
+                    {
+                        ks_min = ks_max = state.theta; /* still moving: restart */
+                        ks_since_us = now_us;
+                    }
+                    if (now_us - ks_since_us >= KICKSTAND_SETTLE_US)
                     {
                         seen_kickstand = 1;
-                        LOG_WARN("arm_at_boot: kickstand seen (theta=%.2f eff=%.2f). "
+                        LOG_WARN("arm_at_boot: kickstand seen, estimate settled "
+                                 "(theta=%.2f eff=%.2f, span %.2f deg over %llums). "
                                  "Arming enabled.",
-                                 state.theta, eff);
+                                 state.theta, eff, ks_max - ks_min,
+                                 (unsigned long long)(KICKSTAND_SETTLE_US / 1000));
                     }
                 }
                 else
                 {
-                    oob_run = 0;
+                    ks_since_us = 0;
                     if (!kickstand_logged)
                     {
                         kickstand_logged = 1;
@@ -722,7 +954,26 @@ void robot_run(void)
             else
             {
                 if (in_range_since_us == 0)
+                {
                     in_range_since_us = now_us;
+                    hold_min = hold_max = state.theta;
+                }
+                if (state.theta < hold_min) hold_min = state.theta;
+                if (state.theta > hold_max) hold_max = state.theta;
+                if (hold_max - hold_min > ARM_THETA_SPAN_DEG)
+                {
+                    /* Gyro says still, estimate says moving: the estimate is
+                     * still converging. Not a robot being held upright. */
+                    if (!slew_logged)
+                    {
+                        slew_logged = 1;
+                        LOG_WARN("arm_at_boot: theta slewing %.2f deg while gyro reads "
+                                 "%.1f deg/s -- estimate not converged, NOT arming",
+                                 hold_max - hold_min, state.theta_dot);
+                    }
+                    in_range_since_us = now_us;
+                    hold_min = hold_max = state.theta;
+                }
 
                 if (now_us - in_range_since_us >= ARM_STEADY_US)
                 {
@@ -760,11 +1011,13 @@ void robot_run(void)
             last_right_duty = 0.0f;
             state.enc_pos_target = state.enc_pos;
             pos_integ = 0.0f; /* target moved — accumulated error is stale */
+            carrot_valid = 0; carrot_v = 0.0f; carrot_arrived = 0; /* target re-snapped: carrot restarts at the wheels */
         }
         if (!prev_armed && state.armed)
         {
             state.enc_pos_target = state.enc_pos;
             pos_integ = 0.0f; /* target moved — accumulated error is stale */
+            carrot_valid = 0; carrot_v = 0.0f; carrot_arrived = 0; /* target re-snapped: carrot restarts at the wheels */
             state.theta_ref = 0.0f;
             // trying is persistent now -- tracks armed directly, no angle gate.
             // The ISR's own eff_angle>g_oob_angle_deg check (imu_interrupt, above
@@ -909,25 +1162,55 @@ void robot_run(void)
             }
         }
 
-        // ── Input sources → theta_ref / steering ──────────────────────────
-        if (state.mode == MODE_EXT_INPUT)
-        {
-            input_packet_t pkt;
-            if (uart_input_get(&pkt))
-            {
-                state.ext_input = pkt;
-                state.theta_ref = -pkt.y * MAX_THETA_REF;
-                state.yaw = pkt.x * MAX_YAW_CMD;
-            }
-            else
-            {
-                state.theta_ref = 0.0f;
-                state.yaw = 0.0f;
-            }
-        }
+        /* The MODE_EXT_INPUT branch that lived here (UART "PKT,x,y,conf")
+         * was removed 2026-09-21: nothing ever sent it, it wrote a raw lean of
+         * up to MAX_THETA_REF straight into theta_ref, and it assigned the
+         * heading target instead of integrating a turn rate, so it could not
+         * have turned the robot anyway. External drive now comes from the Pi
+         * through pi_drive.c and the same path as the stick, below. */
 
         xbox_update();
         sbus_update();
+
+        /* ── Drive input: SBUS stick, else the Pi, else nothing ────────────
+         * Balancing never depends on any of this; it only moves the targets
+         * the balance loop holds. One input per tick, by priority:
+         *   1. the SBUS stick, when it is off centre -- the operator wins;
+         *   2. a fresh Pi command, when armed, the Pi-drive gate is open and
+         *      the RC kill switch (if a transmitter is on) is at RUN;
+         *   3. a centred stick, when a transmitter is connected;
+         *   4. nothing.
+         * Both reach the controller through the same code below, so the Pi
+         * gets drive_mode, drive_rate/drive_scale and turn_rate exactly as
+         * the stick does. The kick-to-stand path still reads SBUS only. */
+        float in_drive = 0.0f, in_turn = 0.0f;
+        int have_input = 0;
+        {
+            const int sbus_ok = sbus_is_connected() && state.armed;
+            const float s_drive = sbus_ok ? sbus_get_drive() : 0.0f;
+            const float s_turn = sbus_ok ? sbus_get_turn() : 0.0f;
+            float px, py;
+            const int pi_fresh = pi_drive_get(&px, &py);
+            if (!state.armed)
+                pi_drive_set_gate(0);     /* disarm, e-stop, boot: gate shuts */
+            const pi_drive_state_t pi = pi_drive_decide(
+                state.armed, pi_drive_gate(), sbus_is_connected(),
+                sbus_get_kill(), s_drive, s_turn, pi_fresh);
+            pi_drive_set_state(pi);
+
+            if (pi == PI_DRIVE_APPLYING)
+            {
+                in_drive = py;
+                in_turn = px;
+                have_input = 1;
+            }
+            else if (sbus_ok)
+            {
+                in_drive = s_drive;
+                in_turn = s_turn;
+                have_input = 1;
+            }
+        }
 
         // ── SBUS drive commands (no arming via SBUS — IPC only) ───────────
         // stick_input tracks operator drive intent only — never touched by D2.
@@ -953,9 +1236,9 @@ void robot_run(void)
          * throw most of the command away. */
         static float drive_accum = 0.0f;
 
-        if (sbus_is_connected() && state.armed && state.mode == MODE_BALANCE)
+        if (have_input)
         {
-            stick_norm = sbus_get_drive();
+            stick_norm = in_drive;
 
             if (g_pos_config.drive_mode == DRIVE_MODE_TARGET)
             {
@@ -983,7 +1266,7 @@ void robot_run(void)
 
             /* Hold the stick over and the bot keeps turning; release and it
              * holds the heading it reached. */
-            yaw_target += sbus_get_turn() * g_sbus_config.turn_rate * DT;
+            yaw_target += in_turn * g_sbus_config.turn_rate * DT;
             state.yaw = yaw_target;
         }
         else
@@ -1007,15 +1290,31 @@ void robot_run(void)
                     state.enc_pos_target = state.enc_pos - lim;
             }
         }
-        else if (!sbus_is_connected())
+        else if (!have_input)
         {
+            /* No stick and no Pi. Was !sbus_is_connected(): with the Pi as a
+             * second source, a Pi-driven tick with the transmitter off must not
+             * have its input zeroed here before raw_stick_ref reads it. */
             stick_input = 0.0f;
             stick_norm = 0.0f;
         }
 
-        /* Disarmed or unlinked: forget the accumulated heading so re-arming does
-         * not immediately spin toward a target set minutes ago. */
-        if (!state.armed || !sbus_is_connected())
+        /* Disarmed: forget the accumulated heading so re-arming does not
+         * immediately spin toward a target set minutes ago.
+         *
+         * The !sbus_is_connected() half of this test was removed 2026-09-20.
+         * This robot is normally driven with the transmitter OFF, so that
+         * clause was true on every tick and the heading target was reassigned
+         * to the current heading 100 times a second -- the steering loop had
+         * no fixed heading to hold and a twist was adopted as the new home
+         * before it could ever be corrected. Measured on
+         * bbot_ring_1789950092231: median |yaw_setpoint - phi_diff| = 0.000
+         * and median |yaw_error| = 0.000 across 5013 upright ticks, i.e. the
+         * loop was regulating against a target that WAS the measurement.
+         * Losing the link is a reason to stop taking new stick commands, which
+         * the drive path already handles; it is not a reason to give up the
+         * heading the robot is standing on. */
+        if (!state.armed)
         {
             yaw_target = (state.phi_right - state.phi_left) / 2.0f;
             state.yaw = yaw_target;
@@ -1027,56 +1326,15 @@ void robot_run(void)
         float raw_stick_ref = stick_input;
         float raw_stick_norm = stick_norm;
 
-        // ── D3 steering latch ─────────────────────────────────────────────
-        // When the turn stick returns to centre AFTER an active turn, latch
-        // the current phi_diff as the D3 setpoint so the bot holds its heading
-        // instead of fighting back to zero.
-        //
-        // The latch only fires on a non-zero→zero transition.  With SBUS
-        // disconnected (steering always 0), was_turning is never set and the
-        // latch never fires, so D3 always targets phi_diff=0 (go straight).
-        {
-            float phi_diff = (state.phi_left - state.phi_right) / 2.0f;
-            bool turn_centered = (fabsf(state.yaw) < 0.05f);
-            static bool was_turning = false;
-
-            if (!turn_centered)
-            {
-                // Active turn input — mark that we were turning and clear latch
-                was_turning = true;
-                state.yaw_latched = 0;
-                state.steering_latch = 0.0f;
-
-                // Velocity-based turning authority reduction
-                if (g_pos_config.vel_scale_turning > 0.0f)
-                {
-                    float vel_turndown = fabsf((float)state.enc_velocity /
-                                               g_pos_config.vel_scale_turning);
-                    if (state.yaw < 0.0f)
-                    {
-                        state.yaw += vel_turndown;
-                        if (state.yaw > 0.0f)
-                            state.yaw = 0.0f;
-                    }
-                    else if (state.yaw > 0.0f)
-                    {
-                        state.yaw -= vel_turndown;
-                        if (state.yaw < 0.0f)
-                            state.yaw = 0.0f;
-                    }
-                }
-            }
-            else if (was_turning && !state.yaw_latched)
-            {
-                // Stick just returned to centre after an active turn — latch now
-                state.steering_latch = phi_diff;
-                state.yaw_latched = 1;
-                was_turning = false;
-            }
-
-            if (state.yaw_latched && g_controllers.yaw)
-                state.yaw = state.steering_latch;
-        }
+        /* D3 steering latch REMOVED 2026-09-19. It predates the heading target
+         * and treated state.yaw as a -1..1 stick command: |state.yaw| >= 0.05
+         * meant "turning", so any real heading armed it; the turndown walked the
+         * target toward 0 with wheel speed; then it latched (phi_left -
+         * phi_right)/2 -- the opposite sign of the yaw PID's measurement -- so
+         * the target became minus the heading, pinned by the MAX_YAW_LEAD clamp
+         * at exactly heading + 90. Telemetry 2026-09-19 20:37: setpoint -102.281,
+         * measurement -192.281, error 90.000 with the remote off. Heading hold
+         * is yaw_target (SBUS block above) plus the rebase on OOB recovery. */
 
         // ── Hard OOB cutoff (edge-triggered) ───────────────────────────────
         // trying is now persistent — it tracks armed directly (set together at
@@ -1094,13 +1352,35 @@ void robot_run(void)
         float eff_angle = fabsf(state.theta - state.theta_offset);
         if (eff_angle > g_oob_angle_deg)
         {
-            // OOB: always stop motors, every tick, regardless of was_oob.
-            /* motor_hal_coast(), not set_both(0,0): in velocity mode a zero
-             * there is MIXEDSPEED asking the RoboClaw's velocity PID to HOLD
-             * zero, which is an active loop that winds up against stiction and
-             * pushes. The safety cutoff has to remove power, not regulate to
-             * zero. One write per tick now instead of two. */
-            motor_hal_coast();
+            /* The one exception to the cutoff: a deliberate, bounded, operator
+             * -held kick to stand the robot up off its kickstand. Everything
+             * that makes it safe is inside kick_direction(); if it returns 0
+             * -- which is the case on every tick nobody is asking -- this
+             * falls straight through to the coast below, unchanged. */
+            const int kick = kick_direction(eff_angle);
+
+            if (kick != 0)
+            {
+                /* Both wheels the same sign: drive the contact patch back
+                 * under the centre of mass. Through set_both, so the motion
+                 * gate still gets its say. */
+                const float duty = (float)kick * g_kick_duty;
+                motor_hal_set_both(duty, duty);
+                /* Report what was actually written, same as the coast path
+                 * below does, so the dashboard shows the kick instead of a
+                 * frozen pre-OOB value. */
+                last_left_duty = duty;
+                last_right_duty = duty;
+            }
+            else
+            {
+                // OOB: always stop motors, every tick, regardless of was_oob.
+                /* motor_hal_coast(), not set_both(0,0): in velocity mode a zero
+                 * there is MIXEDSPEED asking the RoboClaw's velocity PID to HOLD
+                 * zero, which is an active loop that winds up against stiction and
+                 * pushes. The safety cutoff has to remove power, not regulate to
+                 * zero. One write per tick now instead of two. */
+                motor_hal_coast();
             /* Report what was actually written. last_*_duty is what telemetry
              * publishes, and it is otherwise only assigned on the normal motor
              * write and the disarm path -- so across an OOB excursion the
@@ -1154,11 +1434,13 @@ void robot_run(void)
                  * re-commanded to 0 afterwards, or not at all. */
                 state.enc_pos_target = state.enc_pos;
                 pos_integ = 0.0f; /* target moved — accumulated error is stale */
+                carrot_valid = 0; carrot_v = 0.0f; carrot_arrived = 0; /* target re-snapped: carrot restarts at the wheels */
                 state.enc_velocity = 0;
                 state.enc_vel_reset = 1;
                 state.theta_ref = 0.0f;
                 if (state.armed)
                     LOG_WARN("OOB — motors cut (eff=%.1f deg), staying armed", eff_angle);
+                }
             }
         }
         else if (was_oob)
@@ -1169,6 +1451,7 @@ void robot_run(void)
             state.enc_pos_target = state.enc_pos;
             state.pos_setpoint = state.pos;
             pos_integ = 0.0f;
+            carrot_valid = 0; carrot_v = 0.0f; carrot_arrived = 0; /* target re-snapped: carrot restarts at the wheels */
             pos_last_correction = 0.0f;
             vel_damp_filt = 0.0f;
             state.enc_velocity = 0;
@@ -1294,6 +1577,130 @@ void robot_run(void)
                 if (stick_centered)
                 {
                     int32_t err = state.enc_pos_target - state.enc_pos;
+                    if (g_pos_config.lead_max > 0)
+                    {
+                        const float home = (float)state.enc_pos_target;
+                        const float here = (float)state.enc_pos;
+                        const float lead = (float)g_pos_config.lead_max;
+                        if (!carrot_valid)
+                        {
+                            carrot = here;
+                            carrot_v = 0.0f;
+                            carrot_arrived = 0;
+                            carrot_valid = 1;
+                            carrot_home_prev = state.enc_pos_target;
+                        }
+                        else if (state.enc_pos_target != carrot_home_prev)
+                        {
+                            /* New target. Re-plan from where the carrot is and
+                             * at the speed it already has, rather than snapping
+                             * it to the wheels -- a move commanded mid-move
+                             * should bend the trajectory, not restart it. */
+                            carrot_arrived = 0;
+                            carrot_home_prev = state.enc_pos_target;
+                        }
+                        /* Walk toward home on a trapezoid: speed ramps up at
+                         * return_accel, cruises at return_rate, and ramps down
+                         * so it arrives at zero speed (v <= sqrt(2 a d)). The
+                         * old fixed-step walk started and stopped at full speed. */
+                        if (carrot_arrived)
+                        {
+                            /* Plan finished. The carrot sits on the target and
+                             * the loop is an ordinary position hold from here
+                             * on -- which is exactly what recovering from an
+                             * overshoot wants. Re-planning from a dragged
+                             * carrot is what made the overshoot grow. */
+                            carrot = home;
+                            carrot_v = 0.0f;
+                        }
+                        else
+                        {
+                            /* Cruise speed is free. DECELERATION is what
+                             * needs lean authority, so the brake clamps the
+                             * accel, not the top speed -- clamping the speed
+                             * (an earlier try) just made every move crawl.
+                             * A lean of t degrees buys g*tan(t) of decel:
+                             * 9810 mm/s^2 / 57.3 deg-per-rad / 1.27 mm-per-tick
+                             * = 135 enc ticks/s^2 per degree of ACHIEVED lean.
+                             * The pitch loop does not achieve what it is asked
+                             * for: measured over three runs 2026-09-20 20:44-47
+                             * (|setpoint| > 1.5 deg, bot upright, n = 1286-1882
+                             * each) the median measured/commanded ratio is
+                             * 0.47 / 0.45 / 0.50, at a median duty of only
+                             * 0.05-0.08. So a COMMANDED degree is worth about
+                             * half that, ~68. Planning against 135 is what let
+                             * the trapezoid ask for twice the deceleration the
+                             * robot can produce: 2026-09-20 ..937230468, a 158
+                             * tick move overshot 335 ticks with posCorr and
+                             * vel_damp both pinned for 1.8 s while
+                             * pit_measurement sat at ~0 deg against a -2.5 deg
+                             * command. The brake never physically happened.
+                             * The brake is capped at vel_damp_max degrees and
+                             * also has to absorb pushes, so spend 70% of it. The ramp-down
+                             * below (v <= sqrt(2 a d)) then starts early
+                             * enough that ANY cruise speed stops in the
+                             * distance that is left. 2026-09-20 42.0-42.7 it
+                             * ran 340 ticks/s with the brake pinned at its
+                             * 2 deg cap and went over: that was the plan
+                             * asking for more decel than 2 deg can make. */
+                            const float vmax = fmaxf(g_pos_config.return_rate, 0.0f);
+                            float acc = fmaxf(g_pos_config.return_accel, 1.0f);
+                            if (g_pos_config.vel_damp_max > 0.0f)
+                            {
+                                const float acc_brake = 0.7f * 68.0f *
+                                                        g_pos_config.vel_damp_max;
+                                acc = fminf(acc, fmaxf(acc_brake, 1.0f));
+                            }
+                            const float dist = home - carrot;
+                            const float dir = (dist > 0.0f) ? 1.0f : (dist < 0.0f ? -1.0f : 0.0f);
+                            const float vstop = sqrtf(2.0f * acc * fabsf(dist));
+                            const float want = dir * fminf(vmax, vstop);
+                            const float dv = acc * DT;
+                            if (carrot_v < want) carrot_v = fminf(carrot_v + dv, want);
+                            else if (carrot_v > want) carrot_v = fmaxf(carrot_v - dv, want);
+                            float next = carrot + carrot_v * DT;
+                            if ((dir > 0.0f && next > home) || (dir < 0.0f && next < home) || dir == 0.0f)
+                            {
+                                next = home;
+                                carrot_v = 0.0f;
+                                carrot_arrived = 1;   /* and it stays there */
+                            }
+                            carrot = next;
+
+                            /* Hold the carrot back to within lead_max of the
+                             * wheels so it cannot run off and leave the bot
+                             * chasing a huge error. Only while the plan is
+                             * still running: once it has arrived this clamp is
+                             * skipped entirely, so an overshooting bot cannot
+                             * drag the target back out and restart the move. */
+                            if (!carrot_arrived)
+                            {
+                                if (carrot > here + lead)
+                                    carrot = here + lead;
+                                if (carrot < here - lead)
+                                    carrot = here - lead;
+                            }
+                        }
+                        /* The spring never sees more than lead_max of error,
+                         * however far the bot has strayed. Clamped HERE rather
+                         * than by moving the carrot, so a bot that has blown
+                         * past the target gets a steady pull back toward it
+                         * instead of a rewritten plan. */
+                        {
+                            float e = carrot - here;
+                            if (e > lead)
+                                e = lead;
+                            if (e < -lead)
+                                e = -lead;
+                            err = (int32_t)lroundf(e);
+                        }
+                    }
+                    else
+                    {
+                        carrot_valid = 0;
+                        carrot_v = 0.0f;
+                        carrot_arrived = 0;
+                    }
                     int32_t absErr = abs(err);
                     /* First-order low-pass on the damping term. Filtering here
                      * rather than filtering enc_velocity itself, because
@@ -1301,7 +1708,35 @@ void robot_run(void)
                      * and neither has this problem -- only the stop-damping
                      * derivative does. Held across ticks; reset on disarm below
                      * so a stale value cannot kick the first tick after arming. */
-                    float vel_damp = (float)state.enc_velocity / g_pos_config.vel_scale_stop;
+                    /* Damp velocity RELATIVE to the carrot's planned speed.
+                     * Damping absolute speed meant every move was braked by
+                     * v / vel_scale_stop, which the spring (capped at
+                     * lead_max / scale) had to overpower: with 40/50 and
+                     * vss 4 the bot could never cruise faster than ~6 units
+                     * (~60 ticks/s) -- the "way too slow" walk. enc_velocity
+                     * is (qpps_m1 + qpps_m2)/10, i.e. enc_pos ticks/s / 10,
+                     * so the carrot speed converts with the same /10. At
+                     * rest carrot_v is 0 and this is exactly the old term. */
+                    /* Feed-forward: the planned speed, but never more than the
+                     * bot is actually doing, and only when the two agree in
+                     * sign. Taken from enc_velocity directly now that the lead
+                     * clamp no longer drags the carrot (the old carrot_v_act
+                     * was a proxy for this and stopped meaning anything once
+                     * the carrot kept its own plan).
+                     *   blocked      -> enc_velocity 0    -> v_ref 0, no phantom lean
+                     *   pushed away  -> signs disagree    -> v_ref 0, full damping
+                     *   cruising     -> tracks the plan   -> damping ~0
+                     *   running away -> capped at the plan -> damping on the excess */
+                    float v_ref = 0.0f;
+                    if (g_pos_config.lead_max > 0 && carrot_v != 0.0f)
+                    {
+                        const float plan = carrot_v / 10.0f;   /* enc_velocity units */
+                        const float act = (float)state.enc_velocity;
+                        if ((plan > 0.0f && act > 0.0f) || (plan < 0.0f && act < 0.0f))
+                            v_ref = (plan > 0.0f) ? fminf(plan, act) : fmaxf(plan, act);
+                    }
+                    float vel_damp = ((float)state.enc_velocity - v_ref) / g_pos_config.vel_scale_stop;
+
                     {
                         const float fc = g_pos_config.vel_damp_fc;
                         if (fc > 0.0f)
@@ -1368,6 +1803,7 @@ void robot_run(void)
                             state.pos_scale = 0.0f;
                             state.enc_pos_target = state.enc_pos;
                             pos_integ = 0.0f; /* target moved — accumulated error is stale */
+                            carrot_valid = 0; carrot_v = 0.0f; carrot_arrived = 0; /* target re-snapped: carrot restarts at the wheels */
                         }
                     }
 
@@ -1378,12 +1814,31 @@ void robot_run(void)
                      * limiter on purpose: it is a slow term and belongs on the
                      * smooth path, unlike vel_damp which is deliberately
                      * immediate. Conditional integration -- frozen while the
-                     * output sits at the clamp, so it cannot wind up against a
-                     * limit and lurch when the limit releases. */
+                     * output sits at a clamp, so it cannot wind up against a
+                     * limit and lurch when the limit releases.
+                     *
+                     * The test is on the OUTPUT clamp only. An earlier
+                     * version also froze on "the carrot is at full lead", which
+                     * was wrong and made the robot park short: the spring being
+                     * at ITS cap is precisely when the integral is supposed to
+                     * be adding the authority the proportional term has run out
+                     * of. Measured 2026-09-20 bbot_ring_1789950092231: stopped
+                     * 150 ticks (190 mm) from the target with posCorr pinned,
+                     * pos_integ frozen at +0.325 for 3.2 s while thetaAdj was
+                     * 3.21 against a max_correction of 6 -- 2.8 deg of unused
+                     * headroom and the one term that could break stiction held
+                     * shut. 16% of that run was spent parked >60 ticks off
+                     * target with the wheels stationary. */
                     if (g_pos_config.pos_ki > 0.0f && state.pos_scale > 0.0f)
                     {
                         const float dt = 1.0f / (float)SAMPLE_RATE_HZ;
-                        if (fabsf(pos_last_correction) < g_pos_config.max_correction * 0.98f)
+                        const int clamped = fabsf(pos_last_correction) >=
+                                            g_pos_config.max_correction * 0.98f;
+                        /* Freeze only against the limit; unwinding is allowed,
+                         * so the term still recovers the moment the error
+                         * changes sign. */
+                        const int pushing_out = (pos_integ >= 0.0f) == (err >= 0);
+                        if (!(clamped && pushing_out))
                             pos_integ += g_pos_config.pos_ki * (float)err * dt;
                         const float ilim = g_pos_config.pos_i_max;
                         if (ilim > 0.0f)
@@ -1461,6 +1916,7 @@ void robot_run(void)
                     }
                     state.enc_pos_target = state.enc_pos;
                     pos_integ = 0.0f; /* target moved — accumulated error is stale */
+                    carrot_valid = 0; carrot_v = 0.0f; carrot_arrived = 0; /* target re-snapped: carrot restarts at the wheels */
 
                     // Position hold is not running while driving. Clear the hold
                     // telemetry so it does not sit at stale values from the last
@@ -1492,6 +1948,7 @@ void robot_run(void)
                 }
                 state.enc_pos_target = state.enc_pos;
                 pos_integ = 0.0f; /* target moved — accumulated error is stale */
+                carrot_valid = 0; carrot_v = 0.0f; carrot_arrived = 0; /* target re-snapped: carrot restarts at the wheels */
                 state.pos_setpoint = state.pos;
 
                 // Turning D2 off zeroed g_controllers.position, but nothing here
@@ -1584,12 +2041,20 @@ void robot_run(void)
          * target running away if the wheels are blocked or the bot is picked up --
          * which would otherwise spin it up the moment it regained traction. */
         {
+            /* Anti-windup only. This used to write the clamped value back
+             * into state.yaw, which meant a robot twisted more than
+             * MAX_YAW_LEAD had its target DRAGGED along behind it and the
+             * original heading was gone for good -- the same defect as the
+             * position carrot's lead clamp. The bound on how hard the loop
+             * may pull is what matters, so bound the lead here and leave the
+             * target alone; robot_yaw_error() applies it. Log
+             * bbot_ring_1789950092231 shows |yaw_error| pinned at exactly
+             * 90.000, the clamp, rather than a heading being recovered. */
             float phi_now = (state.phi_right - state.phi_left) / 2.0f;
             float lead = state.yaw - phi_now;
-            if (lead > MAX_YAW_LEAD)
-                state.yaw = phi_now + MAX_YAW_LEAD;
-            else if (lead < -MAX_YAW_LEAD)
-                state.yaw = phi_now - MAX_YAW_LEAD;
+            if (lead > MAX_YAW_LEAD || lead < -MAX_YAW_LEAD)
+                LOG_DEBUG("steering: heading lead %.1f deg beyond +/-%.0f clamp",
+                          lead, MAX_YAW_LEAD);
         }
 
         // ── Telemetry & display ───────────────────────────────────────────
@@ -1601,7 +2066,7 @@ void robot_run(void)
         /* Full loop rate, straight into RAM. Must come after the motor duties
          * are stamped above or every logged row would carry the previous
          * tick's command. */
-        looplog_tick();
+        ring_tick();
 
         uint64_t now_sched_us = rc_nanos_since_boot() / 1000; // microseconds
 
@@ -1698,7 +2163,6 @@ void robot_run(void)
             }
         }
 
-        looplog_write_if_full();
 
         loop_counter++;
 

@@ -78,6 +78,15 @@ int motor_hal_set(int motor, float duty);
  */
 int motor_hal_set_both(float left, float right);
 
+/* Motion gate. motor_hal_set_both() is the ONLY function in this program that
+ * sends a non-zero drive command to the RoboClaw. Before every such command it
+ * asks this gate; if the gate says no (or none is registered yet) it sends a
+ * COAST (duty 0) instead. Default is deny: from process start until robot.c
+ * registers the gate AND its conditions hold, nothing can drive the wheels.
+ * The gate returns 1 to permit; on deny it sets *why to a short reason. */
+typedef int (*motor_hal_gate_fn)(const char **why);
+void motor_hal_set_motion_gate(motor_hal_gate_fn fn);
+
 /**
  * @brief Coast both motors (remove drive, let them spin freely).
  * Distinct from set(0) which may actively brake depending on the driver.
