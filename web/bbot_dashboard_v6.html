@@ -142,13 +142,19 @@
     }
     .ab-btn:hover { border-color: var(--accent); }
     .ab-btn:active { background: var(--accent); color: #04121c; }
+    /* Hold-to-kick. Yellow because it is the one control that turns the wheels
+       while the robot is out of bounds, and it should not look like the
+       ordinary buttons beside it. */
+    .ab-btn.kick { color: var(--yellow); border-color: var(--yellow); }
+    .ab-btn.kick:hover { border-color: var(--yellow); }
+    .ab-btn.kick:active { background: var(--yellow); color: #04121c; }
 
     /* Arm carries the run state, so it is the one wide element and the only
      * coloured fill -- everything else on the bar is an outline. */
     #ab-arm {
       flex: 1 1 auto;
-      min-width: 150px;
-      max-width: 320px;
+      min-width: 120px;
+      max-width: 240px;
       height: 28px;
       border: none;
       border-radius: var(--r);
@@ -162,7 +168,11 @@
       justify-content: center;
       gap: 7px;
       transition: background .2s, box-shadow .2s;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
+    #ab-arm svg { flex: none; }
 
     .ab-sep {
       flex: none;
@@ -212,6 +222,8 @@
       gap: 12px;
       padding: 0 16px;
       height: 44px;
+      overflow: hidden;
+      white-space: nowrap;
       background: var(--bg1);
       border-bottom: 1px solid var(--border);
     }
@@ -230,6 +242,7 @@
       flex-direction: column;
       align-items: center;
       min-width: 52px;
+      flex: none;
     }
 
     #header .stat .label {
@@ -243,7 +256,18 @@
       font-size: 12px;
       font-weight: 500;
       line-height: 1.2;
+      white-space: nowrap;
     }
+    /* Value + secondary on one line (amps live / peak), so every header cell is
+     * exactly two rows -- label over value -- and they all line up. */
+    #header .stat .val-row {
+      display: flex;
+      align-items: baseline;
+      gap: 5px;
+      white-space: nowrap;
+    }
+    #header .stat .val.pk { font-size: 9px; }
+    #header .stat .label { white-space: nowrap; }
 
     .sep {
       width: 1px;
@@ -401,42 +425,74 @@
 
     /* Cap the gain row and the trim stepper so they sit next to their labels
      * instead of being pushed to the far edge by justify-self:end. */
-    .ctrl-grid .pid-row { grid-template-columns: 80px minmax(0, 300px); }
+    .ctrl-grid .pid-row { grid-template-columns: 56px minmax(0, 1fr); }
     .ctrl-grid .stp { max-width: 392px; }
 
-    /* The position hold's parameter block is 30-odd typed fields and, stacked
-     * one per line with a 240px label, it was three times the height of the
-     * Pitch and Yaw cards put together -- the thing that made this tab feel
-     * like empty space with one tall column down the middle. Two across, with
-     * each field's hint on its own line beneath the pair, roughly halves it.
-     * The group headings span the full width so the sections still read. */
+    /* ── Position parameters: one column per group ─────────────────────────
+     * Zones, scales, damping, integral, limits, return -- each is a column of
+     * its own fields, headings across the top, hairlines between. Reading down
+     * a column is reading one subject; nothing wraps from one group into the
+     * next, which is what made this block feel scattered. */
     .ctrl-grid #pos-sliders {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 0 12px;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 0;
       align-items: start;
+      border-top: 1px solid var(--border);
+      border-left: 1px solid var(--border);
     }
-    .ctrl-grid #pos-sliders .sub-label {
-      grid-column: 1 / -1;
-      margin: 8px 0 2px;
+    .pos-col { display: flex; flex-direction: column; min-width: 0; }
+    .ctrl-grid #pos-sliders .pos-chead {
+      margin: 0;
+      padding: 6px 8px 5px;
+      color: var(--accent);
+      background: var(--bg1);
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
     }
-    .ctrl-grid #pos-sliders .num-row {
-      flex-wrap: wrap;
-      gap: 0 8px;
-      margin-bottom: 5px;
+    /* Every column's cells keep the same height, so the value boxes line up
+     * across columns as well as down them. */
+    .pos-col .pos-cell { min-height: 62px; justify-content: center; }
+
+    .pos-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 7px 8px 8px;
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      min-width: 0;
     }
-    /* Overrides the inline flex-basis buildPosSliders() writes on the label. */
-    .ctrl-grid #pos-sliders .num-k { flex: 1 1 auto !important; min-width: 0; }
-    /* flex-basis alone was losing to a width rule further down the sheet, and a
-     * 166px-wide box then pushed itself onto a second line under its label.
-     * Pin the width so label and field stay on one row. */
-    .ctrl-grid #pos-sliders .num-in {
-      flex: 0 0 68px; width: 68px; max-width: 68px;
+    .pos-cell .num-k {
+      flex: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    /* The control line never wraps: minus, value and plus stay together. */
+    .pos-ctl {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: nowrap;
+    }
+    .pos-cell .num-in {
+      flex: 0 0 74px; width: 74px; max-width: 74px;
       padding: 4px 6px; font-size: 12px;
     }
-    /* Hint drops below its own field rather than stealing width from it. */
-    .ctrl-grid #pos-sliders .num-hint { flex: 1 1 100%; font-size: 9px; }
-    .ctrl-grid #pos-sliders .num-hint:empty { display: none; }
+    .pos-cell .num-steps { display: flex; gap: 3px; margin-left: 6px; flex-wrap: wrap; }
+    .pos-cell .num-steps .mult-btn { padding: 2px 4px; font-size: 9px; }
+    .pos-cell .num-hint { font-size: 9px; color: var(--txt3); line-height: 1.35; }
+    .pos-cell .num-hint:empty { display: none; }
+    .num-bump {
+      flex: 0 0 22px; height: 26px;
+      background: var(--bg3); border: 1px solid var(--border2); border-radius: 4px;
+      color: var(--txt2); font-family: var(--mono); font-size: 13px; line-height: 1;
+      cursor: pointer; padding: 0;
+    }
+    .num-bump:hover { border-color: var(--accent); color: var(--accent); }
+    .num-bump:active { background: var(--accent); color: #04121c; }
+    .num-bump[disabled] { opacity: .3; cursor: default; }
 
     /* ── Shared components ───────────────────────────────────────────────────── */
     .card {
@@ -678,6 +734,16 @@
       overflow: hidden;
     }
 
+    /* Small variant: sits inline with a label like any other field control. */
+    .seg-group.seg-sm { display: inline-flex; flex: 0 0 auto; }
+    .seg-group.seg-sm .seg-btn { flex: 0 0 auto; padding: 4px 12px; font-size: 10px; }
+    .pos-mode {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 6px 0 8px;
+    }
+    .pos-mode .num-k { flex: 0 0 auto; }
+    .pos-mode .num-hint { font-size: 9px; color: var(--txt3); flex: 1 1 100%; }
+
     .seg-btn {
       flex: 1;
       padding: 7px 4px;
@@ -742,6 +808,9 @@
 
     .pid-label {
       font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
       color: var(--txt2);
     }
 
@@ -751,15 +820,18 @@
       gap: 4px;
     }
 
-    /* +/- row and its resolution picker, stacked. The picker sits UNDER the
-     * buttons it modifies so the step size is read in the same glance as the
-     * value it will move. */
+    /* +/- row and its step picker, ON ONE LINE and left-aligned, so a gain row
+     * has the same shape as a position row: name, then − value +, then the
+     * step sizes. Stacked and right-aligned (the old version) put the value
+     * boxes in a different column from every other field on the screen and the
+     * step chips in 8px type under them. */
     .pid-ctrl-wrap {
       display: flex;
-      flex-direction: column;
-      gap: 3px;
-      align-items: flex-end;
-      justify-self: end;
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+      justify-self: start;
+      flex-wrap: wrap;
     }
 
     .res-sel {
@@ -768,13 +840,13 @@
     }
 
     .res-btn {
-      padding: 1px 4px;
+      padding: 3px 6px;
       border: 1px solid var(--border);
       background: transparent;
       border-radius: 3px;
       color: var(--txt3);
       font-family: var(--mono);
-      font-size: 8px;
+      font-size: 10px;
       line-height: 1.4;
       cursor: pointer;
       opacity: .65;
@@ -1386,8 +1458,7 @@
     <div class="stat" id="h-amps-stat" style="cursor:pointer" onclick="resetAmpPeaks()"
          title="RoboClaw motor current, live / peak since reset. Click to clear the peaks.">
       <span class="label">Amps</span>
-      <span class="val" id="h-amps" style="color:var(--txt3)">––</span>
-      <span class="val" id="h-amps-pk" style="color:var(--txt3);font-size:9px;margin-left:3px">––</span>
+      <span class="val-row"><span class="val" id="h-amps" style="color:var(--txt3)">––</span><span class="val pk" id="h-amps-pk" style="color:var(--txt3)">––</span></span>
     </div>
     <div class="stat">
       <span class="label">Angle</span>
@@ -1405,6 +1476,12 @@
     <button id="ab-arm" class="disarmed" onclick="toggleArm()">ARM</button>
     <button class="ab-btn" onclick="sendCmd({type:'zero_imu'})" title="Zero the IMU pitch offset and the encoders, and save">ZERO IMU</button>
     <button class="ab-btn" onclick="sendCmd({type:'zero_encoders'})" title="Reset encoder position and the heading target">ENC 0</button>
+    <!-- Hold to stand the robot up off its kickstand. Only does anything
+         between oob_angle_deg and kick_max_deg; the firmware enforces every
+         other condition. Level, repeated while held, so letting go (or losing
+         the socket) stops it. -->
+    <button class="ab-btn kick" id="ab-kick-back" title="Hold: kick upright, backwards">&#8676; KICK</button>
+    <button class="ab-btn kick" id="ab-kick-fwd" title="Hold: kick upright, forwards">KICK &#8677;</button>
     <button class="ab-btn" style="color:var(--red);border-color:var(--red)"
       onclick="sendCmd({type:'e_stop'})" title="Assert the hardware e-stop">E-STOP</button>
     <button class="ab-btn" style="color:var(--yellow);border-color:var(--yellow)"
@@ -1425,17 +1502,13 @@
       <span style="font-size:9px;color:var(--txt3)">min</span>
     </span>
     <div class="ab-sep"></div>
-    <!-- 100 Hz on-bot capture: fixed-length one-shot, or a ring you stop. -->
-    <button class="ab-btn" id="btn-looplog" onclick="startLoopLog()"
-      title="Record every control-loop tick at 100 Hz on the bot and download it. REC only sees 20 Hz.">&#9210; 100Hz</button>
-    <span class="ab-seg" id="loop-mode">
-      <button class="ab-seg-b active" onclick="setLoopMode('oneshot')" title="Capture a fixed number of seconds, then write">1-SHOT</button>
-      <button class="ab-seg-b" onclick="setLoopMode('free')" title="Keep the most recent 40 s until you press stop">FREE</button>
-    </span>
-    <input class="ab-num" id="in-looplog" type="number" min="1" max="40" step="1" value="20"
-      title="Seconds of 100 Hz capture (one-shot only)">
+    <!-- 100 Hz history: the bot keeps every tick in a RAM ring; download the last N s. -->
     <span class="ab-btn" id="hint-looplog"
-      style="pointer-events:none;background:none;border:none;color:var(--txt3);padding:0 2px"></span>
+      style="background:none;border:none;color:var(--txt3);padding:0 2px;flex:0 1 auto;min-width:0;max-width:360px;overflow:hidden;text-overflow:ellipsis;line-height:26px;cursor:default"></span>
+    <button class="ab-btn" id="btn-ring" onclick="dumpRing()"
+      title="Download the last N seconds of the always-on 100 Hz ring kept on the bot (/dev/shm). 0 = everything (~4-7 min).">&#10515; RING</button>
+    <input class="ab-num" id="in-ring" type="number" min="0" step="1" value="60"
+      title="Seconds of 100 Hz history to download (0 = all)">
   </div>
 
   <!-- ── Tab bar ────────────────────────────────────────────────────────────── -->
@@ -1445,6 +1518,7 @@
     <div class="tab" data-tab="graph">Graph</div>
     <div class="tab" data-tab="claw">Claw</div>
     <div class="tab" data-tab="rc">RC</div>
+    <div class="tab" data-tab="system">System</div>
     <div class="tab" data-tab="debug">Debug</div>
     <div class="tab" data-tab="settings">Settings</div>
   </div>
@@ -1523,15 +1597,20 @@
       </div>
 
       <div class="card">
-        <span class="sub-label">Robot Mode</span>
-        <div class="seg-group" id="mode-seg">
-            <button class="seg-btn active" data-mode="1" onclick="setMode(1)">Balance</button>
-            <button class="seg-btn" data-mode="2" onclick="setMode(2)">Ext Ctrl</button>
+        <span class="sub-label">Pi Drive</span>
+        <div class="seg-group" id="pi-gate-seg">
+            <button class="seg-btn active" data-gate="0" onclick="setPiGate(false)">Off</button>
+            <button class="seg-btn" data-gate="1" onclick="setPiGate(true)">Pi Drive</button>
           </div>
+          <div id="pi-drive-state" style="font-size:11px;margin-top:6px;font-family:var(--mono)">&ndash;</div>
           <div style="font-size:9px;color:var(--txt3);margin-top:6px">
-            Balance is the normal mode and the only one that reads the RC sticks.
-            Ext Ctrl takes drive commands from the UART instead. Manual was removed:
-            robot.c has no handler for it, so selecting it silently disabled the RC.
+            The robot always balances; drive commands only move what it balances
+            around. With Pi Drive on, commands from the Pi (hailo-tracker's
+            follower) drive it whenever the stick is centred &mdash; any stick
+            input wins, and the RC kill switch blocks the Pi when the
+            transmitter is on. The gate only opens while armed and shuts on
+            disarm or e-stop. Replaces the old Balance / Ext Ctrl picker: the
+            UART input it selected was never used.
           </div>
         </div>
 
@@ -1734,6 +1813,26 @@
               <div class="res-sel" id="res-yaw-kd"></div>
             </div>
           </div>
+          <div class="pid-row">
+            <span class="pid-label">D src</span>
+            <div class="pid-ctrl-wrap">
+              <div class="pid-ctrl">
+                <button class="step-btn" onclick="bumpYawGyro(-1)">&minus;</button>
+                <input class="val-box" id="vb-yaw-gyro" value="0" inputmode="decimal"
+                  oninput="markDirty(this)"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+                  onchange="onYawGyroScale(this.value)">
+                <button class="step-btn" onclick="bumpYawGyro(1)">+</button>
+              </div>
+              <div class="res-sel" id="res-yaw-gyro"></div>
+            </div>
+          </div>
+          <div class="num-hint" style="margin:-2px 0 6px 0">
+            yaw_gyro_scale. 0 = derivative from the encoders, which step 1.24&deg;
+            at a time and dither the wheels. Nonzero = from gyro Z, scaled into
+            those same units (sign included). Match
+            <b id="yaw-rate-gyro">0.0</b> to <b id="yaw-rate-enc">0.0</b> below.
+          </div>
         </div>
         <div class="divider"></div>
         <span class="sub-label">Live Status</span>
@@ -1744,6 +1843,8 @@
               style="font-size:13px;color:var(--orange)">0.000</span></div>
           <div><span style="color:var(--txt3);font-size:9px">OUTPUT</span><br><span id="yaw-out"
               style="font-size:13px;color:var(--accent)">0.000</span></div>
+          <div><span style="color:var(--txt3);font-size:9px">D SRC</span><br><span id="yaw-dsrc"
+              style="font-size:13px">enc</span></div>
         </div>
         <div class="err-bar-wrap">
           <div id="yaw-bar" class="err-bar" style="width:0%;background:var(--accent)"></div>
@@ -1773,12 +1874,18 @@
         </div>
         <div class="divider"></div>
         <div id="pid-pos-cfg">
-          <span class="sub-label">Hold Mode</span>
-          <div class="seg-group" id="hold-mode-seg" style="margin-bottom:10px">
-            <button class="seg-btn active" onclick="setPosField('back_to_spot',1)">Full hold (A/B/C/D)</button>
-            <button class="seg-btn" onclick="setPosField('back_to_spot',0)">Loose hold (D only)</button>
+          <!-- Hold mode reads as one more parameter, because that is what it is
+               (back_to_spot). It used to be two full-width banner buttons. -->
+          <div class="pos-mode">
+            <label class="num-k">Hold mode<span class="num-key">back_to_spot</span></label>
+            <span class="seg-group seg-sm" id="hold-mode-seg">
+              <button class="seg-btn active" title="Correct toward the target in every zone (A/B/C/D)"
+                onclick="setPosField('back_to_spot',1)">Full</button>
+              <button class="seg-btn" title="Only correct inside Zone C; beyond it the target is abandoned"
+                onclick="setPosField('back_to_spot',0)">Loose</button>
+            </span>
+            <span class="num-hint">Full: hold the target from any distance. Loose: only inside Zone C.</span>
           </div>
-          <div class="divider"></div>
           <!-- heading intentionally omitted: buildPosSliders() emits one per group -->
           <div id="pos-sliders"></div>
         </div>
@@ -1996,7 +2103,7 @@
 
       <!-- System actions -->
       <div class="card">
-        <div class="card-title">System</div>
+        <div class="card-title">Machine</div>
         <div class="row" style="gap:8px">
           <button class="icon-btn" style="flex:1" onclick="sendCmd({type:'save_pid'})">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
@@ -2016,6 +2123,20 @@
         </div>
       </div>
 
+    </div>
+
+    <!-- SYSTEM -->
+    <div class="panel" id="panel-system">
+      <div class="card">
+        <div class="card-title">Raspberry Pi 5</div>
+        <div class="stat-row" style="flex-wrap:wrap;gap:8px">
+          <span class="stat-box">Robot Link <b id="pi-link-state">UNKNOWN</b></span>
+          <span class="stat-box">Pi 5V input <b id="pi-rail-voltage">—</b></span>
+          <span class="stat-box">Hailo tracker <b id="pi-hailo-state">UNKNOWN</b></span>
+          <span class="stat-box">Bone battery <b id="pi-battery-voltage">—</b></span>
+        </div>
+        <div id="pi-status-age" style="font-size:10px;color:var(--txt3);margin-top:8px">Waiting for Robot Link status</div>
+      </div>
     </div>
 
     <!-- GRAPH -->
@@ -2219,6 +2340,7 @@
       pos_ki: 0, pos_i_max: 2.0,
       stopped_vel: 0, max_correction: 0.3, max_angle_rate: 0.05,
       back_to_spot: 1, pos_deadband: 2,
+      lead_max: 0, return_rate: 100, return_accel: 200,
     };
     let posCfgReceived = false;
     // Last pos_config the BOT reported, refreshed on every telemetry packet.
@@ -2229,43 +2351,50 @@
     let gainsBot = { pit: null, yaw: null };
 
     const POS_SLIDERS = [
-      { key: 'zone_a', label: 'Zone A (outer)', min: 1000, max: 30000, step: 500, group: 'zones' },
-      { key: 'zone_b', label: 'Zone B', min: 500, max: 15000, step: 250, group: 'zones' },
-      { key: 'zone_c', label: 'Zone C (inner)', min: 100, max: 5000, step: 100, group: 'zones' },
-      { key: 'scale_a', label: 'Scale A', min: 10, max: 3000, step: 10, group: 'scales' },
-      { key: 'scale_b', label: 'Scale B', min: 10, max: 3000, step: 10, group: 'scales' },
-      { key: 'scale_c', label: 'Scale C', min: 10, max: 3000, step: 10, group: 'scales' },
-      { key: 'scale_d', label: 'Scale D (inner, |err|&lt;Zone C)', min: 1, max: 2000, step: 1, group: 'scales' },
+      { key: 'zone_a', label: 'Zone A (outer)', min: 1000, max: 30000, step: 500, group: 'zones', steps: [10, 100, 1000] },
+      { key: 'zone_b', label: 'Zone B', min: 500, max: 15000, step: 250, group: 'zones', steps: [10, 100, 1000] },
+      { key: 'zone_c', label: 'Zone C (inner)', min: 100, max: 5000, step: 100, group: 'zones', steps: [10, 100, 500] },
+      { key: 'scale_a', label: 'Scale A', min: 10, max: 3000, step: 10, group: 'scales', steps: [1, 5, 25] },
+      { key: 'scale_b', label: 'Scale B', min: 10, max: 3000, step: 10, group: 'scales', steps: [1, 5, 25] },
+      { key: 'scale_c', label: 'Scale C', min: 10, max: 3000, step: 10, group: 'scales', steps: [1, 5, 25] },
+      { key: 'scale_d', label: 'Scale D (inner, |err|&lt;Zone C)', min: 1, max: 2000, step: 1, group: 'scales', steps: [1, 5, 25] },
       // min was 10, but the tuned value is 5 — the slider could not reach its own setting.
-      { key: 'vel_scale_stop', label: 'Stop damping', min: 0.1, max: 300, step: 0.1, group: 'vel' },
+      { key: 'vel_scale_stop', label: 'Stop damping', min: 0.1, max: 300, step: 0.1, group: 'vel', steps: [0.1, 0.5, 2] },
       // Velocity SOURCE for the damping term. A phase choice, not a gain one --
       // but the sources are not the same scale, so vel_scale_stop must be
       // rescaled alongside it or the gain moves too. Hint text carries the
       // measured factor so that is not a thing to remember.
-      { key: 'vel_src', label: 'Damping source', min: 0, max: 3, step: 1, group: 'vel' },
+      { key: 'vel_src', label: 'Damping source', min: 0, max: 3, step: 1, group: 'vel', steps: [1] },
       // Low-pass on the damping term. 0 = off. The knob that targets the 1.6 Hz
       // runaway directly instead of trading it against the 0.3 Hz wander.
-      { key: 'vel_damp_fc', label: 'Damping filter (Hz)', min: 0, max: 20, step: 0.1, group: 'vel' },
+      { key: 'vel_damp_fc', label: 'Damping filter (Hz)', min: 0, max: 20, step: 0.1, group: 'vel', steps: [0.1, 0.5, 2] },
       // Hard cap on the damping term's lean authority. 0 = unlimited. Bounds
       // excursions without touching steady-state behaviour.
-      { key: 'vel_damp_max', label: 'Damping cap (deg)', min: 0, max: 6, step: 0.1, group: 'vel' },
+      { key: 'vel_damp_max', label: 'Damping cap (deg)', min: 0, max: 6, step: 0.1, group: 'vel', steps: [0.1, 0.5, 1] },
+      { key: 'vel_scale_move', label: 'Move compensation', min: 10, max: 300, step: 5, group: 'vel', steps: [1, 5, 25] },
+      { key: 'vel_scale_turning', label: 'Turn scale-down', min: 10, max: 300, step: 5, group: 'vel', steps: [1, 5, 25] },
       // Integral on the position hold. Its own group: it is the only term that
       // removes a STANDING offset, which is a different job from the
       // proportional and damping terms.
-      { key: 'pos_ki', label: 'Integral gain', min: 0, max: 0.05, step: 0.0005, group: 'integ' },
-      { key: 'pos_i_max', label: 'Integral cap (deg)', min: 0, max: 6, step: 0.1, group: 'integ' },
-      { key: 'vel_scale_move', label: 'Move compensation', min: 10, max: 300, step: 5, group: 'vel' },
-      { key: 'vel_scale_turning', label: 'Turn scale-down', min: 10, max: 300, step: 5, group: 'vel' },
-      { key: 'max_correction', label: 'Max correction (°)', min: 0.05, max: 20, step: 0.05, group: 'limits' },
-      { key: 'max_angle_rate', label: 'Max rate (°/tick)', min: 0.01, max: 5, step: 0.01, group: 'limits' },
+      { key: 'pos_ki', label: 'Integral gain', min: 0, max: 0.05, step: 0.0005, group: 'integ', steps: [0.0005, 0.005, 0.05] },
+      { key: 'pos_i_max', label: 'Integral cap (deg)', min: 0, max: 6, step: 0.1, group: 'integ', steps: [0.1, 0.5, 1] },
+      { key: 'max_correction', label: 'Max correction (°)', min: 0.05, max: 20, step: 0.05, group: 'limits', steps: [0.1, 0.5, 1] },
+      { key: 'max_angle_rate', label: 'Max rate (°/tick)', min: 0.01, max: 5, step: 0.01, group: 'limits', steps: [0.01, 0.05, 0.25] },
       // stopped_vel is read by nothing in the control path — it appears only inside a
       // LOG_INFO format string (robot.c). The damping gate that looks like it uses it
       // is a hardcoded constant. Kept visible but disabled so it cannot mislead.
       // Position error inside which the hold stops PUSHING (damping still applies).
       // 1 tick = 1.3 mm, so 10 ticks = 0.5 in. Was a hardcoded 2 in robot.c --
       // 0.1 in, tighter than anything you can see, so the loop never rested.
-      { key: 'pos_deadband', label: 'Deadband (ticks, no push)', min: 0, max: 60, step: 1, group: 'limits' },
-      { key: 'stopped_vel', label: 'Stopped threshold (unused)', min: 0, max: 200, step: 1, group: 'limits', dead: true },
+      { key: 'pos_deadband', label: 'Deadband (ticks, no push)', min: 0, max: 60, step: 1, group: 'limits', steps: [1, 5, 25] },
+      { key: 'stopped_vel', label: 'Stopped threshold (unused)', min: 0, max: 200, step: 1, group: 'limits', dead: true, steps: [1, 5, 25] },
+      // Approach profile. The hold chases a point that travels toward the
+      // target at return_rate, ramping at return_accel, and never leads the
+      // wheels by more than lead_max -- so a push is arrested first and then
+      // the bot is walked to the target. lead_max 0 = off (chase it directly).
+      { key: 'lead_max', label: 'Max lead (ticks, 0=off)', min: 0, max: 300, step: 1, group: 'return', steps: [1, 10, 50] },
+      { key: 'return_rate', label: 'Approach speed (ticks/s)', min: 0, max: 1000, step: 5, group: 'return', steps: [10, 50, 200] },
+      { key: 'return_accel', label: 'Approach accel (ticks/s²)', min: 1, max: 2000, step: 10, group: 'return', steps: [10, 50, 200] },
     ];
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -2805,6 +2934,7 @@
         recTimer = setInterval(updateRecBtn, 250);
         recordBuf = Array.from({ length: NUM_CTRL }, () => []);
         recordMeta = snapshotConfig();
+        recEvents = []; recCfgPrev = recCfgSnapshot();
         loopStat = { n: 0, sum: 0, min: Infinity, max: 0, below: 0 };
         sysBuf = [];
       }
@@ -2870,6 +3000,7 @@
       csv += `#   vel_damp_fc=${p.vel_damp_fc ?? '?'} vel_damp_max=${p.vel_damp_max ?? '?'}\n`;
       csv += `#   pos_ki=${p.pos_ki ?? '?'} pos_i_max=${p.pos_i_max ?? '?'}\n`;
       csv += `#   stopped_vel=${p.stopped_vel} max_correction=${p.max_correction} max_angle_rate=${p.max_angle_rate}\n`;
+      csv += `#   lead_max=${p.lead_max ?? 'n/a'} return_rate=${p.return_rate ?? 'n/a'} return_accel=${p.return_accel ?? 'n/a'}\n`;
       csv += `#   back_to_spot=${p.back_to_spot} pos_deadband=${p.pos_deadband}\n`;
       if (loopStat && loopStat.n) {
         const avg = loopStat.sum / loopStat.n;
@@ -2912,10 +3043,15 @@
       csv += `#   sample -- motor_hal skips the port entirely while down, so duty/encoder\n`;
       csv += `#   columns above are stale/ineffective for as long as this stays 1.\n`;
 
+      csv += `# CHANGE lines below mark settings the bot reported changing mid-run\n`;
+      csv += `#   (n=${recEvents.length}); each sits just before the first row recorded after it.\n`;
       csv += cols.join(',') + '\n';
       const maxLen = Math.max(...recordBuf.map(b => b.length));
+      let ev = 0;
       for (let i = 0; i < maxLen; i++) {
         const tVal = recordBuf.map(b => b[i]?.t).find(v => v !== undefined) ?? 0;
+        while (ev < recEvents.length && recEvents[ev].row <= i)
+          csv += `# CHANGE t=${tVal.toFixed(3)} ${recEvents[ev++].text}\n`;
         let row = [tVal.toFixed(3)];
         recordBuf.forEach((b, ci) => {
           keysFor(ci).forEach(k => row.push(((b[i]?.[k]) ?? 0).toFixed(4)));
@@ -2924,6 +3060,7 @@
         row.push(String(sysBuf[i]?.down ?? 0));
         csv += row.join(',') + '\n';
       }
+      while (ev < recEvents.length) csv += `# CHANGE t=end ${recEvents[ev++].text}\n`;
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
       a.download = 'bbot_' + Date.now() + '.csv';
@@ -3006,11 +3143,31 @@
           if (d.type === 'telemetry') handleTelemetry(d);
           else if (d.type === 'rc') applyRC(d);
           else if (d.type === 'config') applyConfig(d);
+          else if (d.type === 'robot_link_status') renderPiStatus(d.status);
           else return;
           perfMark(_t0, d.type);
         } catch { }
       };
     }
+
+    let piLinkStatus = null;
+    function renderPiStatus(status) {
+      piLinkStatus = status;
+      const fresh = status && Number.isFinite(status.updated) &&
+        Date.now() / 1000 - status.updated < 12;
+      const linked = fresh && status.connected === true;
+      const pi = linked && status.pi &&
+        Date.now() / 1000 - status.pi_updated < 15 ? status.pi : null;
+      const set = (id, value) => { document.getElementById(id).textContent = value; };
+      set('pi-link-state', fresh ? (linked ? 'UP' : 'DOWN') : 'UNKNOWN');
+      set('pi-rail-voltage', pi && Number.isFinite(pi.ext5v) ? pi.ext5v.toFixed(2) + ' V' : '—');
+      set('pi-hailo-state', pi ? pi.hailo_tracker.toUpperCase() : 'UNKNOWN');
+      set('pi-battery-voltage', fresh && Number.isFinite(status.battery_voltage)
+        ? status.battery_voltage.toFixed(2) + ' V' : '—');
+      set('pi-status-age', fresh ? `Robot Link status updated ${Math.round(Date.now()/1000-status.updated)} s ago`
+        : 'Robot Link status unavailable or stale');
+    }
+    setInterval(() => renderPiStatus(piLinkStatus), 3000);
 
     // Returns whether the command actually went out. It used to return nothing
     // and drop the message on the floor whenever the socket was closed or
@@ -3195,6 +3352,7 @@
         const botSig = JSON.stringify(d.pos_config);
         if (botSig !== posCfgBotSig) {
           posCfgBotSig = botSig;
+          if (posCfgReceived) adoptPosFromBot();   // even while the panel is hidden
           if (posCfgReceived && panelVisible('pid')) syncPosUI();
         }
 
@@ -3224,6 +3382,9 @@
             pos_ki: pc.pos_ki ?? posCfg.pos_ki,
             pos_i_max: pc.pos_i_max ?? posCfg.pos_i_max,
             vel_src: pc.vel_src ?? posCfg.vel_src,
+            lead_max: pc.lead_max ?? posCfg.lead_max,
+            return_rate: pc.return_rate ?? posCfg.return_rate,
+            return_accel: pc.return_accel ?? posCfg.return_accel,
           });
           posCfgReceived = true;
           syncPosUI();
@@ -3420,16 +3581,38 @@
     };
 
     // Position pad step, in millimetres. enc_pos is L+R, so ticks = 2*mm/MM_PER_TICK.
-    const MM_PER_TICK = 155 * Math.PI / 145.1;
+    // BaneBots 4-5/8 in wheel = 117.475 mm (was 155, which was never the real wheel).
+    const MM_PER_TICK = 117.475 * Math.PI / 145.1;   // per WHEEL tick
     let padStepMm = 20;
     function padStep(mm) {
       padStepMm = mm;
       document.querySelectorAll('#pad-step .mult-btn').forEach(b =>
         b.classList.toggle('active', parseInt(b.textContent) === mm));
     }
+    /* Moves bigger than 100 mm go out as a series of 100 mm steps, one every
+     * 500 ms. The 100 mm step is the largest one tested on the bot, and the
+     * firmware clamps any single fwd nudge to 200 ticks anyway. Sending 1000 mm
+     * as one step would open a ~600-tick position error at once -- enough to
+     * drive the lean to max_correction, the failure seen in the push logs.
+     * A new press, or the zero button, cancels a move in progress. */
+    const PAD_CHUNK_MM = 100, PAD_CHUNK_MS = 500;
+    let padMoveTimer = null;
+    function padCancel() {
+      if (padMoveTimer) { clearInterval(padMoveTimer); padMoveTimer = null; }
+    }
     function padMove(dir) {
       // dir: +1 forward, -1 back. Ticks, because that is what the hold loop uses.
-      nudge('fwd', dir * Math.round(2 * padStepMm / MM_PER_TICK));
+      padCancel();
+      const toTicks = mm => Math.round(2 * mm / MM_PER_TICK);
+      let left = padStepMm;
+      const step = () => {
+        const mm = Math.min(PAD_CHUNK_MM, left);
+        nudge('fwd', dir * toTicks(mm));
+        left -= mm;
+        if (left <= 0) padCancel();
+      };
+      step();
+      if (left > 0) padMoveTimer = setInterval(step, PAD_CHUNK_MS);
     }
     // Uses the Yaw stepper's selected step, so the pad arrows and the stepper
     // cannot drift apart. Was hardcoded to 15 deg regardless of the scale shown.
@@ -3471,14 +3654,14 @@
           <button onclick="padMove(1)" title="forward">&#9650;</button>
           <span class="spacer"></span>
           <button onclick="padTurn(-1)" title="yaw left">&#9664;</button>
-          <button onclick="sendCmd({type:'zero_encoders'})" title="zero here">&#9679;</button>
+          <button onclick="padCancel(); sendCmd({type:'zero_encoders'})" title="zero here">&#9679;</button>
           <button onclick="padTurn(1)" title="yaw right">&#9654;</button>
           <span class="spacer"></span>
           <button onclick="padMove(-1)" title="back">&#9660;</button>
           <span class="spacer"></span>
         </div>
         <div class="row" style="justify-content:center;gap:4px;margin-top:6px" id="pad-step">
-          ${[5, 20, 100].map(v => `<button class="mult-btn${v === padStepMm ? ' active' : ''}"
+          ${[5, 20, 100, 200, 500, 1000].map(v => `<button class="mult-btn${v === padStepMm ? ' active' : ''}"
               onclick="padStep(${v})">${v}</button>`).join('')}
           <span style="font-size:9px;color:var(--txt3);align-self:center">mm / press</span>
         </div>`;
@@ -3691,6 +3874,11 @@
         botT = t;
       }
 
+      if (d.pi_drive) {
+        state.piGate = !!d.pi_drive.gate;
+        state.piState = d.pi_drive.state;
+      }
+
       if (d.system) {
         state.armed = settle('armed', !!d.system.armed);
         state.mode = d.system.mode;
@@ -3848,6 +4036,7 @@
             syncPIDUI('yaw');
           }
         }
+        adoptYawGyro(d.steering, botT);
       }
       if (motr) {
         Object.assign(state.mot, motr);
@@ -3861,9 +4050,47 @@
       // bot that has not been reflashed yet.
       if (d.sbus) applyRC(d.sbus);
       if (d.pos_config || d.motor_config || d.sbus_config) applyConfig(d);
+      if (d.system && d.system.theta_offset !== undefined) recTrim = Number(d.system.theta_offset);
+      recNoteConfig();
 
       updateUI();
       updateDebug(d);
+    }
+
+    /* Mid-recording config changes. The CSV header is stamped once, at save,
+     * with the LAST values -- so a knob turned halfway through a run used to be
+     * invisible in the log. Every packet, compare what the BOT reports (pos
+     * config, pitch/yaw gains, trim, motor config) against the previous packet;
+     * any change is stored against the row index it happened at and written
+     * into the CSV as a "# CHANGE" line just before that row. */
+    let recEvents = [];      // [{ row, text }]
+    let recCfgPrev = null;
+    let recTrim = null;
+    function recCfgSnapshot() {
+      const o = {};
+      if (posCfgBot) for (const [k, v] of Object.entries(posCfgBot)) o['pos.' + k] = v;
+      if (gainsBot.pit) for (const k of ['kp', 'ki', 'kd']) o['pit.' + k] = gainsBot.pit[k];
+      if (gainsBot.yaw) for (const k of ['kp', 'ki', 'kd']) o['yaw.' + k] = gainsBot.yaw[k];
+      if (recTrim !== null) o['theta_trim'] = recTrim;
+      if (clawCfgBot) for (const [k, v] of Object.entries(clawCfgBot)) o['motor.' + k] = v;
+      return o;
+    }
+    function recNoteConfig() {
+      if (!recording) return;
+      const now = recCfgSnapshot();
+      if (recCfgPrev) {
+        const ch = [];
+        for (const k of Object.keys(now)) {
+          const a = recCfgPrev[k], b = now[k];
+          if (a === undefined) continue;   // first report of a field, not a change
+          const same = (typeof a === 'number' && typeof b === 'number')
+            ? Math.abs(a - b) < 1e-7 : a === b;
+          if (!same) ch.push(`${k} ${a} -> ${b}`);
+        }
+        if (ch.length)
+          recEvents.push({ row: Math.max(0, ...recordBuf.map(b => b.length)), text: ch.join(', ') });
+      }
+      recCfgPrev = now;
     }
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -3933,19 +4160,36 @@
       const inBounds = Math.abs(state.imu.theta) < (state.oobAngleDeg ?? 15.0);
       if (!state.armed) {
         ab.className = 'disarmed';
-        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M8 5v14l11-7z"/></svg> ARM — waiting`;
+        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M8 5v14l11-7z"/></svg> ARM · waiting`;
       } else if (inBounds) {
         ab.className = 'armed';
-        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> BALANCING — DISARM`;
+        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> BALANCING · DISARM`;
       } else {
         ab.className = 'armed-oob';
-        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> OOB, motors cut — DISARM`;
+        ab.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> OOB · DISARM`;
       }
 
-      // Mode seg
-      document.querySelectorAll('#mode-seg .seg-btn').forEach(b => {
-        b.classList.toggle('active', parseInt(b.dataset.mode) === state.mode);
+      // Pi drive gate and who is driving
+      document.querySelectorAll('#pi-gate-seg .seg-btn').forEach(b => {
+        b.classList.toggle('active', (b.dataset.gate === '1') === !!state.piGate);
       });
+      {
+        const el = document.getElementById('pi-drive-state');
+        if (el) {
+          const st = state.piState || 'unknown';
+          const say = {
+            'applying':    'PI DRIVING',
+            'no command':  'gate open · no Pi command',
+            'stick':       'stick has control',
+            'rc kill':     'RC kill switch · Pi blocked',
+            'gate closed': 'off',
+            'disarmed':    'disarmed',
+          }[st] || st;
+          el.textContent = say;
+          el.style.color = st === 'applying' ? 'var(--accent)'
+                         : (st === 'rc kill' ? 'var(--warn, #f5a524)' : 'var(--txt2)');
+        }
+      }
       // Motor mode segs (Control tab + Claw tab)
       document.querySelectorAll('#motor-seg .seg-btn, #claw-mode-seg .seg-btn').forEach(b => {
         b.classList.toggle('active', parseInt(b.dataset.mmode) === state.motorMode);
@@ -4027,6 +4271,7 @@
       windowSec: 20,      // rolling window; long enough to average the wobble
       minSec: 8,          // refuse to show a number before this much quiet time
       minSamples: 100,
+      homeTicks: 25,      // |target - pos| must be within this to count (see biasSample)
       out: null,          // last computed result, or null
       lastT: null,
       // Wheels must be this still for a sample to count. Deliberately tighter
@@ -4052,7 +4297,14 @@
       const p = state.pit, d = state.pos;
       const driving = state.sbus ? (Math.abs(state.sbus.drive) > 0.02 ||
                                     Math.abs(state.sbus.turn) > 0.02) : false;
-      const quiet = state.armed && p.enabled && d.enabled && !driving &&
+      /* Parked AT HOME, not merely stopped. A bot that is stopped short of its
+       * target -- blocked by something, or still walking there under the
+       * carrot -- leans because position hold is pushing it, and that lean is
+       * NOT trim. With the carrot and integrator both on their limits the
+       * reading pins (e.g. 0.80 + 0.50 = 1.30 deg) no matter how often the trim
+       * is changed, so applying it just walks the trim away from correct. */
+      const home = Math.abs(d.encError) <= biasEst.homeTicks;
+      const quiet = state.armed && p.enabled && d.enabled && !driving && home &&
                     Math.abs(p.measurement) <= biasEst.maxTheta &&
                     Math.abs(d.encVel) <= biasEst.quietVel;
 
@@ -4063,7 +4315,23 @@
         const iMax = posCfg.pos_i_max || 0.5;
         biasEst.buf.push({
           t,
-          lean: d.thetaAdj,
+          /* How far the robot is sitting from where the pitch loop is asking
+           * it to sit. That IS the trim error, and in this sign it is also the
+           * correction: pitch.setpoint is theta_ref + theta_offset
+           * (telemetry.c), so theta_offset += (measurement - setpoint) drives
+           * the standing error to zero. biasApply() applies half of it.
+           *
+           * This used to read d.thetaAdj -- the POSITION loop's output -- which
+           * cannot see trim at all. Parked at the target, which is the only
+           * condition this estimator accepts, the position loop has nothing to
+           * correct and its output goes to ~0 no matter how far the balance
+           * point is off; the offset lands in the pitch loop instead, as a
+           * standing error its own gains are too soft to remove. Log
+           * 2026-09-20 bbot_ring_1789928773114, 1448 parked-and-quiet ticks:
+           * median thetaAdj +0.19 (reads as "trimmed") while the robot sat at
+           * -0.71 against a +0.19 setpoint -- 0.90 deg out. That is why the
+           * box never asked for trim. */
+          lean: p.measurement - p.setpoint,
           iterm: d.posIterm,
           corr: -d.posCorr,      // posCorr enters theta_ref negated; see the CSV preamble
           railed: Math.abs(d.posIterm) >= 0.98 * iMax ? 1 : 0,
@@ -4124,7 +4392,8 @@
         set('bias-sub', '&nbsp;');
         set('bias-verdict', 'collecting', 'var(--txt3)');
         set('bias-detail',
-            'Needs ' + biasEst.minSec + 's of the robot armed, balancing and parked ' +
+            'Needs ' + biasEst.minSec + 's of the robot armed, balancing and parked at its target ' +
+            '(|err| &le; ' + biasEst.homeTicks + ' ticks) ' +
             '(|wheel vel| &le; ' + biasEst.quietVel.toFixed(0) + ', sticks centred).<br>' +
             'Have ' + span.toFixed(1) + 's / ' + biasEst.buf.length + ' samples.');
         set('bias-qual', '');
@@ -4143,13 +4412,14 @@
       set('bias-sub', '&plusmn;' + o.spread.toFixed(2) + '&deg; spread');
       set('bias-verdict', word, col);
 
-      // The two places the lean is coming from. They should add up to the bias,
-      // and seeing the split is what tells you whether the integrator has any
-      // room left or is simply pinned.
+      // What the position loop was doing at the same time. It should be near
+      // zero -- the estimator only accepts samples taken parked at the target
+      // -- so anything large here means the window is not as quiet as it looks
+      // and the number above is worth less than it seems.
       let detail =
         '<b style="color:var(--txt2)">' + (o.iterm >= 0 ? '+' : '') + o.iterm.toFixed(2) +
-        '&deg;</b> integrator &nbsp;+&nbsp; <b style="color:var(--txt2)">' +
-        (o.corr >= 0 ? '+' : '') + o.corr.toFixed(2) + '&deg;</b> standing position error';
+        '&deg;</b> position integrator &nbsp;+&nbsp; <b style="color:var(--txt2)">' +
+        (o.corr >= 0 ? '+' : '') + o.corr.toFixed(2) + '&deg;</b> position push';
       if (o.railPct > 50) {
         detail += '<br><span style="color:var(--orange)">Integrator pinned on the &plusmn;' +
           (posCfg.pos_i_max || 0.5).toFixed(2) + '&deg; rail ' + o.railPct.toFixed(0) +
@@ -4157,7 +4427,7 @@
       } else if (a >= 0.15) {
         detail += '<br>Integrator has room; the offset is real but not yet saturating.';
       } else {
-        detail += '<br>Position hold is not working to stay upright. Leave the trim alone.';
+        detail += '<br>The pitch loop is sitting where it is being asked to. Leave the trim alone.';
       }
       set('bias-detail', detail);
 
@@ -4207,6 +4477,14 @@
           }
         }
       });
+      // The two candidate derivative signals, side by side. Turn the bot by
+      // hand and they should trace the same curve; opposite signs mean the
+      // scale needs negating, a constant ratio is the factor to apply.
+      if (ctrl === 'yaw') {
+        setTxt('yaw-rate-gyro', yawGyro.rateGyro.toFixed(1),
+               yawGyro.scale ? 'var(--accent)' : 'var(--txt3)');
+        setTxt('yaw-rate-enc', yawGyro.rateEnc.toFixed(1));
+      }
     }
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -4267,9 +4545,11 @@
         setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 3000);
       }
     }
-    function setMode(m) {
-      state.mode = m;
-      sendCmd({ type: 'set_mode', value: m });
+    function setPiGate(on) {
+      // Optimistic, then the next telemetry packet says what really happened
+      // (the gate refuses to stay open while disarmed).
+      state.piGate = on;
+      sendCmd({ type: 'pi_drive', value: !!on });
     }
     function setMotorMode(m) {
       state.motorMode = m;
@@ -4358,6 +4638,127 @@
         b.classList.toggle('active', parseFloat(b.dataset.r) === r));
     }
 
+    // ── steering derivative source ───────────────────────────────────────
+    // The loop closes on (phi_R - phi_L)/2, which only ever moves in whole
+    // encoder counts of 1.2405 deg. Differencing that staircase turns each
+    // count into a one-tick D impulse ~10x the size of the P response to the
+    // same count, which is the idle yaw dither. Nonzero scale takes the
+    // derivative from gyro Z instead, converted into these units. Geometry
+    // puts |scale| near track_width / wheel_diameter, but the mounting sets
+    // the sign, so it is read off a log rather than derived.
+    let yawGyro = { scale: 0, botScale: null, localMs: 0, rateGyro: 0,
+                    rateEnc: 0, lastMeas: null, lastT: null };
+
+    function adoptYawGyro(raw, botT) {
+      if (!raw) return;
+      if (typeof raw.gyro_rate === 'number') yawGyro.rateGyro = raw.gyro_rate;
+      // The bot does not send the encoder-differenced rate (it is a 100 Hz
+      // quantity and this is a ~30 Hz feed), so difference it here. Good
+      // enough to compare shape and sign; the ring log has the real thing.
+      if (typeof raw.measurement === 'number' && botT != null) {
+        if (yawGyro.lastT != null && botT > yawGyro.lastT) {
+          const dt = botT - yawGyro.lastT;
+          if (dt > 0.005 && dt < 0.5)
+            yawGyro.rateEnc = (raw.measurement - yawGyro.lastMeas) / dt;
+        }
+        yawGyro.lastMeas = raw.measurement;
+        yawGyro.lastT = botT;
+      }
+      if (typeof raw.gyro_scale === 'number') {
+        yawGyro.botScale = raw.gyro_scale;
+        // Same rule as the gains above: the bot is the truth, except just
+        // after a local edit that has not echoed back yet.
+        if ((Date.now() - yawGyro.localMs) > 1200 && yawGyro.scale !== raw.gyro_scale) {
+          yawGyro.scale = raw.gyro_scale;
+          syncYawGyroUI();
+        }
+      }
+    }
+
+    function syncYawGyroUI() {
+      const vb = document.getElementById('vb-yaw-gyro');
+      if (vb && !vb.classList.contains('dirty')) vb.value = String(yawGyro.scale);
+      const sel = document.getElementById('res-yaw-gyro');
+      if (sel && !sel.dataset.built) {
+        sel.dataset.built = '1';
+        [0.01, 0.1, 1].forEach(st => {
+          const b = document.createElement('button');
+          b.className = 'res-btn' + (st === yawGyroStep ? ' active' : '');
+          b.textContent = String(st);
+          b.onclick = () => { yawGyroStep = st; syncYawGyroStepUI(); };
+          sel.appendChild(b);
+        });
+      }
+      const ds = document.getElementById('yaw-dsrc');
+      if (ds) {
+        ds.textContent = yawGyro.scale ? 'gyro' : 'enc';
+        ds.style.color = yawGyro.scale ? 'var(--accent)' : 'var(--txt3)';
+      }
+    }
+
+    let yawGyroStep = 0.1;
+    function syncYawGyroStepUI() {
+      const sel = document.getElementById('res-yaw-gyro');
+      if (!sel) return;
+      [...sel.children].forEach(b => {
+        b.classList.toggle('active', parseFloat(b.textContent) === yawGyroStep);
+      });
+    }
+
+    function onYawGyroScale(rawVal) {
+      const vb = document.getElementById('vb-yaw-gyro');
+      const v = parseFloat(rawVal);
+      if (vb) vb.classList.remove('dirty');
+      if (!isFinite(v)) {                       // junk: put the live value back
+        if (vb) vb.value = String(yawGyro.scale);
+        return;
+      }
+      yawGyro.scale = v;
+      yawGyro.localMs = Date.now();
+      if (vb) vb.value = String(v);
+      syncYawGyroUI();
+      sendCmd({ type: 'set_yaw_gyro_scale', value: v });
+    }
+
+    function bumpYawGyro(dir) {
+      // Round to the step so repeated clicks cannot accumulate float dust.
+      const next = Math.round((yawGyro.scale + dir * yawGyroStep) / yawGyroStep) * yawGyroStep;
+      onYawGyroScale(String(parseFloat(next.toFixed(4))));
+    }
+
+    // ── Hold-to-kick ────────────────────────────────────────────────────
+    // A LEVEL, not a pulse. The firmware treats the request as released if it
+    // is not refreshed within KICK_REQUEST_STALE_US (300 ms), so a dropped
+    // socket or a closed lid stops the wheels rather than latching them on.
+    // Everything that decides whether a kick is allowed -- armed, the angle
+    // window, centre-before-each-kick, the timeout, the motion gate -- is in
+    // the firmware and applies to this path exactly as to the transmitter's.
+    let kickTimer = null;
+    function kickStart(dir) {
+      kickStop();                       // never two directions at once
+      sendCmd({ type: 'kick', value: dir });
+      kickTimer = setInterval(() => sendCmd({ type: 'kick', value: dir }), 100);
+    }
+    function kickStop() {
+      if (kickTimer) { clearInterval(kickTimer); kickTimer = null; }
+      sendCmd({ type: 'kick', value: 0 });
+    }
+    function wireKick(id, dir) {
+      const b = document.getElementById(id);
+      if (!b) return;
+      const down = e => { e.preventDefault(); kickStart(dir); };
+      b.addEventListener('mousedown', down);
+      b.addEventListener('touchstart', down, { passive: false });
+      // Every way the press can end, including the pointer leaving the button
+      // mid-hold and the tab being hidden.
+      ['mouseup', 'mouseleave', 'touchend', 'touchcancel', 'blur']
+        .forEach(ev => b.addEventListener(ev, kickStop));
+      window.addEventListener('blur', kickStop);
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) kickStop();
+      });
+    }
+
     function sendPIDUpdate(ctrl) {
       // position is deliberately absent: it is not a PID and the firmware
       // rejects set_pid for it. position is tuned through sendPosConfig().
@@ -4380,14 +4781,31 @@
     // PosConfig sliders
     function buildPosSliders() {
       const wrap = document.getElementById('pos-sliders');
-      const groups = { zones: 'Zone Thresholds (ticks)', scales: 'Scale Factors', vel: 'Velocity Scales', integ: 'Integral (removes standing offset)', limits: 'Limits' };
-      let curGroup = null;
-      let html = '';
-      POS_SLIDERS.forEach(sl => {
-        if (sl.group !== curGroup) {
-          curGroup = sl.group;
-          html += `<span class="sub-label" style="margin-top:10px">${groups[curGroup]}</span>`;
-        }
+      /* Each GROUP is a column: its fields stacked under its heading, and the
+       * groups side by side left to right. Zones, then the scales those zones
+       * select, then damping, and so on. Fields no longer flow across group
+       * boundaries, so nothing is scattered -- one column, one subject. */
+      const groups = [
+        ['zones',  'Zones (ticks)'],
+        ['scales', 'Scales (divisors)'],
+        ['vel',    'Velocity / damping'],
+        ['integ',  'Integral'],
+        ['limits', 'Limits'],
+        ['return', 'Approach profile'],
+      ];
+      wrap.innerHTML = groups.map(([g, title]) => {
+        const fields = POS_SLIDERS.filter(sl => sl.group === g);
+        if (!fields.length) return '';
+        return `<div class="pos-col"><span class="sub-label pos-chead">${title}</span>` +
+               fields.map(sl => posCell(sl)).join('') + `</div>`;
+      }).join('');
+    }
+
+    /* One field = one cell: name, then the control line (− value + steps) that
+     * never wraps, then its hint. */
+    function posCell(sl) {
+      if (!sl) return '';
+      {
         const v = posCfg[sl.key] ?? 0;
         const dis = sl.dead ? ' disabled' : '';
         const sty = sl.dead ? ' style="opacity:.35"' : '';
@@ -4395,29 +4813,89 @@
         // but no longer gate what you can express -- a slider whose range did not
         // reach its own tuned value (vel_scale_stop min was 10, value was 5) is
         // exactly the failure mode typed entry does not have.
+        /* One row per field: name on the left, then − value + , then the
+         * step sizes for THAT field's unit. Every row has the same shape and
+         * the same column positions, so the eye can run down the values -- the
+         * old layout let each label push its own box to a different x. */
+        let html = '';
+        const st = sl.steps || [sl.step];
+        if (posStep[sl.key] === undefined)
+          posStep[sl.key] = st[Math.min(1, st.length - 1)];
         html += `
-      <div class="num-row"${sty}${sl.dead ? ' title="No effect — this field is not read by the control loop"' : ''}>
-        <label class="num-k" style="flex:0 0 240px" for="pin-${sl.key}">${sl.label}<span
+      <div class="pos-cell"${sty}${sl.dead ? ' title="No effect — this field is not read by the control loop"' : ''}>
+        <label class="num-k" for="pin-${sl.key}">${sl.label}<span
           class="num-key">${sl.key}</span></label>
-        <input class="num-in" id="pin-${sl.key}" type="number" inputmode="decimal"${dis}
-          step="${sl.step}" value="${v}"
-          oninput="markDirty(this)"
-          onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
-          onchange="onPosValBox('${sl.key}',this.value)">
+        <span class="pos-ctl">
+          <button class="num-bump" ${dis} title="subtract one step"
+            onclick="posBump('${sl.key}',-1)">&minus;</button>
+          <input class="num-in" id="pin-${sl.key}" type="number" inputmode="decimal"${dis}
+            step="${sl.step}" value="${v}"
+            oninput="markDirty(this)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            onchange="onPosValBox('${sl.key}',this.value)">
+          <button class="num-bump" ${dis} title="add one step"
+            onclick="posBump('${sl.key}',1)">+</button>
+          <span class="num-steps" id="pstep-${sl.key}">${st.map(x =>
+            `<button class="mult-btn${x === posStep[sl.key] ? ' active' : ''}" data-s="${x}"${dis}
+               title="one press of −/+ changes ${sl.key} by ${x}"
+               onclick="posStepPick('${sl.key}',${x})">${x}</button>`).join('')}</span>
+        </span>
         <span class="num-hint" id="phint-${sl.key}"></span>
       </div>`;
-      });
-      wrap.innerHTML = html;
+      return html;
+      }
     }
 
-    // 1 encoder tick of position = this many inches. 145.1 PPR, 4.75in wheels,
+    /* Chosen step per field, and the +/- handler. Rounding is done at the
+     * step's own decimal count: a 0.0005 press on pos_ki must not be thrown
+     * away by a fixed 3-place round, which is what happened to the gains. */
+    const posStep = {};
+    function posStepPick(key, v) {
+      posStep[key] = v;
+      document.querySelectorAll(`#pstep-${key} .mult-btn`).forEach(b =>
+        b.classList.toggle('active', parseFloat(b.dataset.s) === v));
+    }
+    function posBump(key, dir) {
+      const sl = POS_SLIDERS.find(x => x.key === key);
+      if (!sl || sl.dead) return;
+      const step = posStep[key] ?? sl.step;
+      const dp = Math.max(0, Math.round(-Math.log10(step)));
+      let v = parseFloat(((posCfg[key] ?? 0) + dir * step).toFixed(dp));
+      v = Math.max(sl.min, Math.min(sl.max, v));
+      onPosValBox(key, v);
+    }
+
+    // 1 encoder tick of position = this many inches. 145.1 PPR, 4-5/8 in (117.475 mm) wheels,
     // and enc_pos is left+right summed, hence the /2.
-    const POS_IN_PER_TICK = (120.65 * Math.PI / (2 * 145.1)) / 25.4;
+    const POS_IN_PER_TICK = (117.475 * Math.PI / (2 * 145.1)) / 25.4;
+
+    /* Copy the bot's position config into the editable copy, except a box you
+     * are typing in. Runs on every change the bot reports, visible or not, so
+     * sendPosConfig() can never push stale values back. */
+    function adoptPosFromBot() {
+      if (!posCfgBot) return;
+      POS_SLIDERS.forEach(sl => {
+        const bv = posCfgBot[sl.key];
+        const b = document.getElementById(`pin-${sl.key}`);
+        if (bv !== undefined && bv !== null && b !== document.activeElement)
+          posCfg[sl.key] = Number(bv);
+      });
+    }
 
     function syncPosUI() {
       POS_SLIDERS.forEach(sl => {
-        const v = posCfg[sl.key] ?? 0;
         const b = document.getElementById(`pin-${sl.key}`);
+        /* The BOT is the truth. Adopt its value into the editable copy unless
+         * you are typing in that box right now. Before this, a box kept showing
+         * the UI's stale number in red ("BOT HAS 4") -- and worse, committing
+         * ANY position field sent the whole stale posCfg back, silently
+         * overwriting the bot's other values with whatever the boxes showed. */
+        {
+          const bv0 = posCfgBot ? posCfgBot[sl.key] : undefined;
+          if (bv0 !== undefined && bv0 !== null && b !== document.activeElement)
+            posCfg[sl.key] = Number(bv0);
+        }
+        const v = posCfg[sl.key] ?? 0;
         if (b) { b.value = parseFloat(v); b.classList.remove('dirty'); }
         const h = document.getElementById(`phint-${sl.key}`);
 
@@ -4729,7 +5207,9 @@
       asym:      { ok: 0.05, bad: 0.15 },
       loop:      { ok: 2.0,  bad: 10.0 },
     };
-    const TUNE_MM_PER_TICK = 155.0 * Math.PI / 145.1;
+    // Per enc_pos unit. enc_pos is L+R summed, so one unit is HALF a wheel tick:
+    // /2 here. Was 155 mm and no /2 -- distances read 2.6x high.
+    const TUNE_MM_PER_TICK = 117.475 * Math.PI / (2 * 145.1);
     const TUNE_KEY = 'bbot.tuneRuns.v1';
     const TUNE_MAX_RUNS = 24;
 
@@ -5571,9 +6051,9 @@
     }
 
     // One encoder tick is this much commanded speed, so QPPS can be shown in a
-    // unit you can picture. 145.1 PPR, 4.75in wheels:
-    //   (1/145.1) rev x 120.65mm x pi = 2.611 mm  ->  0.10281 in
-    const IN_PER_TICK = (120.65 * Math.PI / 145.1) / 25.4;
+    // unit you can picture. 145.1 PPR, 4-5/8 in wheels:
+    //   (1/145.1) rev x 117.475mm x pi = 2.543 mm  ->  0.10013 in
+    const IN_PER_TICK = (117.475 * Math.PI / 145.1) / 25.4;
 
     function markDirty(el) { el.classList.add('dirty'); }
 
@@ -5664,173 +6144,36 @@
       });
     }
 
-    let looplogPrevStamp = null;
-    /* 'oneshot' = fixed seconds then write; 'free' = the bot rings a 40 s buffer
-     * until we send looplog_stop. Free is for the disturbance you cannot time. */
-    let loopMode = 'oneshot';
-    let loopRunning = false;
-
-    function setLoopMode(m) {
-      if (loopRunning) return;
-      loopMode = m;
-      document.querySelectorAll('#loop-mode .ab-seg-b').forEach((b, i) =>
-        b.classList.toggle('active', i === (m === 'oneshot' ? 0 : 1)));
-      const el = document.getElementById('in-looplog');
-      if (el) el.style.opacity = (m === 'oneshot') ? '' : '.35';
-      const btn = document.getElementById('btn-looplog');
-      if (btn && !loopRunning) btn.innerHTML = '&#9210; 100Hz';
-    }
-
-    async function startLoopLog() {
-      const el = document.getElementById('in-looplog');
+    /* Always-on 100 Hz ring on the bot, joined by serve_web.py. Nothing to
+     * start or stop: the history is already there when something happens. */
+    async function dumpRing() {
       const hint = document.getElementById('hint-looplog');
-      const btn = document.getElementById('btn-looplog');
-
-      /* Free run: this same button is the stop. The bot has been overwriting a
-       * 40 s ring the whole time, so what lands is the last 40 s before the
-       * press, not the first 40 after it. */
-      if (loopRunning && loopMode === 'free') {
-        if (!sendCmd({ type: 'looplog_stop' })) return;
-        loopRunning = false;
-        if (btn) btn.innerHTML = '&#9210; 100Hz';
-        if (hint) { hint.style.color = ''; hint.textContent = 'writing…'; }
-        return pollLoopLog();
-      }
-      if (loopRunning) return;
-
-      let secs = Math.round(parseFloat(el && el.value));
-      if (!isFinite(secs) || secs < 1) secs = 20;
-      if (secs > 40) secs = 40;
-      if (el) el.value = secs;
-
-      const cmd = (loopMode === 'free')
-        ? { type: 'looplog', mode: 'free' }
-        : { type: 'looplog', seconds: secs };
-      if (!sendCmd(cmd)) return;
-      loopRunning = true;
-      resetLinkStats();
-      /* Clock skew between this browser and the bot is unknown, so compare the
-       * served file's Last-Modified against what it was BEFORE this run rather
-       * than against our own clock. Anything different means a new capture. */
-      looplogPrevStamp = await loopLogStamp();
-
-      if (loopMode === 'free') {
-        if (btn) { btn.disabled = false; btn.innerHTML = '&#9209; STOP'; }
-        if (hint) { hint.style.color = ''; hint.textContent = 'free running — keeps the last 40 s'; }
-        return;
-      }
-
-      // The bot is busy balancing and sends no progress, so the countdown is
-      // local. It only has to be right to the second.
-      let left = secs;
-      if (btn) { btn.disabled = true; btn.textContent = left + 's'; }
-      const tick = setInterval(() => {
-        left--;
-        if (left > 0) {
-          if (btn) btn.textContent = left + 's';
-          return;
-        }
-        clearInterval(tick);
-        loopRunning = false;
-        if (btn) { btn.innerHTML = '&#9210; 100Hz'; }
-        // The countdown is NOT the completion signal. The bot finishes on a ROW
-        // COUNT -- seconds x 100 ticks -- while this counts wall-clock seconds,
-        // so at the measured 97.2 Hz mean a 20 s capture really takes 20.6 s and
-        // a 40 s one takes 41.2 s. The old fixed 600 ms grace covered the first
-        // case by 0.02 s and missed the second outright, which is what "download
-        // failed" was: fetching before the file had been written. Poll instead,
-        // so a slow loop just means a slightly longer wait.
-        pollLoopLog();
-      }, 1000);
-      if (btn) btn.textContent = left + 's';
-      if (hint) hint.textContent = 'downloads automatically when done';
-    }
-
-    /* Identity of the capture currently on the server, or null if there is
-     * none. HEAD would be tidier but SimpleHTTPRequestHandler does not route
-     * one to our /bbot.csv branch, so ask for the bytes and read the headers. */
-    async function loopLogStamp() {
+      const say = (txt, col) => { if (hint) { hint.textContent = txt; hint.title = txt; hint.style.color = col || ''; } };
+      let sec = Math.round(parseFloat(document.getElementById('in-ring')?.value));
+      if (!isFinite(sec) || sec < 0) sec = 60;
+      /* Works however the page was opened: served by the bot (same origin), or
+       * from a file on the Mac -- then ask the bot's web server directly, using
+       * the IP from Settings. serve_web.py sends CORS for this endpoint. */
+      const ip = (document.getElementById('cfg-bbb-ip')?.value || '').trim();
+      const sameOrigin = location.protocol.startsWith('http') && location.port === '8888';
+      const base = sameOrigin ? '' : (ip ? `http://${ip}:8888` : null);
+      if (base === null) { say('set the bot IP in Settings to download the ring', 'var(--orange)'); return; }
+      say('fetching ring…');
       try {
-        const r = await fetch('/bbot.csv', { cache: 'no-store' });
-        if (!r.ok) return null;
-        return (r.headers.get('Last-Modified') || '') + '/' + (r.headers.get('Content-Length') || '');
-      } catch (e) { return null; }
-    }
-
-    /* Wait for a capture that is not the one that was there when we started.
-     * 25 s of headroom past the countdown: enough for a 40 s capture at half
-     * the nominal loop rate, which is worse than anything measured. */
-    async function pollLoopLog() {
-      const hint = document.getElementById('hint-looplog');
-      const btn = document.getElementById('btn-looplog');
-      const deadline = Date.now() + 25000;
-      while (Date.now() < deadline) {
-        const now = await loopLogStamp();
-        if (now && now !== looplogPrevStamp) {
-          loopRunning = false;
-          if (btn) { btn.disabled = false; btn.innerHTML = '&#9210; 100Hz'; }
-          return fetchLoopLog();
-        }
-        if (hint) { hint.style.color = ''; hint.textContent = 'waiting for the bot to write the file…'; }
-        await new Promise(r => setTimeout(r, 400));
-      }
-      loopRunning = false;
-      if (btn) { btn.disabled = false; btn.innerHTML = '&#9210; 100Hz'; }
-      if (hint) {
-        hint.style.color = 'var(--orange)';
-        hint.textContent = 'no new capture appeared — is the loop running? (a one-shot finishes ' +
-                           'on tick count, not seconds, so a stalled loop never fills the buffer)';
-      }
-    }
-
-    async function fetchLoopLog() {
-      const hint = document.getElementById('hint-looplog');
-      /* The capture lands in /tmp ON THE BOT, and only serve_web.py (port 8888,
-       * started by start.sh) can read it. So this fetch only works when the
-       * page itself came from that server. Opened from a file:// path or from
-       * a copy served anywhere else, '/bbot.csv' resolves to the wrong host --
-       * or to no host at all -- and the old message ("download failed: Failed
-       * to fetch") could not tell that apart from "the bot has no capture yet".
-       * Say which, and say where it looked. */
-      const url = new URL('/bbot.csv', location.href).href;
-      if (location.protocol === 'file:') {
-        if (hint) {
-          hint.style.color = 'var(--orange)';
-          hint.textContent = 'opened from a file:// path — serve the page from the bot (start.sh, port 8888) to download';
-        }
-        return;
-      }
-      try {
-        const res = await fetch('/bbot.csv', { cache: 'no-store' });
-        if (!res.ok) {
-          const body = (await res.text()).trim().slice(0, 120);
-          throw new Error('HTTP ' + res.status + (body ? ' — ' + body : '') + '  [' + url + ']');
-        }
+        const res = await fetch(base + '/bbot_ring.csv?sec=' + sec, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text()).trim().slice(0, 100));
         const blob = await res.blob();
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = 'bbot.csv';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        a.download = 'bbot_ring_' + Date.now() + '.csv';
+        document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-        if (hint) {
-          hint.style.color = '';
-          hint.textContent = 'saved (' + Math.round(blob.size / 1024) + ' KB)';
-        }
-      } catch (e) {
-        if (hint) {
-          hint.style.color = 'var(--orange)';
-          /* A thrown TypeError here is the network layer, not the server: wrong
-           * host, server not running, or the page came from somewhere that is
-           * not serve_web.py. Name the URL either way -- the address it tried
-           * is the single most useful fact for working out which. */
-          const net = (e instanceof TypeError);
-          hint.textContent = 'download failed: ' + e.message +
-            (net ? '  — no server answered at ' + url + ' (is start.sh running on the bot?)' : '');
-        }
+        say('ring saved ' + Math.round(blob.size / 1024) + ' KB' + (sec ? ', ' + sec + ' s' : ', all'));
+      } catch (err) {
+        say('ring failed: ' + err.message + ' (is balance_bot_web restarted?)', 'var(--orange)');
       }
     }
+
 
     function doReboot() {
       if (!confirm('Restart the balance_bot service on the BBB?')) return;
@@ -5908,6 +6251,9 @@
     // ════════════════════════════════════════════════════════════════════════════
     buildPosSliders();
     buildResSelectors();
+    syncYawGyroUI();   // builds the D-source step buttons and the enc/gyro badge
+    wireKick('ab-kick-back', -1);
+    wireKick('ab-kick-fwd', 1);
     // NOT left to updateRC(): that returns early unless the RC panel is
     // visible, which kept the trim control out of the Pitch card until the RC
     // tab had been opened once. Nothing in it depends on SBUS.
