@@ -549,7 +549,7 @@
      * control without a lookup table. */
     .num-key {
       display: block;
-      font-family: var(--mono);
+      font-family: inherit;
       font-size: 8px;
       font-weight: 400;
       letter-spacing: 0;
@@ -559,13 +559,18 @@
       margin-top: 1px;
     }
 
+    /* The label IS the config key -- the same name robot.conf, the ring header
+     * and tuning notes use -- so a value quoted in a note can be typed into the
+     * control it names without a translation step. The prose goes underneath. */
     .num-k {
-      flex: 0 0 88px;
+      flex: 0 0 96px;
+      font-family: var(--mono);
       font-size: 10px;
       font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
+      letter-spacing: 0;
+      text-transform: none;
       color: var(--txt2);
+      word-break: break-all;
     }
 
     .num-in {
@@ -644,6 +649,68 @@
     .rb-item.drift .rb-v {
       color: var(--orange);
     }
+
+    .claw-flags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+    .claw-flag {
+      font-size: 9px; font-family: var(--mono); padding: 2px 6px;
+      border-radius: var(--r); border: 1px solid var(--border2); color: var(--txt2);
+    }
+    .claw-flag.err { color: var(--red); border-color: var(--red); }
+    .claw-flag.warn { color: var(--orange); border-color: var(--orange); }
+    .claw-flag.ok { color: var(--green); border-color: var(--border2); }
+    .chk-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+    label.chk {
+      display: flex; align-items: center; gap: 4px;
+      font-size: 10px; color: var(--txt2); cursor: pointer;
+    }
+    #claw-hw { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); }
+    #claw-hw .rb-v { font-size: 11px; }
+    /* One button size, one place they live: the bottom of the card they act on.
+       Every action button on the Claw tab is this, full stop. */
+    .card-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .act-btn {
+      flex: 1 1 0; min-width: 130px;
+      padding: 7px 10px;
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: var(--r);
+      color: var(--txt);
+      font-family: var(--mono); font-size: 10px; font-weight: 500;
+      white-space: nowrap; cursor: pointer;
+      transition: background .15s, border-color .15s;
+    }
+    .act-btn:hover { background: var(--border); border-color: var(--accent2); }
+    .act-btn.warn { color: var(--orange); border-color: var(--orange); }
+
+    /* Motor and encoder polarity stacked: one row per side, one column per
+       thing that can be backwards. Four loose checkboxes in a line never said
+       which pair belonged together. */
+    .pol-grid { display: grid; grid-template-columns: 54px 1fr 1fr; gap: 4px 10px;
+                align-items: center; max-width: 280px; }
+    .pol-h { font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: var(--txt3); }
+    .pol-k { font-size: 10px; font-weight: 700; letter-spacing: .08em;
+             text-transform: uppercase; color: var(--txt2); }
+
+    select.num-in { flex: 0 0 104px; text-align: left; font-size: 12px; padding: 5px 6px; }
+
+    /* Plot left, controls right; stacked once there is no room for both. */
+    .lidar-wrap { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+    .lidar-plot-card { flex: 1 1 420px; display: flex; justify-content: center; }
+    .lidar-side { flex: 1 1 300px; display: flex; flex-direction: column; gap: 10px; }
+    #lidar-canvas { width: 100%; max-width: 560px; aspect-ratio: 1; display: block; }
+
+    /* Eight sectors, nearest return in each. Compact on purpose: the full
+       360-point picture lives on the Pi's own page, next to the data. */
+    .lidar-sectors { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+    .lidar-sec { background: var(--bg3); border: 1px solid var(--border2);
+                 border-radius: var(--r); padding: 4px 6px; }
+    .lidar-sec .lk { font-size: 9px; letter-spacing: .06em; color: var(--txt3); }
+    .lidar-sec .lv { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--txt); }
+    .lidar-sec.near .lv { color: var(--orange); }
+    .lidar-sec.clear .lv { color: var(--txt3); }
+
+    .hint-sm { font-size: 9px; color: var(--txt3); margin-top: 8px; line-height: 1.35; }
+    .rb-sub { font-size: 9px; color: var(--txt3); margin-top: 1px; }
 
     .rb-ui {
       font-size: 9px;
@@ -939,27 +1006,49 @@
       transition: width .1s, background .2s;
     }
 
-    /* Video */
-    #video-wrap {
+    /* Video: one tile per Pi camera, shown singly or side by side. */
+    #video-card { display: none; }
+    #video-card.active { display: block; }
+
+    #video-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    /* Both: side by side when there is room, stacked when there is not. */
+    #video-grid.both {
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+
+    .video-wrap {
       position: relative;
       background: #000;
       border-radius: var(--r);
       overflow: hidden;
       width: 100%;
-      aspect-ratio: 4/3;
-      margin-bottom: 10px;
-      display: none;
+      aspect-ratio: 16/9;
     }
 
-    #video-wrap.active {
-      display: block;
-    }
+    .video-wrap.hidden { display: none; }
 
-    #video-feed {
+    /* Full screen: the Full button takes the whole grid (whichever view is
+     * selected), double-clicking a tile takes just that camera. Esc leaves. */
+    #video-grid:fullscreen { background: #000; align-content: center; padding: 0; gap: 4px; }
+    #video-grid:fullscreen .video-wrap { border-radius: 0; }
+    #video-grid.both:fullscreen { grid-template-columns: 1fr 1fr; }
+    .video-wrap:fullscreen { aspect-ratio: auto; border-radius: 0; }
+    .video-wrap { cursor: zoom-in; }
+    .video-wrap:fullscreen, #video-grid:fullscreen .video-wrap { cursor: zoom-out; }
+
+    .video-wrap img {
       width: 100%;
       height: 100%;
       object-fit: contain;
+      display: block;
     }
+
+    .video-wrap.failed img { visibility: hidden; }
 
     #cat-canvas {
       position: absolute;
@@ -969,9 +1058,29 @@
       pointer-events: none;
     }
 
-    #video-no {
-      display: none;
+    .video-tag {
+      position: absolute;
+      top: 4px;
+      right: 6px;
+      font: 10px var(--mono);
+      color: #fff;
+      background: rgba(0, 0, 0, .55);
+      padding: 1px 5px;
+      border-radius: 3px;
+      pointer-events: none;
     }
+
+    .video-no {
+      display: none;
+      position: absolute;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+      font: 11px var(--mono);
+      color: var(--txt3);
+    }
+
+    .video-wrap.failed .video-no { display: flex; }
 
     /* Graph */
     #panel-graph {
@@ -1423,17 +1532,65 @@
                font-size:11.5px;line-height:1.5}
     .tune-todo.clean{background:rgba(74,222,128,.07);border-left-color:#4ade80}
 
+    /* ── claw tab motor-current bars ──────────────────────────────── */
+    .amp-row{display:flex;align-items:center;gap:8px;margin:6px 0}
+    .amp-k{width:22px;font-size:11px;color:var(--txt3)}
+    .amp-track{position:relative;flex:1;height:14px;border-radius:3px;
+      background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);overflow:hidden}
+    .amp-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--green);
+      transition:width .12s linear}
+    .amp-pk{position:absolute;top:-1px;bottom:-1px;width:2px;left:0;background:var(--txt);opacity:0}
+    .amp-v{min-width:92px;text-align:right;font:11px ui-monospace,SFMono-Regular,monospace;color:var(--txt3)}
+
     /* ── live throughput meter ────────────────────────────────────── */
-    #perf-hud{position:fixed;left:6px;bottom:6px;z-index:9999;
+    /* Two boxes, one dock: the Bone's and the Pi's, side by side at the
+       bottom-left. Each keeps its own collapse state. */
+    #hud-dock{position:fixed;left:6px;bottom:6px;z-index:9999;
+      display:flex;gap:6px;align-items:flex-end;pointer-events:none}
+    #hud-dock > *{pointer-events:auto}
+    #perf-hud{
       font:10px/1.45 ui-monospace,SFMono-Regular,monospace;
       background:rgba(0,0,0,.78);color:#9fb3c8;border:1px solid rgba(255,255,255,.12);
       border-radius:4px;padding:5px 8px;pointer-events:auto;cursor:pointer;
-      white-space:pre;min-width:150px}
+      white-space:pre;min-width:150px;cursor:default}
     #perf-hud b{color:#e6edf3;font-weight:600}
     #perf-hud .good{color:#4ade80}
     #perf-hud .warn{color:#fbbf24}
     #perf-hud .bad{color:#f87171}
     #perf-hud.min{min-width:0;padding:3px 6px}
+    #perf-hud.min #perf-svc{display:none}
+    /* The Pi box borrows the Bone box's skin so they read as one instrument
+       rather than two widgets that happen to be adjacent. */
+    #pi-hud{font:10px/1.45 ui-monospace,SFMono-Regular,monospace;
+      background:rgba(0,0,0,.78);color:#9fb3c8;border:1px solid rgba(255,255,255,.12);
+      border-radius:4px;padding:5px 8px;white-space:pre;min-width:150px;cursor:default}
+    #pi-hud b{color:#e6edf3;font-weight:600}
+    #pi-hud .good{color:#4ade80}
+    #pi-hud .warn{color:#fbbf24}
+    #pi-hud .bad{color:#f87171}
+    #pi-hud.min{min-width:0;padding:3px 6px}
+    #pi-hud.min #pi-svc{display:none}
+    #pi-text{cursor:pointer}
+    #pi-svc{cursor:default;white-space:normal;margin-top:2px}
+    #pi-svc .svc-row{display:flex;align-items:center;gap:4px;white-space:pre}
+    #pi-svc .svc-st{flex:1}
+    #pi-svc button{font:inherit;font-size:9.5px;line-height:1;padding:2px 5px;
+      background:rgba(255,255,255,.06);color:#c9d6e3;border:1px solid rgba(255,255,255,.18);
+      border-radius:3px;cursor:pointer}
+    #pi-svc button:hover{background:rgba(255,255,255,.16)}
+    #pi-svc button.stop{color:#f87171}
+    #pi-svc button.start{color:#4ade80}
+    #perf-text{cursor:pointer}
+    #perf-svc{cursor:default;white-space:normal;margin-top:2px}
+    #perf-svc .svc-row{display:flex;align-items:center;gap:4px;white-space:pre}
+    #perf-svc .svc-st{flex:1}
+    #perf-svc button{font:inherit;font-size:9.5px;line-height:1;padding:2px 5px;
+      background:rgba(255,255,255,.06);color:#c9d6e3;border:1px solid rgba(255,255,255,.18);
+      border-radius:3px;cursor:pointer}
+    #perf-svc button:hover{background:rgba(255,255,255,.16)}
+    #perf-svc button.stop{color:#f87171}
+    #perf-svc button.start{color:#4ade80}
+    #perf-svc .svc-all{border-top:1px solid rgba(255,255,255,.12);margin-top:3px;padding-top:3px}
   </style>
 </head>
 
@@ -1464,10 +1621,6 @@
       <span class="label">Angle</span>
       <span class="val" id="h-angle" style="color:var(--txt3)">––</span>
     </div>
-    <div class="stat">
-      <span class="label">Loop</span>
-      <span class="val" id="h-loop" style="color:var(--txt3)">––</span>
-    </div>
     <span id="pkt-count">pkts: 0</span>
   </div>
 
@@ -1476,12 +1629,17 @@
     <button id="ab-arm" class="disarmed" onclick="toggleArm()">ARM</button>
     <button class="ab-btn" onclick="sendCmd({type:'zero_imu'})" title="Zero the IMU pitch offset and the encoders, and save">ZERO IMU</button>
     <button class="ab-btn" onclick="sendCmd({type:'zero_encoders'})" title="Reset encoder position and the heading target">ENC 0</button>
-    <!-- Hold to stand the robot up off its kickstand. Only does anything
+    <!-- Hold to stand the robot up. One button, not two: the direction is
+         decided by the lean, since the wheels have to travel under the centre
+         of mass and the robot knows which side that is. Only does anything
          between oob_angle_deg and kick_max_deg; the firmware enforces every
          other condition. Level, repeated while held, so letting go (or losing
          the socket) stops it. -->
-    <button class="ab-btn kick" id="ab-kick-back" title="Hold: kick upright, backwards">&#8676; KICK</button>
-    <button class="ab-btn kick" id="ab-kick-fwd" title="Hold: kick upright, forwards">KICK &#8677;</button>
+    <button class="ab-btn kick" id="ab-kick"
+      title="Hold to stand the robot up. The bot picks the direction from the lean.">KICK UP</button>
+    <!-- Why a held kick is doing nothing. The firmware decides; this only
+         repeats what it says, so the button can never claim to be allowed. -->
+    <span id="kick-why" style="font-size:10px;color:var(--yellow);align-self:center"></span>
     <button class="ab-btn" style="color:var(--red);border-color:var(--red)"
       onclick="sendCmd({type:'e_stop'})" title="Assert the hardware e-stop">E-STOP</button>
     <button class="ab-btn" style="color:var(--yellow);border-color:var(--yellow)"
@@ -1518,6 +1676,7 @@
     <div class="tab" data-tab="graph">Graph</div>
     <div class="tab" data-tab="claw">Claw</div>
     <div class="tab" data-tab="rc">RC</div>
+    <div class="tab" data-tab="lidar">Lidar</div>
     <div class="tab" data-tab="system">System</div>
     <div class="tab" data-tab="debug">Debug</div>
     <div class="tab" data-tab="settings">Settings</div>
@@ -1527,7 +1686,10 @@
   <div id="panels">
 
     <!-- CONTROL -->
-    <div id="perf-hud" onclick="perfToggle()" title="click to collapse">starting…</div>
+    <div id="hud-dock">
+      <div id="perf-hud"><div id="perf-text" onclick="perfToggle()" title="click to collapse">starting…</div><div id="perf-svc"></div></div>
+      <div id="pi-hud"><div id="pi-text" onclick="piToggle()" title="click to collapse">pi…</div><div id="pi-svc"></div></div>
+    </div>
     <div class="panel active" id="panel-control">
       <div id="cat-badge" class="card">
         <span class="cat-icon">🐱</span>
@@ -1606,9 +1768,9 @@
           <div style="font-size:9px;color:var(--txt3);margin-top:6px">
             The robot always balances; drive commands only move what it balances
             around. With Pi Drive on, commands from the Pi (hailo-tracker's
-            follower) drive it whenever the stick is centred &mdash; any stick
-            input wins, and the RC kill switch blocks the Pi when the
-            transmitter is on. The gate only opens while armed and shuts on
+            follower) drive it whenever the stick is centred or the transmitter
+            is off &mdash; any stick input wins. No transmitter is needed. The
+            gate only opens while armed and shuts on
             disarm or e-stop. Replaces the old Balance / Ext Ctrl picker: the
             UART input it selected was never used.
           </div>
@@ -1638,10 +1800,30 @@
         </div>
       </div>
 
-      <div id="video-wrap">
-        <img id="video-feed" alt="">
-        <canvas id="cat-canvas"></canvas>
-        <div id="video-no">No video feed configured</div>
+      <div class="card" id="video-card">
+        <div class="row spaced" style="margin-bottom:8px">
+          <span class="sub-label" style="margin:0">Video</span>
+          <div class="seg-group seg-sm" id="video-seg">
+            <button class="seg-btn" data-vview="0" onclick="setVideoView('0')">Cam 0</button>
+            <button class="seg-btn" data-vview="1" onclick="setVideoView('1')">Cam 1</button>
+            <button class="seg-btn" data-vview="both" onclick="setVideoView('both')">Both</button>
+            <button class="seg-btn" onclick="videoFull(document.getElementById('video-grid'))"
+              title="full screen (Esc to leave); double-click a camera for just that one">Full</button>
+          </div>
+        </div>
+        <div id="video-grid">
+          <div class="video-wrap" id="video-wrap-0">
+            <img id="video-feed-0" alt="">
+            <canvas id="cat-canvas"></canvas>
+            <span class="video-tag">cam0</span>
+            <div class="video-no">cam0: no feed</div>
+          </div>
+          <div class="video-wrap" id="video-wrap-1">
+            <img id="video-feed-1" alt="">
+            <span class="video-tag">cam1</span>
+            <div class="video-no">cam1: no feed</div>
+          </div>
+        </div>
       </div>
 
     </div>
@@ -1732,6 +1914,7 @@
           </div>
         </div>
         <div id="pit-trim-ctl"></div>
+        <div id="kick-ctl"></div>
         <div class="divider"></div>
         <div class="row spaced" style="margin-bottom:2px">
           <span class="sub-label" style="margin:0">Balance bias</span>
@@ -1877,7 +2060,7 @@
           <!-- Hold mode reads as one more parameter, because that is what it is
                (back_to_spot). It used to be two full-width banner buttons. -->
           <div class="pos-mode">
-            <label class="num-k">Hold mode<span class="num-key">back_to_spot</span></label>
+            <label class="num-k">back_to_spot<span class="num-key">Hold mode</span></label>
             <span class="seg-group seg-sm" id="hold-mode-seg">
               <button class="seg-btn active" title="Correct toward the target in every zone (A/B/C/D)"
                 onclick="setPosField('back_to_spot',1)">Full</button>
@@ -1936,67 +2119,67 @@
     <!-- CLAW -->
     <div class="panel" id="panel-claw">
 
-      <!-- Status row -->
+      <!-- Live, from telemetry -->
       <div class="stat-row">
         <div class="stat-box">
-          <div class="s-label">Voltage</div>
+          <div class="s-label">Main Batt</div>
           <div class="s-val" id="claw-v-big" style="color:var(--txt3)">––</div>
         </div>
         <div class="stat-box">
           <div class="s-label">Temp</div>
           <div class="s-val" id="claw-temp" style="color:var(--txt3)">––</div>
         </div>
-        <div class="stat-box">
-          <div class="s-label">Baud</div>
-          <div class="s-val" id="claw-baud-disp" style="color:var(--txt3);font-size:11px">––</div>
+      </div>
+
+      <!-- Motor current against the claw's own limit. Full scale is the limit
+           the RoboClaw reports (READ), else the one the bot pushes. -->
+      <div class="card" id="amp-card" onclick="resetAmpPeaks()" style="cursor:pointer"
+           title="bar = live current, tick = peak since reset, full scale = claw current limit. Click to reset peaks.">
+        <div class="card-title">
+          Motor Current
+          <span id="amp-scale" style="font-size:9px;color:var(--txt3);font-weight:400">limit ––</span>
         </div>
+        <div class="amp-row"><span class="amp-k">M1</span>
+          <div class="amp-track"><div class="amp-fill" id="amp-fill-1"></div><div class="amp-pk" id="amp-pk-1"></div></div>
+          <span class="amp-v" id="amp-v-1">––</span></div>
+        <div class="amp-row"><span class="amp-k">M2</span>
+          <div class="amp-track"><div class="amp-fill" id="amp-fill-2"></div><div class="amp-pk" id="amp-pk-2"></div></div>
+          <span class="amp-v" id="amp-v-2">––</span></div>
       </div>
 
       <!-- What the RoboClaw itself says -->
       <div class="card">
         <div class="card-title">
-          RoboClaw Hardware
+          RoboClaw
           <span id="claw-hw-note" style="font-size:9px;color:var(--txt3);font-weight:400">not read yet</span>
         </div>
-        <div style="font-size:9px;color:var(--txt3);margin-bottom:8px">
-          Read back out of the controller over serial, not from robot.conf. This is the
-          only view of settings that live in the RoboClaw's own NVM &mdash; anything set
-          in Ion Studio, including a motor or encoder inverted inside the unit.
-          Encoder mode and config are shown raw: the bit meanings move between firmware
-          revisions and a wrong label is worse than a hex byte.
-        </div>
+        <div class="claw-flags" id="claw-flags"></div>
         <div class="claw-rb" id="claw-hw"></div>
-        <button class="icon-btn" style="width:100%;margin-top:8px"
-          onclick="sendCmd({type:'read_claw_hw'})">READ FROM ROBOCLAW</button>
+        <div class="card-actions">
+          <button class="act-btn" onclick="sendCmd({type:'read_claw_hw'})">READ FROM CLAW</button>
+        </div>
+        <div class="hint-sm">
+          Read back out of the controller over serial, not from robot.conf. Orange
+          = the claw disagrees with what balance_bot pushes. Firmware version, baud,
+          pin functions and anything needing WriteNVM stay in roboclaw-util: on
+          v4.2.8 WriteNVM resets the claw's configuration.
+        </div>
       </div>
 
-      <!-- Bot readback -->
+      <!-- What balance_bot pushes to it -->
       <div class="card">
         <div class="card-title">
-          Bot Reports
+          Settings
           <span id="claw-rb-age" style="font-size:9px;color:var(--txt3);font-weight:400">waiting…</span>
         </div>
-        <div style="font-size:9px;color:var(--txt3);margin-bottom:8px">
-          What balance_bot currently holds and has pushed to the RoboClaw. Re-sent
-          whenever a command changes it, so pressing a control below should turn
-          these within a round trip. Orange = the control no longer matches what is
-          running. (For the RoboClaw's own registers, read them back with roboclaw-util.)
-        </div>
-        <div class="claw-rb" id="claw-readback"></div>
-        <button class="icon-btn" id="claw-revert" style="width:100%;margin-top:8px;display:none"
-          onclick="revertClawToBot()">PULL BOT VALUES INTO CONTROLS</button>
-      </div>
-
-      <!-- Drive mode + speed params -->
-      <div class="card">
-        <div class="card-title">Drive Mode</div>
-        <div class="seg-group" id="claw-mode-seg" style="margin-bottom:12px">
+        <span class="sub-label">Drive Mode</span>
+        <div class="seg-group seg-sm" id="claw-mode-seg" style="margin-bottom:10px">
           <button class="seg-btn active" data-mmode="0" onclick="setClawMode(0)">Duty</button>
           <button class="seg-btn" data-mmode="1" onclick="setClawMode(1)">Velocity</button>
           <button class="seg-btn" data-mmode="2" onclick="setClawMode(2)">Vel+Accel</button>
         </div>
         <div class="num-row">
-          <label class="num-k" for="in-qpps_max">QPPS Max</label>
+          <label class="num-k" for="in-qpps_max">qpps_max<span class="num-key">QPPS Max</span></label>
           <input class="num-in" id="in-qpps_max" type="number" inputmode="decimal" step="10" min="1"
             oninput="markDirty(this)"
             onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
@@ -2004,7 +2187,7 @@
           <span class="num-hint" id="hint-qpps_max"></span>
         </div>
         <div class="num-row">
-          <label class="num-k" for="in-accel_qpps">Accel</label>
+          <label class="num-k" for="in-accel_qpps">accel_qpps<span class="num-key">Accel</span></label>
           <input class="num-in" id="in-accel_qpps" type="number" inputmode="decimal" step="100" min="1"
             oninput="markDirty(this)"
             onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
@@ -2012,114 +2195,88 @@
           <span class="num-hint" id="hint-accel_qpps"></span>
         </div>
         <div class="num-row">
-          <label class="num-k" for="in-max_amps">Current Limit<span class="num-key">max_amps</span></label>
+          <label class="num-k" for="in-max_amps">max_amps<span class="num-key">Current Limit</span></label>
           <input class="num-in" id="in-max_amps" type="number" inputmode="decimal" step="0.1" min="0" max="30"
             oninput="markDirty(this)"
             onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
             onchange="commitClaw('max_amps',this.value)">
           <span class="num-hint" id="hint-max_amps"></span>
         </div>
-      </div>
-
-      <!-- Polarity -->
-      <div class="card">
-        <div class="card-title">Polarity</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div>
-            <span class="sub-label">Motor L</span>
-            <div class="seg-group" id="pol-l-seg">
-              <button class="seg-btn active" data-pol="1" onclick="setPolarity('pol_l',1)">+1</button>
-              <button class="seg-btn" data-pol="-1" onclick="setPolarity('pol_l',-1)">−1</button>
-            </div>
-          </div>
-          <div>
-            <span class="sub-label">Motor R</span>
-            <div class="seg-group" id="pol-r-seg">
-              <button class="seg-btn active" data-pol="1" onclick="setPolarity('pol_r',1)">+1</button>
-              <button class="seg-btn" data-pol="-1" onclick="setPolarity('pol_r',-1)">−1</button>
-            </div>
-          </div>
-          <div>
-            <span class="sub-label">Encoder L</span>
-            <div class="seg-group" id="enc-pol-l-seg">
-              <button class="seg-btn active" data-pol="1" onclick="setPolarity('enc_pol_l',1)">+1</button>
-              <button class="seg-btn" data-pol="-1" onclick="setPolarity('enc_pol_l',-1)">−1</button>
-            </div>
-          </div>
-          <div>
-            <span class="sub-label">Encoder R</span>
-            <div class="seg-group" id="enc-pol-r-seg">
-              <button class="seg-btn active" data-pol="1" onclick="setPolarity('enc_pol_r',1)">+1</button>
-              <button class="seg-btn" data-pol="-1" onclick="setPolarity('enc_pol_r',-1)">−1</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Velocity PID -->
-      <div class="card">
-        <div class="card-title">Velocity PID <span style="font-size:9px;color:var(--txt3);font-weight:400">(modes 1
-            &amp; 2 only)</span></div>
         <div class="num-row">
-          <label class="num-k" for="in-claw-kp">Kp</label>
+          <label class="num-k" for="in-friction_ff">friction_ff<span class="num-key">Friction FF</span></label>
+          <input class="num-in" id="in-friction_ff" type="number" inputmode="decimal" step="0.01" min="0" max="0.5"
+            oninput="markDirty(this)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            onchange="commitClaw('friction_ff',this.value)">
+          <span class="num-hint" id="hint-friction_ff"></span>
+        </div>
+        <div class="num-row">
+          <label class="num-k" for="in-min_batt_v">min_batt_v<span class="num-key">Batt Min</span></label>
+          <input class="num-in" id="in-min_batt_v" type="number" inputmode="decimal" step="0.1" min="0" max="34"
+            oninput="markDirty(this)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            onchange="commitClaw('min_batt_v',this.value)">
+          <span class="num-hint" id="hint-min_batt_v"></span>
+        </div>
+        <div class="num-row">
+          <label class="num-k" for="in-max_batt_v">max_batt_v<span class="num-key">Batt Max</span></label>
+          <input class="num-in" id="in-max_batt_v" type="number" inputmode="decimal" step="0.1" min="0" max="34"
+            oninput="markDirty(this)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            onchange="commitClaw('max_batt_v',this.value)">
+          <span class="num-hint" id="hint-max_batt_v"></span>
+        </div>
+        <div class="num-row">
+          <label class="num-k" for="in-baud">baud<span class="num-key">Baud</span></label>
+          <select class="num-in" id="in-baud" onchange="commitBaud(this.value)"></select>
+          <span class="num-hint" id="hint-baud"></span>
+        </div>
+        <span class="sub-label" style="margin-top:8px">Reversed</span>
+        <div class="pol-grid">
+          <span class="pol-h"></span><span class="pol-h">Motor</span><span class="pol-h">Encoder</span>
+          <span class="pol-k">Left</span>
+          <label class="chk"><input type="checkbox" id="chk-pol_l" onchange="setPolarity('pol_l',this.checked)">reversed</label>
+          <label class="chk"><input type="checkbox" id="chk-enc_pol_l" onchange="setPolarity('enc_pol_l',this.checked)">reversed</label>
+          <span class="pol-k">Right</span>
+          <label class="chk"><input type="checkbox" id="chk-pol_r" onchange="setPolarity('pol_r',this.checked)">reversed</label>
+          <label class="chk"><input type="checkbox" id="chk-enc_pol_r" onchange="setPolarity('enc_pol_r',this.checked)">reversed</label>
+        </div>
+        <span class="sub-label" style="margin-top:8px">Velocity PID <span style="text-transform:none">(velocity modes)</span></span>
+        <div class="num-row">
+          <label class="num-k" for="in-claw-kp">claw_kp<span class="num-key">RoboClaw P</span></label>
           <input class="num-in" id="in-claw-kp" type="number" inputmode="decimal" step="0.1" min="0"
             oninput="markDirty(this)"
             onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
             onchange="commitClawPID('kp',this.value)">
-          <span class="num-hint" id="hint-claw-kp"></span>
+          <span class="num-hint">P gain, same for M1 and M2</span>
         </div>
         <div class="num-row">
-          <label class="num-k" for="in-claw-ki">Ki</label>
+          <label class="num-k" for="in-claw-ki">claw_ki<span class="num-key">RoboClaw I</span></label>
           <input class="num-in" id="in-claw-ki" type="number" inputmode="decimal" step="0.01" min="0"
             oninput="markDirty(this)"
             onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
             onchange="commitClawPID('ki',this.value)">
-          <span class="num-hint" id="hint-claw-ki"></span>
+          <span class="num-hint">I gain, same for M1 and M2</span>
         </div>
         <div class="num-row">
-          <label class="num-k" for="in-claw-kd">Kd</label>
+          <label class="num-k" for="in-claw-kd">claw_kd<span class="num-key">RoboClaw D</span></label>
           <input class="num-in" id="in-claw-kd" type="number" inputmode="decimal" step="0.01" min="0"
             oninput="markDirty(this)"
             onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
             onchange="commitClawPID('kd',this.value)">
-          <span class="num-hint" id="hint-claw-kd"></span>
+          <span class="num-hint">D gain, same for M1 and M2</span>
         </div>
-      </div>
-
-      <!-- Serial baud -->
-      <div class="card">
-        <div class="card-title">Serial Baud Rate</div>
-        <div style="font-size:9px;color:var(--txt3);margin-bottom:8px">
-          Changes BBB serial baud to match RoboClaw setting. Takes effect immediately.
+        <div class="card-actions">
+          <button class="act-btn" id="claw-revert" style="display:none"
+            onclick="revertClawToBot()">PULL BOT VALUES</button>
+          <button class="act-btn" onclick="sendCmd({type:'save_pid'})">SAVE robot.conf</button>
+          <button class="act-btn" id="claw-dl" onclick="downloadConf()">DOWNLOAD robot.conf</button>
         </div>
-        <div class="seg-group" id="baud-seg" style="flex-wrap:wrap">
-          <button class="seg-btn" data-baud="9600" onclick="setBaud(9600)">9600</button>
-          <button class="seg-btn" data-baud="38400" onclick="setBaud(38400)">38400</button>
-          <button class="seg-btn" data-baud="115200" onclick="setBaud(115200)">115200</button>
-          <button class="seg-btn" data-baud="230400" onclick="setBaud(230400)">230400</button>
-          <button class="seg-btn active" data-baud="460800" onclick="setBaud(460800)">460800</button>
-        </div>
-      </div>
-
-      <!-- System actions -->
-      <div class="card">
-        <div class="card-title">Machine</div>
-        <div class="row" style="gap:8px">
-          <button class="icon-btn" style="flex:1" onclick="sendCmd({type:'save_pid'})">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-              <polyline points="17 21 17 13 7 13 7 21" />
-              <polyline points="7 3 7 8 15 8" />
-            </svg>
-            SAVE
-          </button>
-          <button class="icon-btn" style="flex:1;color:var(--orange);border-color:var(--orange)" onclick="doReboot()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-              <polyline points="1 4 1 10 7 10" />
-              <path d="M3.51 15a9 9 0 1 0 .49-4.95" />
-            </svg>
-            REBOOT
-          </button>
+        <div class="hint-sm">
+          Every value here is pushed to the claw at each start, on every change,
+          and again after CLR ESTOP (WriteNVM resets them). SAVE writes robot.conf
+          on the bot; DOWNLOAD fetches that file to this machine. Orange field =
+          typed but not yet confirmed by the bot.
         </div>
       </div>
 
@@ -2136,6 +2293,79 @@
           <span class="stat-box">Bone battery <b id="pi-battery-voltage">—</b></span>
         </div>
         <div id="pi-status-age" style="font-size:10px;color:var(--txt3);margin-top:8px">Waiting for Robot Link status</div>
+      </div>
+
+    </div>
+
+    <!-- LIDAR -->
+    <!-- The scanner is on the Pi and the daemon there serves it over HTTP, so
+         this tab talks to the Pi directly — nothing lidar-shaped travels over
+         robot-link or through the Bone, and none of it reaches the balance
+         loop. -->
+    <div class="panel" id="panel-lidar">
+      <div class="stat-row" style="flex-wrap:wrap;gap:8px">
+        <span class="stat-box">State <b id="lidar-state">—</b></span>
+        <span class="stat-box">RPM <b id="lidar-rpm">—</b></span>
+        <span class="stat-box">Ahead <b id="lidar-ahead">—</b></span>
+        <span class="stat-box">Nearest <b id="lidar-near">—</b></span>
+      </div>
+
+      <div class="lidar-wrap">
+        <div class="card lidar-plot-card">
+          <canvas id="lidar-canvas"></canvas>
+        </div>
+
+        <div class="lidar-side">
+          <div class="card">
+            <div class="card-title">Sectors <span style="font-size:9px;color:var(--txt3);font-weight:400">nearest return, 0° ahead</span></div>
+            <div class="lidar-sectors" id="lidar-sectors"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Scanner</div>
+            <div class="num-row">
+              <label class="num-k" for="lidar-host">Pi host</label>
+              <input class="num-in" id="lidar-host" type="text" style="flex:0 0 170px;text-align:left"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+                onchange="setLidarHost(this.value)">
+              <span class="num-hint" id="lidar-hint">host:port of the lidar daemon</span>
+            </div>
+            <div class="num-row">
+              <label class="num-k" for="lidar-range">mm<span class="num-key">Range</span></label>
+              <input class="num-in" id="lidar-range" type="number" min="500" max="16000" step="500" value="5000"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+                onchange="setLidarRange(this.value)">
+              <span class="num-hint" id="lidar-range-hint">outer ring</span>
+            </div>
+            <div class="num-row">
+              <label class="num-k" for="lidar-minsig">Min signal</label>
+              <input class="num-in" id="lidar-minsig" type="number" min="0" max="4000" step="10" value="0"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+                onchange="setLidarMinSig(this.value)">
+              <span class="num-hint">drop returns weaker than this; 0 keeps all</span>
+            </div>
+            <div class="chk-grid" style="grid-template-columns:1fr 1fr;margin-bottom:8px">
+              <label class="chk"><input type="checkbox" id="lidar-smooth" checked
+                onchange="setLidarSmooth(this.checked)">smooth</label>
+              <label class="chk"><input type="checkbox" id="lidar-despeckle" checked
+                onchange="setLidarDespeckle(this.checked)">despeckle</label>
+            </div>
+            <div class="num-row">
+              <label class="num-k">Health</label>
+              <span class="num-hint" id="lidar-health">—</span>
+            </div>
+            <div class="card-actions">
+              <button class="act-btn" onclick="lidarControl('start')">START MOTOR</button>
+              <button class="act-btn stop" onclick="lidarControl('stop')">STOP MOTOR</button>
+            </div>
+            <div class="hint-sm">
+              LDS-006 on the Pi, polled from its own daemon on port 8081. Rings
+              every metre, 0° straight ahead, forward 30° in amber. A sample the
+              scanner flags as no-return is not plotted. Nothing here feeds the
+              balance loop.
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -2222,16 +2452,17 @@
     <div class="panel" id="panel-settings">
       <div class="card">
         <div class="card-title">Connection</div>
-        <div class="field"><label>BeagleBone IP</label><input id="cfg-bbb-ip" value="192.168.1.137"></div>
+        <div class="field"><label>BeagleBone host</label><input id="cfg-bbb-ip" value="boneblue-0.local"></div>
         <div class="field"><label>WebSocket Port</label><input id="cfg-ws-port" value="8675" type="number"></div>
         <button class="btn-primary connect" onclick="doConnect()">Connect</button>
         <button class="btn-primary disconnect" onclick="doDisconnect()">Disconnect</button>
       </div>
       <div class="card">
         <div class="card-title">Video Feed</div>
-        <div class="field"><label>Pi 5 IP</label><input id="cfg-pi-ip" value="192.168.1.126"></div>
-        <div class="field"><label>Video URL (auto-derived)</label><input id="cfg-video-url"
-            placeholder="http://pi5IP:8080/video"></div>
+        <div class="field"><label>Pi 5 host</label><input id="cfg-pi-ip" value="rp5-ubuntu.local"
+            onchange="setPiIp(this.value)"></div>
+        <div class="field"><label>Video base URL (auto-derived)</label><input id="cfg-video-url"
+            placeholder="http://pi5IP:8080/video  (cam N = /video/N)"></div>
         <button class="btn-primary connect" style="margin-bottom:0" onclick="applyVideoURL()">Apply Video URL</button>
       </div>
       <div class="card">
@@ -2249,7 +2480,7 @@
         </label>
         <div class="divider"></div>
         <div class="num-row">
-          <label class="num-k" for="in-oob-angle">OOB Angle</label>
+          <label class="num-k" for="in-oob-angle">oob_angle_deg<span class="num-key">OOB Angle</span></label>
           <input class="num-in" id="in-oob-angle" type="number" inputmode="decimal"
             step="0.5" min="5" max="45"
             oninput="markDirty(this)"
@@ -2319,6 +2550,7 @@
     // Claw motor controller config (mirrors motor_config_t)
     const clawCfg = {
       mode: 0, qpps_max: 2500, accel_qpps: 5000, max_amps: 2.5,
+      min_batt_v: 0, max_batt_v: 0, friction_ff: 0,
       pol_l: -1, pol_r: -1, enc_pol_l: -1, enc_pol_r: -1,
       kp: 1.0, ki: 0.5, kd: 0.25, baud: 460800,
       received: false,
@@ -2329,6 +2561,7 @@
     // restarts and reloads robot.conf, or anything else retunes it, clawCfg is
     // stale and only this tells you so.
     let clawCfgBot = null;
+    let lastClawHw = null;   // last claw_hw read, re-drawn whenever motor_config changes
     let clawCfgBotMs = 0;
 
     // position PosConfig defaults
@@ -3072,14 +3305,17 @@
     let ws = null;
     let wsReconnectTimer = null;
 
-    // Auto-populate IP: use hostname if served from BBB, else restore last saved IP
+    // Auto-populate the bot host: the page's own host if served from the BBB,
+    // else the last saved host, else boneblue-0.local (mDNS). A saved raw IPv4
+    // address is dropped in favour of the .local name -- DHCP can move it.
     (function () {
       const hostname = window.location.hostname;
-      const savedIp = localStorage.getItem('bbot_ip');
+      let savedIp = localStorage.getItem('bbot_ip');
+      if (savedIp && /^\d{1,3}(\.\d{1,3}){3}$/.test(savedIp.trim())) savedIp = null;
       const savedPort = localStorage.getItem('bbot_port');
       const ip = (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1')
         ? hostname
-        : (savedIp || '192.168.1.137');
+        : (savedIp || 'boneblue-0.local');
       document.getElementById('cfg-bbb-ip').value = ip;
       if (savedPort) document.getElementById('cfg-ws-port').value = savedPort;
     })();
@@ -3144,6 +3380,7 @@
           else if (d.type === 'rc') applyRC(d);
           else if (d.type === 'config') applyConfig(d);
           else if (d.type === 'robot_link_status') renderPiStatus(d.status);
+          else if (d.type === 'conf_file') saveConfFile(d);
           else return;
           perfMark(_t0, d.type);
         } catch { }
@@ -3319,6 +3556,10 @@
     // connect and again whenever the bot actually changes one, so this runs a
     // handful of times per session rather than 36,000 times an hour.
     function applyConfig(d) {
+      if (d.kick_config) {
+        Object.assign(kickCfg, d.kick_config);
+        syncKickUI();
+      }
       if (d.sbus_config) {
         // Seed the editable copy once, then leave it alone so a later config
         // packet cannot yank a slider out from under a drag. Re-seeding on
@@ -3391,7 +3632,7 @@
         }
       }
 
-      if (d.claw_hw) renderClawHw(d.claw_hw);
+      if (d.claw_hw) lastClawHw = d.claw_hw;   // drawn after motor_config below: it compares against it
 
       if (d.motor_config) {
         state.motorMode = d.motor_config.mode ?? 0;
@@ -3399,6 +3640,7 @@
         // Ground truth, every frame. The seeding below runs once; this does not.
         clawCfgBot = {
           mode: mc.mode, qpps_max: mc.qpps_max, accel_qpps: mc.accel_qpps, max_amps: mc.max_amps,
+          min_batt_v: mc.min_batt_v, max_batt_v: mc.max_batt_v, friction_ff: mc.friction_ff,
           pol_l: mc.pol_l, pol_r: mc.pol_r,
           enc_pol_l: mc.enc_pol_l, enc_pol_r: mc.enc_pol_r,
           kp: mc.claw_kp, ki: mc.claw_ki, kd: mc.claw_kd,
@@ -3411,6 +3653,9 @@
           clawCfg.qpps_max = mc.qpps_max ?? clawCfg.qpps_max;
           clawCfg.accel_qpps = mc.accel_qpps ?? clawCfg.accel_qpps;
           clawCfg.max_amps = mc.max_amps ?? clawCfg.max_amps;
+          clawCfg.min_batt_v = mc.min_batt_v ?? clawCfg.min_batt_v;
+          clawCfg.max_batt_v = mc.max_batt_v ?? clawCfg.max_batt_v;
+          clawCfg.friction_ff = mc.friction_ff ?? clawCfg.friction_ff;
           clawCfg.pol_l = mc.pol_l ?? clawCfg.pol_l;
           clawCfg.pol_r = mc.pol_r ?? clawCfg.pol_r;
           clawCfg.enc_pol_l = mc.enc_pol_l ?? clawCfg.enc_pol_l;
@@ -3421,8 +3666,21 @@
           clawCfg.baud = mc.baud ?? clawCfg.baud;
           clawCfg.received = true;
           syncClawTab();
+          renderClawReadback();   // the controls just changed; say so
         }
       }
+      if (d.motor_config && clawCfgBot) {
+        /* A claw field stays orange until the BOT reports the value you typed.
+         * syncClawTab() only runs on the first packet, so without this every
+         * edit stayed orange forever and orange meant nothing. */
+        CLAW_NUM_KEYS.forEach(k => {
+          const el = document.getElementById('in-' + k);
+          const bv = clawCfgBot[k];
+          if (el && bv !== undefined && bv !== null &&
+              Math.abs(Number(bv) - Number(clawCfg[k])) <= 1e-3) el.classList.remove('dirty');
+        });
+      }
+      if (d.claw_hw || d.motor_config) renderClawHw(lastClawHw);
 
       lastConfig = d;
     }
@@ -3665,6 +3923,65 @@
               onclick="padStep(${v})">${v}</button>`).join('')}
           <span style="font-size:9px;color:var(--txt3);align-self:center">mm / press</span>
         </div>`;
+    }
+
+    /* The stand-up kick. Its settings used to live only in robot.conf, which
+     * meant editing a file over ssh with the robot lying on its side — and the
+     * one number that matters most, duty, changed meaning when the kick moved
+     * to raw PWM. All of them are typed, saved by the bot, and seeded from it. */
+    const kickCfg = { assist: true, duty: 0.8, max_deg: 25, timeout_ms: 1200, amps: 0 };
+
+    function buildKickCard() {
+      const el = document.getElementById('kick-ctl');
+      if (!el || el.childElementCount) return;
+      const row = (key, label, step, min, max, hint) => `
+        <div class="num-row">
+          <label class="num-k" for="in-kick-${key}">kick_${key}<span class="num-key">${label}</span></label>
+          <input class="num-in" id="in-kick-${key}" type="number" inputmode="decimal"
+            step="${step}" min="${min}" max="${max}"
+            oninput="markDirty(this)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+            onchange="commitKick('${key}', this.value)">
+          <span class="num-hint">${hint}</span>
+        </div>`;
+      el.innerHTML = `
+        <div class="divider"></div>
+        <span class="sub-label">Stand-up kick</span>
+        <div style="font-size:9px;color:var(--txt3);margin:4px 0 6px">
+          Hold KICK to drive both wheels under the robot and stand it up. Fires
+          only while armed, between the OOB angle and Max angle. Duty is raw
+          PWM — the drive mode does not apply to it.
+        </div>
+        <label class="chk" style="margin-bottom:6px"><input type="checkbox" id="chk-kick-assist"
+          onchange="commitKick('assist', this.checked)">enabled</label>` +
+        row('duty', 'Duty', 0.05, 0, 1, 'fraction of full voltage') +
+        row('max_deg', 'Max angle', 1, 0, 60, 'past this it is lying down; a kick only throws it') +
+        row('timeout_ms', 'Timeout', 100, 100, 5000, 'ms before it insists on a release') +
+        row('amps', 'Kick amps', 0.5, 0, 30, "0 = keep the claw's own limit while kicking");
+      syncKickUI();
+    }
+
+    function syncKickUI() {
+      const a = document.getElementById('chk-kick-assist');
+      if (a) a.checked = !!kickCfg.assist;
+      for (const k of ['duty', 'max_deg', 'timeout_ms', 'amps']) {
+        const el = document.getElementById('in-kick-' + k);
+        if (el) { el.value = kickCfg[k]; el.classList.remove('dirty'); }
+      }
+    }
+
+    function commitKick(key, raw) {
+      if (key === 'assist') {
+        kickCfg.assist = !!raw;
+      } else {
+        const v = parseFloat(raw);
+        if (!isFinite(v)) { syncKickUI(); return; }
+        kickCfg[key] = v;
+      }
+      sendCmd({ type: 'set_kick', ...kickCfg });
+      // The bot clamps and echoes the result back in its config packet, which
+      // re-runs syncKickUI — so an out-of-range entry corrects itself on screen
+      // instead of sitting there looking accepted.
     }
 
     // Balance trim: the calibration that decides where upright IS.
@@ -3940,11 +4257,14 @@
             nodeUp: d.system.node_up, nodeCpu: d.system.node_cpu,
             oledUp: d.system.oled_up, oledCpu: d.system.oled_cpu,
             battUp: d.system.batt_up, battCpu: d.system.batt_cpu,
+            linkUp: d.system.link_up, linkCpu: d.system.link_cpu,
+            sshUp: d.system.ssh_up, sshCpu: d.system.ssh_cpu,
             wifiIf: d.system.wifi_if, wifiSig: d.system.wifi_sig,
             wifiNoise: d.system.wifi_noise, wifiLink: d.system.wifi_link,
             wifiRetry: d.system.wifi_retry, wifiTxErr: d.system.wifi_txerr,
             wifiRxDrop: d.system.wifi_rxdrop,
         };
+        state.kickBlock = d.system.kick_block ?? null;
         state.battVoltage = d.system.batt_voltage ?? null;
         state.battStatus = d.system.batt_status ?? null;
         state.clawVoltage = (d.system.claw_voltage > 0) ? d.system.claw_voltage : null;
@@ -4138,6 +4458,7 @@
                       : pk >= lim * 0.75 ? 'var(--yellow)' : 'var(--txt3)';
           setTxt('h-amps-pk', `pk ${pk.toFixed(2)}`, pkCol);
         }
+        if (panelVisible('claw')) paintAmpBars();
       }
 
       const ang = state.imu.theta;
@@ -4145,7 +4466,6 @@
       setTxt('h-angle', `${ang.toFixed(1)}°`, angCol);
       setTxt('c-angle', `${ang.toFixed(1)}°`, angCol);
       setTxt('c-loop', `${state.loopHz.toFixed(0)}`, 'var(--green)');
-      setTxt('h-loop', `${state.loopHz.toFixed(0)}`, 'var(--txt)');
 
       document.getElementById('pkt-count').textContent = `pkts: ${state.packetsReceived}`;
 
@@ -4181,13 +4501,12 @@
             'applying':    'PI DRIVING',
             'no command':  'gate open · no Pi command',
             'stick':       'stick has control',
-            'rc kill':     'RC kill switch · Pi blocked',
             'gate closed': 'off',
             'disarmed':    'disarmed',
           }[st] || st;
           el.textContent = say;
           el.style.color = st === 'applying' ? 'var(--accent)'
-                         : (st === 'rc kill' ? 'var(--warn, #f5a524)' : 'var(--txt2)');
+                         : 'var(--txt2)';
         }
       }
       // Motor mode segs (Control tab + Claw tab)
@@ -4490,19 +4809,97 @@
     // ════════════════════════════════════════════════════════════════════════════
     // Video & Cat overlay
     // ════════════════════════════════════════════════════════════════════════════
+    // hailo-tracker serves each camera at /video/<index>. The view choice
+    // (cam 0, cam 1, or both) is remembered per browser. A camera that is not
+    // shown has its stream closed, so it costs the Pi no bandwidth.
+    const VIDEO_CAMS = [0, 1];
+    const VIDEO_VIEW_KEY = 'bbot_video_view';
+    const VIDEO_RETRY_MS = 3000;
+    // Assigning this aborts an open MJPEG request; removing src does not.
+    const VIDEO_BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+    let videoView = 'both';
+    let videoBase = '';
+    const videoRetry = {};
+    try { videoView = localStorage.getItem(VIDEO_VIEW_KEY) || 'both'; } catch (e) { /* private mode */ }
+    if (!['0', '1', 'both'].includes(videoView)) videoView = 'both';
+
+    function videoShown(i) {
+      return videoView === 'both' || videoView === String(i);
+    }
+
+    function videoUrl(i) {
+      // A manual URL may name /video or /video/N; either way camera i is /video/i.
+      return videoBase.replace(/\/video(\/\d+)?\/?$/, '') + '/video/' + i;
+    }
+
+    function startVideo(i) {
+      const img = document.getElementById('video-feed-' + i);
+      const wrap = document.getElementById('video-wrap-' + i);
+      clearTimeout(videoRetry[i]);
+      img.dataset.live = '1';
+      img.onload = () => { wrap.classList.remove('failed'); };
+      img.onerror = () => {
+        if (img.dataset.live !== '1') return;      // our own abort, not a fault
+        wrap.classList.add('failed');
+        // The tracker restarting or a camera coming back: keep trying while shown.
+        clearTimeout(videoRetry[i]);
+        videoRetry[i] = setTimeout(() => {
+          if (videoBase && videoShown(i)) startVideo(i);
+        }, VIDEO_RETRY_MS);
+      };
+      img.src = videoUrl(i) + '?t=' + Date.now();
+    }
+
+    function stopVideo(i) {
+      const img = document.getElementById('video-feed-' + i);
+      clearTimeout(videoRetry[i]);
+      img.dataset.live = '';
+      img.src = VIDEO_BLANK;
+    }
+
+    function renderVideoView() {
+      document.querySelectorAll('#video-seg .seg-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.vview === videoView));
+      document.getElementById('video-grid').classList.toggle('both', videoView === 'both');
+      for (const i of VIDEO_CAMS) {
+        const shown = videoShown(i);
+        document.getElementById('video-wrap-' + i).classList.toggle('hidden', !shown);
+        const img = document.getElementById('video-feed-' + i);
+        if (!videoBase) continue;
+        if (shown && img.dataset.live !== '1') startVideo(i);
+        if (!shown && img.dataset.live === '1') stopVideo(i);
+      }
+    }
+
+    function videoFull(target) {
+      if (document.fullscreenElement) { document.exitFullscreen(); return; }
+      if (target && target.requestFullscreen) target.requestFullscreen().catch(() => {});
+    }
+    for (const i of [0, 1]) {
+      const w = document.getElementById('video-wrap-' + i);
+      if (w) w.addEventListener('dblclick', () => videoFull(w));
+    }
+
+    function setVideoView(view) {
+      videoView = view;
+      try { localStorage.setItem(VIDEO_VIEW_KEY, view); } catch (e) { /* private mode */ }
+      renderVideoView();
+    }
+
     function applyVideoURL() {
       const piIp = document.getElementById('cfg-pi-ip').value.trim();
       const manual = document.getElementById('cfg-video-url').value.trim();
-      const url = manual || `http://${piIp}:8080/video`;
-      const img = document.getElementById('video-feed');
-      const wrap = document.getElementById('video-wrap');
-      img.src = url;
-      img.onerror = () => { wrap.classList.remove('active'); };
-      img.onload = () => { wrap.classList.add('active'); };
+      videoBase = manual || `http://${piIp}:8080/video`;
+      document.getElementById('video-card').classList.add('active');
+      // Restart every shown stream against the (possibly new) address.
+      for (const i of VIDEO_CAMS) stopVideo(i);
+      renderVideoView();
     }
 
+    renderVideoView();
+
     function drawCatOverlay() {
-      const wrap = document.getElementById('video-wrap');
+      const wrap = document.getElementById('video-wrap-0');
       const canvas = document.getElementById('cat-canvas');
       const cat = state.cat;
       // Assigning to canvas.width reallocates the backing store and resets all
@@ -4734,14 +5131,30 @@
     // window, centre-before-each-kick, the timeout, the motion gate -- is in
     // the firmware and applies to this path exactly as to the transmitter's.
     let kickTimer = null;
+
+    /* The firmware refuses a kick for six different reasons and used to log
+     * none of them, so a refused kick and a broken button looked identical.
+     * It now publishes which gate said no; this puts that next to the button
+     * that appears to be doing nothing. */
+    function paintKickWhy() {
+        const el = document.getElementById('kick-why');
+        if (!el) return;
+        const why = kickTimer ? (state.kickBlock || '') : '';
+        if (el.textContent !== why) el.textContent = why;
+    }
+
     function kickStart(dir) {
       kickStop();                       // never two directions at once
       sendCmd({ type: 'kick', value: dir });
-      kickTimer = setInterval(() => sendCmd({ type: 'kick', value: dir }), 100);
+      kickTimer = setInterval(() => {
+        sendCmd({ type: 'kick', value: dir });
+        paintKickWhy();
+      }, 100);
     }
     function kickStop() {
       if (kickTimer) { clearInterval(kickTimer); kickTimer = null; }
       sendCmd({ type: 'kick', value: 0 });
+      paintKickWhy();
     }
     function wireKick(id, dir) {
       const b = document.getElementById(id);
@@ -4823,8 +5236,8 @@
           posStep[sl.key] = st[Math.min(1, st.length - 1)];
         html += `
       <div class="pos-cell"${sty}${sl.dead ? ' title="No effect — this field is not read by the control loop"' : ''}>
-        <label class="num-k" for="pin-${sl.key}">${sl.label}<span
-          class="num-key">${sl.key}</span></label>
+        <label class="num-k" for="pin-${sl.key}">${sl.key}<span
+          class="num-key">${sl.label}</span></label>
         <span class="pos-ctl">
           <button class="num-bump" ${dis} title="subtract one step"
             onclick="posBump('${sl.key}',-1)">&minus;</button>
@@ -5679,46 +6092,73 @@
     }
 
     function perfPaint(now) {
-      const el = document.getElementById('perf-hud');
-      if (!el) return;
+      const hud = document.getElementById('perf-hud');
+      const el = document.getElementById('perf-text');
+      if (!hud || !el) return;
+      perfSvcBuild();
       const st = perfHud.stamps;
       const hz = st.length > 1 ? (st.length - 1) / ((st.at(-1) - st[0]) / 1000) : 0;
       let gap = 0;
       for (let i = 1; i < st.length; i++) gap = Math.max(gap, st[i] - st[i - 1]);
-      const since = st.length ? now - st.at(-1) : 0;
       const cls = v => v >= 8 ? 'good' : v >= 4 ? 'warn' : 'bad';
       const gcls = g => g < 200 ? 'good' : g < 500 ? 'warn' : 'bad';
-      const dcls = d => d < 5 ? 'good' : d < 20 ? 'warn' : 'bad';
       const wsState = (typeof ws !== 'undefined' && ws)
         ? ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][ws.readyState] : 'none';
+      const b = state.board || {};
+      // SoC temp when the board exposes one; otherwise the RoboClaw's own
+      // sensor, labelled so it is never mistaken for the CPU.
+      const temp = b.temp != null ? { v: b.temp, src: '' }
+                 : state.clawTemp != null ? { v: state.clawTemp, src: 'claw ' } : null;
       if (perfHud.min) {
         // Collapsed, but never hide a bad board number behind a healthy rx —
         // "packets are arriving" was exactly the reassuring-but-wrong summary
         // that sent us looking at the renderer three times.
-        const bb = state.board || {};
         const worst = [];
-        if (bb.cpu > 85) worst.push(`cpu ${bb.cpu.toFixed(0)}%`);
-        if (bb.ctxt > 6000) worst.push(`ctxt ${(bb.ctxt / 1000).toFixed(1)}k`);
-        if (bb.temp > 80) worst.push(`${bb.temp.toFixed(0)}°C`);
+        if (b.cpu > 85) worst.push(`cpu ${b.cpu.toFixed(0)}%`);
+        if (b.ctxt > 6000) worst.push(`ctxt ${(b.ctxt / 1000).toFixed(1)}k`);
+        if (temp && temp.v > 80) worst.push(`${temp.src}${temp.v.toFixed(0)}°C`);
         if (state.loopHz && state.loopHz < 80) worst.push(`loop ${state.loopHz.toFixed(0)}`);
         if (state.txDrops) worst.push(`drop ${state.txDrops}`);
-        el.className = 'min';
+        hud.className = 'min';
         el.innerHTML = worst.length
           ? `<span class="bad">${worst.join(' ')}</span>`
           : `<span class="${cls(hz)}">${hz.toFixed(1)}Hz</span>`;
         return;
       }
+      hud.className = '';
+      const dim = t => `<span style="opacity:.55">${t}</span>`;
+
+      // ── tx ──────────────────────────────────────────────────────────────
+      // One question: is the transmitter on and doing what the sticks say?
+      // The rc stream itself arrives whether or not the TX is on (the bot
+      // sends receiver state either way), so the verdict comes from the
+      // receiver flags, and the stream rate only proves the numbers are live.
       const rst = perfHud.rcStamps;
       const rcHz = rst.length > 1 ? (rst.length - 1) / ((rst.at(-1) - rst[0]) / 1000) : 0;
-      const rcls = v => v >= 15 ? 'good' : v >= 8 ? 'warn' : 'bad';
+      const rcAge = rst.length ? now - rst.at(-1) : Infinity;
+      const s = state.sbus;
+      const p3 = v => ['LOW', 'MID', 'HIGH'][v] ?? String(v);
+      const sgn = v => (v >= 0 ? '+' : '') + (v ?? 0).toFixed(2);
+      let tx;
+      if (rcAge > 1000 || !s) {
+        tx = `\n  <span class="bad">NO RC DATA</span>  ${dim('bot not reporting the receiver')}`;
+      } else if (!s.connected) {
+        tx = `\n  <span class="bad">NO RECEIVER</span>  ${dim('no SBUS frames — wiring/power')}`;
+      } else if (s.failsafe) {
+        tx = `\n  <span class="warn">OFF</span>  ${dim('receiver in failsafe (TX off or out of range)')}`;
+      } else {
+        tx = `\n  <span class="good">ON</span>   <span class="${rcHz >= 15 ? 'good' : rcHz >= 8 ? 'warn' : 'bad'}">${rcHz.toFixed(0)} Hz</span>` +
+             `\n  arm ${p3(s.arm)}  kill <span class="${s.kill ? 'bad' : ''}">${p3(s.kill)}</span>  spd ${p3(s.speed)}` +
+             `\n  stick drv ${sgn(s.drive)} trn ${sgn(s.turn)}` +
+             (s.driveArmed ? '' : `\n  <span class="warn">drive blocked — centre the stick</span>`);
+      }
 
-      // ── board health ────────────────────────────────────────────────────
+      // ── board ───────────────────────────────────────────────────────────
       // Thresholds come from what this board actually does, not round numbers.
       // The SBUS byte-at-a-time bug ran ~7000 ctxt/s with 60%+ IDLE cpu and made
       // ssh unusable, so ctxt is judged on its own scale and a low cpu% is
       // explicitly NOT read as "fine". Load is judged against 1.0 because this
       // is a SINGLE core: above that, the run queue never empties.
-      const b = state.board || {};
       const ccls = v => v == null ? '' : v < 60 ? 'good' : v < 85 ? 'warn' : 'bad';
       const lcls = v => v == null ? '' : v < 0.9 ? 'good' : v < 1.5 ? 'warn' : 'bad';
       const xcls = v => v == null ? '' : v < 3000 ? 'good' : v < 6000 ? 'warn' : 'bad';
@@ -5726,32 +6166,18 @@
       const mcls = v => v == null ? '' : v > 25 ? 'good' : v > 10 ? 'warn' : 'bad';
       const num  = v => (v === undefined || v === null || !isFinite(v)) ? null : v;
       const memPct = (num(b.memAvail) && num(b.memTotal)) ? 100 * b.memAvail / b.memTotal : null;
+      const loopCls = state.loopHz >= 95 ? 'good' : state.loopHz >= 80 ? 'warn' : 'bad';
 
-      // svc: a service line. Down is red whether or not it is meant to be up --
-      // "active but costing 36% of the core" and "not running at all" are both
-      // things you want to see without opening another window.
-      const svc = (label, up, cpu) => {
-        if (up === undefined) return '';
-        return `\n  <span class="${up ? ccls(cpu) : 'bad'}">${label.padEnd(5)}` +
-               `${up ? (cpu ?? 0).toFixed(0).padStart(3) + '%' : ' down'}</span>`;
-      };
-
-      let board = '';
+      let board = `\n<b>── board ──</b>` +
+        `\n  loop  <span class="${loopCls}">${(state.loopHz || 0).toFixed(0)} Hz</span>  ${dim('target 100')}`;
       if (num(b.cpu) != null) {
-        board =
-          `\n<b>── board ──</b>` +
+        board +=
           `\n  cpu   <span class="${ccls(b.cpu)}">${b.cpu.toFixed(0)}%</span>` +
           `   load <span class="${lcls(b.load1)}">${(b.load1 ?? 0).toFixed(2)}</span>` +
-          `  <span style="opacity:.55">(1 core)</span>` +
           `\n  ctxt  <span class="${xcls(b.ctxt)}">${(b.ctxt ?? 0).toLocaleString()}/s</span>` +
           `   run <span class="${b.procsR > 3 ? 'warn' : 'good'}">${b.procsR ?? 0}</span>` +
           `\n  mem   <span class="${mcls(memPct)}">${memPct == null ? '--' : memPct.toFixed(0) + '% free'}</span>` +
-          `   temp <span class="${tcls(b.temp)}">${b.temp == null ? '--' : b.temp.toFixed(0) + '°C'}</span>` +
-          `\n<b>── services (cpu) ──</b>` +
-          svc('bot', true, b.botCpu) +
-          svc('node', b.nodeUp, b.nodeCpu) +
-          svc('oled', b.oledUp, b.oledCpu) +
-          svc('batt', b.battUp, b.battCpu);
+          `   temp <span class="${tcls(temp && temp.v)}">${temp == null ? '--' : temp.src + temp.v.toFixed(0) + '°C'}</span>`;
       }
 
       // ── radio ────────────────────────────────────────────────────────────
@@ -5772,56 +6198,353 @@
         const sig = num(b.wifiSig), noise = num(b.wifiNoise);
         const scls = s2 => s2 == null ? '' : s2 > -60 ? 'good' : s2 > -75 ? 'warn' : 'bad';
         const retry = num(b.wifiRetry) ?? 0;
-        // A healthy link retries a little; tens per second is a degraded link
-        // and hundreds means something is sitting on the channel.
         const ycls = r => r < 10 ? 'good' : r < 100 ? 'warn' : 'bad';
         const snr = (sig != null && noise != null && noise !== 0) ? sig - noise : null;
         radio =
           `\n<b>── radio (${b.wifiIf}) ──</b>` +
           `\n  sig   <span class="${scls(sig)}">${sig == null ? '--' : sig + ' dBm'}</span>` +
           (snr != null ? `   snr <span class="${snr > 25 ? 'good' : snr > 15 ? 'warn' : 'bad'}">${snr} dB</span>`
-                       : `   link <span style="opacity:.55">${(num(b.wifiLink) ?? 0).toFixed(0)}</span>`) +
+                       : `   link ${dim((num(b.wifiLink) ?? 0).toFixed(0))}`) +
           `\n  retry <span class="${ycls(retry)}">${retry.toLocaleString()}/s</span>` +
           `   txerr <span class="${(num(b.wifiTxErr) ?? 0) > 0 ? 'warn' : 'good'}">${(num(b.wifiTxErr) ?? 0).toLocaleString()}</span>` +
           `\n  rxdrop <span class="${(num(b.wifiRxDrop) ?? 0) > 0 ? 'warn' : 'good'}">${(num(b.wifiRxDrop) ?? 0).toLocaleString()}/s</span>`;
       }
 
-      el.className = '';
+      // ── dashboard feed ──────────────────────────────────────────────────
+      // Reduced to one line: it only matters when it is bad, and then the
+      // colour says so.
+      const feed =
+        `\n<b>── dash ──</b>` +
+        `\n  rx <span class="${cls(hz)}">${hz.toFixed(0)} Hz</span>` +
+        `  gap <span class="${gcls(gap)}">${gap.toFixed(0)}</span>` +
+        `  ws <span class="${wsState === 'OPEN' ? 'good' : 'bad'}">${wsState.toLowerCase()}</span>` +
+        (state.txDrops ? `  <span class="bad">drop ${state.txDrops}</span>` : '');
+
       el.title =
-        'rx    telemetry packets/s arriving in this browser\n' +
-        'rc    RC (SBUS) packets/s — a separate, faster stream\n' +
-        'gap   worst delay between telemetry packets in the last 2 s\n' +
-        'draw  ms of browser time spent handling one packet\n' +
+        'tx    transmitter state from the receiver flags, rc stream rate,\n' +
+        '      switch positions and stick values the bot is actually seeing\n' +
         'loop  the bot control loop rate, target 100 Hz\n' +
-        'ws    websocket state\n' +
-        'drop  telemetry packets the BOT could not hand to the bridge\n' +
         'cpu   whole-board CPU busy (iowait counts as busy)\n' +
         'load  1-minute load average — this board has ONE core\n' +
         'ctxt  context switches/s; >6000 has made this board unusable before\n' +
         'run   processes in the run queue\n' +
-        'services: each process and its share of the core\n' +
+        'temp  SoC temperature, or the RoboClaw\'s ("claw") if the SoC has none\n' +
         'sig   wifi signal on the interface holding the default route\n' +
         'snr   signal minus noise floor; <15 dB is where throughput dies\n' +
         'retry wifi retransmissions/s — THE number that moves when a 2.4 GHz\n' +
         '      RC transmitter is powered up next to the dongle\n' +
-        'txerr/rxdrop  interface error counters, per second';
+        'rx    telemetry packets/s arriving in this browser; gap = worst ms\n' +
+        'drop  telemetry packets the BOT could not hand to the bridge\n' +
+        '--    the bot sent no field for that service: its firmware predates\n' +
+        '      this dashboard. Rebuild and restart balance_bot to fill it in\n' +
+        'click to collapse';
 
-      el.innerHTML =
-        `<b>── link ──</b>` +
-        `\n  rx    <span class="${cls(hz)}">${hz.toFixed(1)} Hz</span>` +
-        `  <span style="opacity:.55">telemetry, ${state.packetsReceived} total</span>` +
-        `\n  rc    <span class="${rcls(rcHz)}">${rcHz.toFixed(1)} Hz</span>` +
-        `  <span style="opacity:.55">sbus</span>` +
-        `\n  gap   <span class="${gcls(gap)}">${gap.toFixed(0)} ms</span> worst` +
-        `, ${since.toFixed(0)} since` +
-        `\n  draw  <span class="${dcls(perfHud.draw)}">${perfHud.draw.toFixed(1)} ms</span>` +
-        `  <span style="opacity:.55">peak ${perfHud.drawMax.toFixed(0)}</span>` +
-        `\n  loop  <span class="${state.loopHz >= 95 ? 'good' : state.loopHz >= 80 ? 'warn' : 'bad'}">` +
-        `${state.loopHz.toFixed(0)} Hz</span>  <span style="opacity:.55">target 100</span>` +
-        `\n  ws    ${wsState}` +
-        (state.txDrops ? `\n  drop  <span class="bad">${state.txDrops} bot-side</span>` : '') +
-        board + radio;
+      el.innerHTML = `<b>── tx ──</b>` + tx + board + radio + feed +
+        `\n<b>── services (cpu) ──</b>`;
+      perfSvcPaint(b);
     }
+
+    // ── services strip ──────────────────────────────────────────────────────
+    // Built once and only its status text is repainted, so a button is never
+    // torn down under the cursor mid-click. balance_bot and the node bridge are
+    // restart-only: stopping either would take this page down with no way to
+    // bring it back from here. "all" start/stop likewise touch only the
+    // auxiliary units; "restart all" hits every one.
+    const PERF_SVCS = [
+      { key: 'bot',  unit: 'balance_bot',        core: true,  up: b => b.cpu != null ? true : undefined, cpu: b => b.botCpu },
+      { key: 'node', unit: 'balance_bot_server', core: true,  up: b => b.nodeUp, cpu: b => b.nodeCpu },
+      { key: 'oled', unit: 'bbb_oled',           core: false, up: b => b.oledUp, cpu: b => b.oledCpu },
+      { key: 'batt', unit: 'batt_monitor',       core: false, up: b => b.battUp, cpu: b => b.battCpu },
+      { key: 'link', unit: 'robot-link-boned',   core: false, up: b => b.linkUp, cpu: b => b.linkCpu },
+      // Shown, never controllable: stopping sshd from a web page is how a
+      // debuggable board becomes one you have to walk over to.
+      { key: 'ssh',  unit: 'ssh',               core: true,  up: b => b.sshUp, cpu: b => b.sshCpu, fixed: true },
+    ];
+
+    function perfSvcBuild() {
+      const box = document.getElementById('perf-svc');
+      if (!box || box.childElementCount) return;
+      const btn = (unit, action, label, cls) =>
+        `<button class="${cls || ''}" data-unit="${unit}" data-action="${action}" title="${action} ${unit}">${label}</button>`;
+      box.innerHTML = PERF_SVCS.map(v =>
+        `<div class="svc-row"><span class="svc-st" id="perf-svc-${v.key}">  ${v.key.padEnd(5)}  --</span>` +
+        // restart last so it sits in the same column on every row
+        (v.fixed ? '' :
+          (v.core ? '' : btn(v.unit, 'stop', '■', 'stop') + btn(v.unit, 'start', '▶', 'start')) +
+          btn(v.unit, 'restart', '↻')) +
+        `</div>`).join('') +
+        `<div class="svc-row svc-all"><span class="svc-st">  all</span>` +
+        btn('all', 'stop', '■ aux', 'stop') + btn('all', 'start', '▶ aux', 'start') + btn('all', 'restart', '↻ all') +
+        `</div>`;
+      box.addEventListener('click', ev => {
+        ev.stopPropagation();
+        const t = ev.target.closest('button[data-unit]');
+        if (t) perfSvcCmd(t.dataset.unit, t.dataset.action);
+      });
+    }
+
+    function perfSvcPaint(b) {
+      const ccls = v => v == null ? '' : v < 60 ? 'good' : v < 85 ? 'warn' : 'bad';
+      for (const v of PERF_SVCS) {
+        const e = document.getElementById('perf-svc-' + v.key);
+        if (!e) continue;
+        const up = v.up(b), cpu = v.cpu(b);
+        // Down is red whether or not it is meant to be up — "not running" and
+        // "costing 36% of the core" are both worth seeing at a glance.
+        const html = up === undefined
+          ? `  ${v.key.padEnd(6)}   --`
+          : `  <span class="${up ? ccls(cpu) : 'bad'}">${v.key.padEnd(6)}` +
+            `${up ? (cpu ?? 0).toFixed(0).padStart(4) + '%' : ' down'}</span>`;
+        if (e.innerHTML !== html) e.innerHTML = html;
+      }
+    }
+
+    function perfSvcCmd(unit, action) {
+      const what = unit === 'all'
+        ? (action === 'restart' ? 'every service (the bot will drop and this page will reconnect)'
+                                : 'the auxiliary services (oled, batt, link)')
+        : unit;
+      const risky = action === 'stop' || unit === 'all' || unit === 'balance_bot' || unit === 'balance_bot_server';
+      if (risky && !confirm(`${action} ${what}?`)) return;
+      sendCmd({ type: 'service', unit, action });
+    }
+
+    // ── the Pi's box ────────────────────────────────────────────────────────
+    //
+    // Same skin as the Bone's, different board. hailo-tracker on the Pi serves
+    // /api/services (CORS-open, because this page comes from the BONE) with the
+    // state of its three daemons and the three verbs that change them. Nothing
+    // goes through robot-link: this is the browser talking to the Pi directly,
+    // so the box keeps working when the Bone↔Pi link is exactly the thing that
+    // is broken — which is when you most want to look at it.
+    //
+    // The host is the lidar host with the tracker's port, so there is one field
+    // to keep right (Lidar tab) rather than two that can disagree.
+    const PI_SVCS = [
+      { key: 'hailo', unit: 'hailo-tracker' },
+      { key: 'link', unit: 'robot-linkd' },
+      { key: 'lidar', unit: 'lidar' },
+      { key: 'ssh', unit: 'ssh' },
+    ];
+    const piHud = { min: false, fails: 0, msg: '', msgUntil: 0 };
+    let piBoard = null;
+
+    /* The Pi as rp5-ubuntu.local (mDNS). The bare name rp5-ubuntu does not
+     * resolve from the Mac. One value, set in Settings -> Pi 5 host and remembered, feeds
+     * this panel (port 8080), the lidar (8081) and the video feed (8080). */
+    function piIp() {
+      let v = '';
+      try { v = localStorage.getItem('bbot_pi_ip') || ''; } catch (e) { /* private mode */ }
+      if (v === '192.168.1.126') v = ''; /* old default, never chosen */
+      if (!v) {
+        const el = document.getElementById('cfg-pi-ip');
+        v = el ? el.value : '';
+      }
+      return String(v).trim().replace(/^https?:\/\//, '').replace(/[:\/].*$/, '');
+    }
+
+    function setPiIp(v) {
+      const ip = String(v || '').trim().replace(/^https?:\/\//, '').replace(/[:\/].*$/, '');
+      try { localStorage.setItem('bbot_pi_ip', ip); } catch (e) { /* private mode */ }
+      const el = document.getElementById('cfg-pi-ip');
+      if (el) el.value = ip;
+      // Lidar follows the Pi unless it was pointed somewhere else on purpose.
+      if (!lidarHost || /^rp5-ubuntu(:|$)/i.test(lidarHost) || lidarHost.split(':')[0] === piHud.lastIp)
+        setLidarHost(ip + ':8081');
+      piHud.lastIp = ip;
+      piHud.fails = 0;
+    }
+
+    function piHost() {
+      const h = piIp();
+      return h ? h + ':8080' : '';
+    }
+
+    function piUrl(path) {
+      return (location.protocol === 'https:' ? 'https://' : 'http://') + piHost() + path;
+    }
+
+    function piToggle() {
+      piHud.min = !piHud.min;
+      const el = document.getElementById('pi-hud');
+      if (el) el.className = piHud.min ? 'min' : '';
+    }
+
+    function piSvcBuild() {
+      const box = document.getElementById('pi-svc');
+      if (!box || box.childElementCount) return;
+      const btn = (unit, action, label, cls) =>
+        `<button class="${cls || ''}" data-unit="${unit}" data-action="${action}" title="${action} ${unit}">${label}</button>`;
+      box.innerHTML = PI_SVCS.map(v =>
+        `<div class="svc-row"><span class="svc-st" id="pi-svc-${v.key}">  ${v.key.padEnd(5)}  --</span>` +
+        // sshd is shown and not touchable: stopping it from a web page strands
+        // the board, and the Pi refuses the command anyway.
+        (v.unit === 'ssh' ? '' :
+          btn(v.unit, 'stop', '■', 'stop') + btn(v.unit, 'start', '▶', 'start') +
+          btn(v.unit, 'restart', '↻')) +
+        `</div>`).join('');
+      box.addEventListener('click', ev => {
+        ev.stopPropagation();
+        const t = ev.target.closest('button[data-unit]');
+        if (t) piSvcCmd(t.dataset.unit, t.dataset.action);
+      });
+    }
+
+    async function piSvcCmd(unit, action) {
+      if ((action === 'stop' || action === 'restart') &&
+          !confirm(`${action} ${unit} on the Pi?`)) return;
+      try {
+        const r = await fetch(piUrl('/api/services'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ unit, action }),
+        });
+        const j = await r.json();
+        piHud.msg = j.ok ? `${action} ${unit}` : (j.message || 'refused');
+      } catch (e) {
+        // Restarting hailo-tracker kills the thing answering this request, so
+        // a failure here is expected and is not a failure.
+        piHud.msg = unit === 'hailo-tracker' && action !== 'stop'
+          ? 'restarting tracker…' : 'no answer';
+      }
+      piHud.msgUntil = performance.now() + 4000;
+      piPaint();
+    }
+
+    let piRows = null;
+    function piPaint() {
+      const hud = document.getElementById('pi-hud');
+      const el = document.getElementById('pi-text');
+      if (!hud || !el) return;
+      piSvcBuild();
+      const up = piRows !== null;
+      if (piHud.min) {
+        hud.className = 'min';
+        const down = up ? piRows.filter(r => r.active !== 'active').length : 0;
+        el.innerHTML = !up ? '<span class="bad">pi ?</span>'
+          : down ? `<span class="bad">pi ${down} down</span>`
+                 : '<span class="good">pi ok</span>';
+        return;
+      }
+      hud.className = '';
+      const msg = performance.now() < piHud.msgUntil ? piHud.msg : '';
+
+      // ── the Pi's board, in the same shape as the Bone's ────────────────
+      // Read from /proc and /sys on the Pi itself. The thresholds differ from
+      // the Bone's for one reason: this board has four cores, so 240% is a
+      // busy tracker and not a board in trouble, while 94% on the Bone's
+      // single core is. CPU here is whole-board busy (0-100), and a service's
+      // own percentage is judged against the core count below.
+      const b = piBoard || {};
+      const cores = b.cores || 4;
+      const num = v => (v === undefined || v === null || !isFinite(v)) ? null : v;
+      const ccls = v => v == null ? '' : v < 60 ? 'good' : v < 85 ? 'warn' : 'bad';
+      const lcls = v => v == null ? '' : v < cores * 0.9 ? 'good' : v < cores * 1.5 ? 'warn' : 'bad';
+      const tcls = v => v == null ? '' : v < 65 ? 'good' : v < 80 ? 'warn' : 'bad';
+      const mcls = v => v == null ? '' : v > 25 ? 'good' : v > 10 ? 'warn' : 'bad';
+      const dim = t => `<span style="opacity:.55">${t}</span>`;
+      const memPct = (num(b.mem_avail_kb) && num(b.mem_total_kb))
+        ? 100 * b.mem_avail_kb / b.mem_total_kb : null;
+
+      let board = '';
+      if (num(b.cpu) != null) {
+        board =
+          `\n  cpu   <span class="${ccls(b.cpu)}">${b.cpu.toFixed(0)}%</span>` +
+          `   load <span class="${lcls(b.load1)}">${(b.load1 ?? 0).toFixed(2)}</span>` +
+          `  ${dim('(' + cores + ' cores)')}` +
+          `\n  mem   <span class="${mcls(memPct)}">${memPct == null ? '--' : memPct.toFixed(0) + '% free'}</span>` +
+          `   temp <span class="${tcls(b.temp_c)}">${b.temp_c == null ? '--' : b.temp_c.toFixed(0) + '°C'}</span>`;
+      }
+
+      // The Pi's own verdict on its supply. Under-voltage SINCE BOOT is the
+      // one that explains yesterday's mystery crash, and nothing else on this
+      // robot records it.
+      const th = b.throttled;
+      if (th) {
+        const now = th.undervolt_now || th.throttled_now;
+        const ever = th.undervolt_since_boot || th.throttled_since_boot;
+        if (now) board += `\n  <span class="bad">UNDER-VOLTAGE NOW</span>`;
+        else if (ever) board += `\n  <span class="warn">under-volted since boot</span>`;
+      }
+
+      // The two links that matter, and the address each is on. The RNDIS
+      // interface is named after the gadget's MAC and changes between boots,
+      // so its name is worth printing rather than assuming.
+      const rn = b.rndis, wf = b.wifi || {}, rl = b.robot_link || {};
+      let links = '';
+      if (rn || wf.ip || rl.up !== undefined) {
+        links = `\n<b>── links ──</b>`;
+        if (wf.ip) links += `\n  wifi  ${wf.ip}` +
+          (num(wf.signal) != null ? `  <span class="${wf.signal > -60 ? 'good' : wf.signal > -75 ? 'warn' : 'bad'}">${wf.signal} dBm</span>` : '');
+        links += rn ? `\n  usb   ${rn.ip}  ${dim(rn.iface)}`
+                    : `\n  usb   <span class="bad">no rndis address</span>`;
+        links += `\n  link  ` + (rl.up
+          ? `<span class="good">up</span>  ${dim('to ' + (rl.bone_host || 'bone'))}`
+          : `<span class="bad">${rl.stale ? 'stale' : 'down'}</span>` +
+            (rl.age_s != null ? `  ${dim(rl.age_s.toFixed(0) + 's ago')}` : ''));
+      }
+      el.title = 'The Pi\'s own daemons, read straight from hailo-tracker on\n' +
+                 'the Pi — not through robot-link, so this still answers when\n' +
+                 'the link is what is broken. Host follows the Lidar tab.\n' +
+                 'ssh is shown but not controllable.\n' +
+                 'click to collapse';
+      el.innerHTML = `<b>── pi (${(b.host || piHost() || 'no host')}) ──</b>` +
+        (up ? '' : `\n  <span class="bad">no answer</span>`) +
+        (msg ? `\n  <span class="warn">${msg}</span>` : '') +
+        board + links +
+        `\n<b>── services (cpu) ──</b>`;
+      // A service's percentage is of ONE core, so it is judged against how
+      // many there are: 241% of four cores is 60% of the board.
+      const scls = v => v == null ? ''
+        : v / cores < 60 ? 'good' : v / cores < 85 ? 'warn' : 'bad';
+      for (const v of PI_SVCS) {
+        const e = document.getElementById('pi-svc-' + v.key);
+        if (!e) continue;
+        const row = up ? piRows.find(r => r.unit === v.unit) : null;
+        let html;
+        if (!row) {
+          html = `  ${v.key.padEnd(6)}   --`;
+        } else if (row.active === 'active') {
+          html = `  <span class="${scls(row.cpu)}">${v.key.padEnd(6)}` +
+                 `${(row.cpu ?? 0).toFixed(0).padStart(4)}%</span>`;
+        } else {
+          // failed and inactive are different problems: one crashed, one was
+          // switched off, and only the first is a surprise.
+          const word = row.active === 'failed' ? 'FAIL' : 'off';
+          html = `  <span class="${row.active === 'failed' ? 'bad' : 'warn'}">` +
+                 `${v.key.padEnd(6)}${word.padStart(4)}</span>`;
+        }
+        if (e.innerHTML !== html) e.innerHTML = html;
+      }
+    }
+
+    async function pollPiServices() {
+      if (!piHost()) {
+        piRows = null;
+        piPaint();
+        setTimeout(pollPiServices, 5000);
+        return;
+      }
+      try {
+        const r = await fetch(piUrl('/api/services'), { cache: 'no-store' });
+        const j = await r.json();
+        piRows = j.services || [];
+        piBoard = j.board || null;
+        piHud.fails = 0;
+      } catch (e) {
+        piHud.fails++;
+        piRows = null;
+        piBoard = null;
+      }
+      piPaint();
+      // A Pi that is off should cost one request every few seconds, not two.
+      setTimeout(pollPiServices, piHud.fails > 2 ? 5000 : 2000);
+    }
+    // Deferred by a tick, not called outright: this box lives in the HUD
+    // section, which runs BEFORE the Lidar tab's code, and lidarHost — which
+    // piHost() reads — is a `let` that has not been initialised yet. Calling
+    // straight through threw a temporal-dead-zone error that killed the first
+    // poll silently and left the box showing "pi…" for ever.
+    setTimeout(pollPiServices, 0);
 
     function perfToggle() {
       perfHud.min = !perfHud.min;
@@ -5854,81 +6577,471 @@
     }
 
     // ════════════════════════════════════════════════════════════════════════════
+    // Lidar (System tab)
+    // ════════════════════════════════════════════════════════════════════════════
+    //
+    // The scanner hangs off the Pi, and the daemon there (lidar_server.py, port
+    // 8081) is what owns the serial port. This card fetches from that daemon
+    // directly rather than routing a scan through robot-link and the Bone:
+    // 360 points at 5 Hz has no business on a link that carries drive commands,
+    // and the Bone does nothing with the data.
+    //
+    // Which means a host is needed, because this page is served from the BONE.
+    // Typed once, kept in localStorage.
+    const LIDAR_SECTORS = [
+      ['AHEAD', 337, 22], ['R 45', 22, 67], ['RIGHT', 67, 112], ['R AFT', 112, 157],
+      ['ASTERN', 157, 202], ['L AFT', 202, 247], ['LEFT', 247, 292], ['L 45', 292, 337],
+    ];
+    let lidarHost = '';
+    let lidarFails = 0;
+    let lidarRange = 5000;      // mm to the outer ring
+    let lidarLast = null;       // last scan, so a resize can redraw without a fetch
+    let lidarSmooth = true;     // draw the daemon's median instead of one revolution
+    let lidarDespeckle = true;  // drop returns with no neighbour near them
+    let lidarMinSig = 0;        // drop returns weaker than this
+
+    function setLidarSmooth(v) { lidarSmooth = !!v; drawLidar(lidarLast); }
+    function setLidarDespeckle(v) { lidarDespeckle = !!v; drawLidar(lidarLast); }
+    function setLidarMinSig(v) {
+      lidarMinSig = Math.max(0, Math.min(4000, Number(v) || 0));
+      const el = document.getElementById('lidar-minsig');
+      if (el) el.value = lidarMinSig;
+      drawLidar(lidarLast);
+      if (lidarLast) renderLidarSectors(lidarLast);
+    }
+
+    /* The array everything else works from. Three filters, each for a
+     * different kind of noise this unit produces:
+     *
+     *   smooth      the daemon's per-bin median over the last few revolutions.
+     *               Kills dropouts and one-off short reads. Costs about half a
+     *               second of lag on anything moving, which is why it is a
+     *               choice and not the only thing served.
+     *   min signal  weak returns are the ones that come back at the wrong
+     *               distance — dark surfaces, glancing angles, the far edge of
+     *               range. Raising this trades points for trustworthy ones.
+     *   despeckle   a lone return with nothing near it in the next few degrees
+     *               is almost never a surface. Real objects occupy several
+     *               bins at these ranges.
+     */
+    function lidarPoints(scan) {
+      if (!scan) return null;
+      const src = (lidarSmooth && scan.dist_med) ? scan.dist_med : scan.dist;
+      if (!src) return null;
+      const sig = scan.sig || [];
+      const out = src.map((mm, a) => {
+        if (mm == null || mm <= 0) return mm;
+        if (lidarMinSig && (sig[a] ?? 0) >= 0 && (sig[a] ?? 0) < lidarMinSig) return 0;
+        return mm;
+      });
+      if (!lidarDespeckle) return out;
+      const keep = out.slice();
+      for (let a = 0; a < out.length; a++) {
+        const mm = out[a];
+        if (mm == null || mm <= 0) continue;
+        let friend = false;
+        for (let k = -3; k <= 3 && !friend; k++) {
+          if (!k) continue;
+          const nb = out[(a + k + 360) % 360];
+          // "Near" scales with range: 100 mm apart at 1 m is a different
+          // surface, at 5 m it is the same wall seen one degree along.
+          if (nb > 0 && Math.abs(nb - mm) < Math.max(120, mm * 0.12)) friend = true;
+        }
+        if (!friend) keep[a] = 0;
+      }
+      return keep;
+    }
+
+    function setLidarRange(v) {
+      const n = Math.max(500, Math.min(16000, Number(v) || 5000));
+      lidarRange = n;
+      const el = document.getElementById('lidar-range');
+      if (el) el.value = n;
+      const h = document.getElementById('lidar-range-hint');
+      if (h) h.textContent = `outer ring ${(n / 1000).toFixed(1)} m`;
+      drawLidar(lidarLast);
+    }
+
+    /* Canvas cannot resolve var(--x): it wants a real colour. Read them once
+     * from the stylesheet so the plot follows the theme instead of hard-coding
+     * a second palette that drifts from it. */
+    let lidarPal = null;
+    function lidarColors() {
+      if (lidarPal) return lidarPal;
+      const cs = getComputedStyle(document.documentElement);
+      const pick = (name, fallback) => (cs.getPropertyValue(name) || '').trim() || fallback;
+      lidarPal = {
+        green: pick('--green', '#4ade80'),
+        orange: pick('--orange', '#fbbf24'),
+        txt: pick('--txt', '#e6edf3'),
+      };
+      return lidarPal;
+    }
+
+    /* Polar plot, 0° up, rings every metre. Points past the chosen range are
+     * drawn dim on the rim rather than dropped: a wide-open room should still
+     * look open, not empty. */
+    function drawLidar(scan) {
+      const cv = document.getElementById('lidar-canvas');
+      if (!cv) return;
+      const dpr = window.devicePixelRatio || 1;
+      const size = Math.max(200, Math.round(cv.clientWidth || 360));
+      if (cv.width !== Math.round(size * dpr)) cv.width = cv.height = Math.round(size * dpr);
+      const ctx = cv.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, size, size);
+      const cx = size / 2, cy = size / 2, r = size / 2 - 16;
+      const maxMm = lidarRange;
+
+      ctx.strokeStyle = 'rgba(255,255,255,.10)';
+      ctx.fillStyle = 'rgba(255,255,255,.35)';
+      ctx.font = '10px ui-monospace, SFMono-Regular, monospace';
+      ctx.lineWidth = 1;
+      const step = maxMm > 8000 ? 2000 : 1000;
+      for (let mm = step; mm <= maxMm; mm += step) {
+        const rr = r * mm / maxMm;
+        ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillText((mm / 1000) + 'm', cx + 3, cy - rr - 3);
+      }
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r);
+      ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy);
+      ctx.stroke();
+      ctx.fillText('0°', cx + 4, cy - r + 11);
+      ctx.fillText('90°', cx + r - 22, cy - 5);
+      ctx.fillText('180°', cx + 4, cy + r - 3);
+      ctx.fillText('270°', cx - r + 4, cy - 5);
+
+      const pal = lidarColors();
+      const d = lidarPoints(scan);
+      if (d) {
+        for (let a = 0; a < d.length; a++) {
+          const mm = d[a];
+          if (mm == null || mm <= 0) continue;     // -1 stale, 0 no return
+          const t = a * Math.PI / 180;
+          const rr = r * Math.min(mm, maxMm) / maxMm;
+          const x = cx + Math.sin(t) * rr, y = cy - Math.cos(t) * rr;
+          // Forward 30° in amber so the front of the robot is identifiable at
+          // a glance. It is not a warning.
+          ctx.fillStyle = mm > maxMm ? 'rgba(255,255,255,.18)'
+                        : (a <= 15 || a >= 345) ? pal.orange : pal.green;
+          ctx.fillRect(x - 1.5, y - 1.5, 3, 3);
+        }
+      }
+      // The robot itself, and which way it faces.
+      ctx.fillStyle = pal.txt;
+      ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.fill();
+      if (!d) {
+        ctx.fillStyle = 'rgba(255,255,255,.35)';
+        ctx.fillText('no scan', cx - 20, cy + 20);
+      }
+    }
+    window.addEventListener('resize', () => drawLidar(lidarLast));
+
+    function setLidarHost(v) {
+      lidarHost = String(v || '').trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const el = document.getElementById('lidar-host');
+      if (el) el.value = lidarHost;
+      try { localStorage.setItem('bbot_lidar_host', lidarHost); } catch (e) { /* private mode */ }
+      lidarFails = 0;
+    }
+
+    (function initLidarHost() {
+      let saved = null;
+      try { saved = localStorage.getItem('bbot_lidar_host'); } catch (e) { /* ignore */ }
+      // Replace a remembered host that was only ever a default: the bare
+      // rp5-ubuntu (never resolved from the Mac) and 192.168.1.126 (the
+      // previous default, written here on 2026-10-02). Anything else was set
+      // on purpose and is kept.
+      const stale = /^(rp5-ubuntu|192\.168\.1\.126)(:|$)/i;
+      lidarHost = (saved && !stale.test(saved)) ? saved : piIp() + ':8081';
+      try { localStorage.setItem('bbot_lidar_host', lidarHost); } catch (e) { /* private mode */ }
+      piHud.lastIp = piIp();
+      { const pe = document.getElementById('cfg-pi-ip'); if (pe) pe.value = piIp(); }
+      const el = document.getElementById('lidar-host');
+      if (el) el.value = lidarHost;
+      renderLidarSectors(null);
+      setLidarRange(5000);
+    })();
+
+    function lidarUrl(path) {
+      return (location.protocol === 'https:' ? 'https://' : 'http://') + lidarHost + path;
+    }
+
+    function renderLidarSectors(scan) {
+      const host = document.getElementById('lidar-sectors');
+      if (!host) return;
+      const d = lidarPoints(scan);
+      host.innerHTML = LIDAR_SECTORS.map(([name, a0, a1]) => {
+        if (!d) return `<div class="lidar-sec clear"><div class="lk">${name}</div><div class="lv">—</div></div>`;
+        let best = null;
+        // A sector can wrap through zero, so walk it by stepping forward.
+        const span = (a1 - a0 + 360) % 360;
+        for (let k = 0; k < span; k++) {
+          const mm = d[(a0 + k) % 360];
+          if (mm == null || mm <= 0) continue;       // -1 stale, 0 no return
+          if (best === null || mm < best) best = mm;
+        }
+        const cls = best === null ? 'clear' : best < 500 ? 'near' : '';
+        const txt = best === null ? 'clear' : (best / 1000).toFixed(2) + ' m';
+        return `<div class="lidar-sec ${cls}"><div class="lk">${name}</div><div class="lv">${txt}</div></div>`;
+      }).join('');
+    }
+
+    async function lidarControl(motor) {
+      const hint = document.getElementById('lidar-hint');
+      try {
+        const r = await fetch(lidarUrl('/control'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ motor }),
+        });
+        const j = await r.json();
+        if (hint) hint.textContent = j.ok ? 'motor ' + j.motor : ('failed: ' + (j.error || r.status));
+      } catch (e) {
+        if (hint) hint.textContent = 'no answer from ' + lidarHost;
+      }
+    }
+
+    async function pollLidar() {
+      const set = (id, v, col) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = v;
+        el.style.color = col || '';
+      };
+      // Only while the System tab is up: this is a cross-board HTTP request,
+      // not part of the telemetry stream, and nothing here is recorded.
+      if (!panelVisible('lidar') || !lidarHost) {
+        setTimeout(pollLidar, 1000);
+        return;
+      }
+      try {
+        const r = await fetch(lidarUrl('/scan'), { cache: 'no-store' });
+        const s2 = await r.json();
+        lidarFails = 0;
+        const rates = s2.rates || {};
+        lidarLast = s2;
+        // spinning, not motor: the daemon's motor field is only what it last
+        // asked for, and an unpowered scanner accepts the command in silence.
+        set('lidar-state',
+            !s2.ok ? 'SERIAL ERROR'
+                   : !s2.spinning ? 'NOT SPINNING'
+                   : 'RUNNING',
+            (!s2.ok || !s2.spinning) ? 'var(--red)' : 'var(--green)');
+        set('lidar-rpm', s2.spinning ? (s2.rpm || 0).toFixed(0) : '—');
+        // One line rather than four stat boxes: these only matter when they
+        // are wrong, and then the colour says so.
+        const per = (rates.packets || 0) * 4;
+        const invPct = per ? 100 * (rates.invalid || 0) / per : null;
+        const bad = rates.checksum_bad || 0;
+        set('lidar-health',
+            !s2.ok ? (s2.serial_error || 'serial error')
+                   : `${s2.points_fresh}/360 fresh · ${rates.revs || 0} rev/s · ` +
+                     `${invPct === null ? '--' : invPct.toFixed(0) + '% no-return'}` +
+                     (bad ? ` · ${bad}/s framing` : ''),
+            (!s2.ok || bad || (invPct !== null && invPct > 90)) ? 'var(--red)' : 'var(--txt3)');
+        const d = lidarPoints(s2) || [];
+        let near = null, nearA = 0, ahead = null;
+        for (let a = 0; a < d.length; a++) {
+          const mm = d[a];
+          if (mm == null || mm <= 0) continue;
+          if (near === null || mm < near) { near = mm; nearA = a; }
+          if ((a <= 15 || a >= 345) && (ahead === null || mm < ahead)) ahead = mm;
+        }
+        set('lidar-ahead', ahead === null ? 'clear' : (ahead / 1000).toFixed(2) + ' m',
+            ahead !== null && ahead < 400 ? 'var(--red)' : '');
+        set('lidar-near', near === null ? 'clear'
+            : `${(near / 1000).toFixed(2)} m @ ${nearA}°`);
+        renderLidarSectors(s2);
+        drawLidar(s2);
+      } catch (e) {
+        lidarFails++;
+        lidarLast = null;
+        set('lidar-state', 'NO ANSWER', 'var(--red)');
+        set('lidar-health', 'nothing at ' + lidarHost, 'var(--red)');
+        ['lidar-ahead', 'lidar-near', 'lidar-rpm'].forEach(id => set(id, '—'));
+        renderLidarSectors(null);
+        drawLidar(null);
+      }
+      // A Pi that is off should cost one request every few seconds, not five.
+      setTimeout(pollLidar, lidarFails > 2 ? 5000 : 500);
+    }
+    pollLidar();
+
+    // ════════════════════════════════════════════════════════════════════════════
     // Claw tab
     // ════════════════════════════════════════════════════════════════════════════
 
+    const CLAW_NUM_KEYS = ['qpps_max', 'accel_qpps', 'max_amps', 'min_batt_v', 'max_batt_v', 'friction_ff'];
+    const CLAW_POL_KEYS = ['pol_l', 'pol_r', 'enc_pol_l', 'enc_pol_r'];
+
     function syncClawTab() {
-      // mode seg
       document.querySelectorAll('#claw-mode-seg .seg-btn').forEach(b =>
         b.classList.toggle('active', parseInt(b.dataset.mmode) === clawCfg.mode));
-      // QPPS + accel -- typed fields now. Clearing .dirty here is what turns a
-      // field from orange back to normal, and it only happens when the BOT
-      // reports the value, never when you type it.
-      ['qpps_max', 'accel_qpps', 'max_amps'].forEach(k => {
+      // Typed fields. Clearing .dirty here is what turns a field from orange
+      // back to normal, and it only happens when the BOT reports the value,
+      // never when you type it.
+      CLAW_NUM_KEYS.forEach(k => {
         const el = document.getElementById('in-' + k);
         if (el) { el.value = clawCfg[k]; el.classList.remove('dirty'); }
         clawHint(k);
       });
-      // polarity segs
-      syncPolSeg('pol-l-seg', clawCfg.pol_l);
-      syncPolSeg('pol-r-seg', clawCfg.pol_r);
-      syncPolSeg('enc-pol-l-seg', clawCfg.enc_pol_l);
-      syncPolSeg('enc-pol-r-seg', clawCfg.enc_pol_r);
-      // velocity PID
+      // Reverse = polarity -1.
+      CLAW_POL_KEYS.forEach(k => {
+        const el = document.getElementById('chk-' + k);
+        if (el) el.checked = Number(clawCfg[k]) < 0;
+      });
       syncClawPIDUI();
-      // baud
-      syncBaudSeg(clawCfg.baud);
-      setTxt('claw-baud-disp', clawCfg.baud > 0 ? String(clawCfg.baud) : '––', 'var(--txt)');
+      syncBaudUI();
     }
 
-    // M1/M2 rather than L/R on purpose: which physical wheel is M1 depends on
-    // wiring, and this panel's whole job is to stop assuming.
-    const CLAW_HW_FIELDS = [
-      ['m1_kp', 'M1 Kp', v => Number(v).toFixed(3)],
-      ['m1_ki', 'M1 Ki', v => Number(v).toFixed(3)],
-      ['m1_kd', 'M1 Kd', v => Number(v).toFixed(3)],
-      ['m1_qpps', 'M1 QPPS', v => String(v)],
-      ['m2_kp', 'M2 Kp', v => Number(v).toFixed(3)],
-      ['m2_ki', 'M2 Ki', v => Number(v).toFixed(3)],
-      ['m2_kd', 'M2 Kd', v => Number(v).toFixed(3)],
-      ['m2_qpps', 'M2 QPPS', v => String(v)],
-      ['enc_mode_m1', 'Enc Mode M1', v => '0x' + Number(v).toString(16).padStart(2, '0').toUpperCase()],
-      ['enc_mode_m2', 'Enc Mode M2', v => '0x' + Number(v).toString(16).padStart(2, '0').toUpperCase()],
-      ['config', 'Config', v => '0x' + Number(v).toString(16).padStart(4, '0').toUpperCase()],
-    ];
+    /* Serial rate for the BBB end of the link. The claw's own rate lives in its
+     * NVM, so the two have to be changed together or the link goes silent —
+     * hence the confirm, and the readback tile that shows what the claw says
+     * its rate is. */
+    function syncBaudUI() {
+      const el = document.getElementById('in-baud');
+      if (!el) return;
+      if (!el.options.length)
+        el.innerHTML = CLAW_BAUDS.map(b => `<option value="${b}">${b}</option>`).join('');
+      el.value = String(clawCfg.baud);
+      const hint = document.getElementById('hint-baud');
+      if (hint) hint.textContent = 'must match the rate in the claw\'s NVM';
+    }
+
+    function commitBaud(raw) {
+      const v = parseInt(raw, 10);
+      if (!CLAW_BAUDS.includes(v)) { syncBaudUI(); return; }
+      if (v === clawCfg.baud) return;
+      if (!confirm(`Switch the serial link to ${v} baud?\n\n` +
+                   'The RoboClaw keeps its own rate in NVM. If it is not set to the ' +
+                   'same rate, the bot loses the motor link until they match again.')) {
+        syncBaudUI(); return;
+      }
+      clawCfg.baud = v;
+      sendMotorConfig();
+    }
+
+    /* robot.conf itself, fetched from the bot and saved here. The file, not a
+     * rebuild of it from the config packet: a backup you cannot copy straight
+     * back onto the bot is not a backup. */
+    let confDlTimer = null;
+    function downloadConf() {
+      const btn = document.getElementById('claw-dl');
+      if (!sendCmd({ type: 'get_conf' })) return;
+      if (btn) { btn.textContent = 'ASKING THE BOT…'; btn.disabled = true; }
+      clearTimeout(confDlTimer);
+      confDlTimer = setTimeout(() => {
+        if (btn) { btn.textContent = 'NO ANSWER — TRY AGAIN'; btn.disabled = false; }
+      }, 4000);
+    }
+
+    function saveConfFile(d) {
+      const btn = document.getElementById('claw-dl');
+      clearTimeout(confDlTimer);
+      if (btn) btn.disabled = false;
+      if (d.error || typeof d.text !== 'string') {
+        if (btn) btn.textContent = 'FAILED: ' + (d.error || 'no file');
+        return;
+      }
+      const name = (d.name || 'robot.conf').split('/').pop();
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([d.text], { type: 'text/plain' }));
+      a.download = `${name.replace(/\.conf$/, '')}-${stamp}.conf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      if (btn) {
+        btn.textContent = d.truncated ? 'SAVED (TRUNCATED)' : 'SAVED — ' + a.download;
+        setTimeout(() => { btn.textContent = 'DOWNLOAD robot.conf'; }, 4000);
+      }
+    }
+
+    // Status bits as roboclaw-util decodes them for this unit (firmware 4.x).
+    // Warnings and home flags are not faults; everything else stops the claw.
+    const CLAW_STATUS = {
+      1: ['M1 OverCurrent', 'err'], 2: ['M2 OverCurrent', 'err'], 3: ['E-Stop', 'err'],
+      4: ['Temp Error', 'err'], 5: ['Temp2 Error', 'err'], 6: ['Main Batt High', 'err'],
+      7: ['Logic Batt High', 'err'], 8: ['Logic Batt Low', 'err'],
+      9: ['Main Batt High Warn', 'warn'], 10: ['Main Batt Low Warn', 'warn'],
+      11: ['Temp Warn', 'warn'], 12: ['Temp2 Warn', 'warn'],
+      13: ['M1 Home', 'info'], 14: ['M2 Home', 'info'],
+    };
+    const CLAW_PIN_MODES = {
+      0x00: 'off', 0x41: 'E-Stop', 0xC1: 'E-Stop latch', 0x14: 'V clamp',
+      0x80: 'Enc toggle', 0x04: 'Brake', 0x11: 'Stop M1', 0x21: 'Stop M2',
+      0x84: 'User out', 0x40: 'Flip sw',
+    };
+    const CLAW_BAUDS = [2400, 9600, 19200, 38400, 57600, 115200, 230400, 460800];
+    const hex = (v, w) => '0x' + Number(v).toString(16).padStart(w, '0').toUpperCase();
+
+    function clawTile(label, value, sub, drift) {
+      return `<div class="rb-item${drift ? ' drift' : ''}"><div class="rb-k">${label}</div>` +
+             `<div class="rb-v">${value}</div>${sub ? `<div class="rb-sub">${sub}</div>` : ''}</div>`;
+    }
 
     function renderClawHw(hw) {
       const host = document.getElementById('claw-hw');
       const note = document.getElementById('claw-hw-note');
+      const flagsEl = document.getElementById('claw-flags');
       if (!host) return;
 
       if (!hw || !hw.valid) {
         host.innerHTML = '<div style="font-size:11px;color:var(--txt3)">press READ FROM ROBOCLAW</div>';
+        if (flagsEl) flagsEl.innerHTML = '';
         if (note) { note.textContent = 'not read yet'; note.style.color = 'var(--txt3)'; }
         return;
       }
 
-      host.innerHTML = CLAW_HW_FIELDS.map(([k, label, fmt]) => {
-        const v = hw[k];
-        if (v === undefined || v === null)
-          return `<div class="rb-item"><div class="rb-k">${label}</div><div class="rb-v" style="color:var(--txt3)">––</div></div>`;
-        return `<div class="rb-item"><div class="rb-k">${label}</div><div class="rb-v">${fmt(v)}</div></div>`;
-      }).join('');
+      // Error / warning flags first: the one thing worth reading before anything else.
+      const st = Number(hw.status) || 0;
+      const flags = Object.entries(CLAW_STATUS)
+        .filter(([bit]) => st & (1 << Number(bit)))
+        .map(([, [name, cls]]) => `<span class="claw-flag ${cls}">${name}</span>`);
+      if (flagsEl) flagsEl.innerHTML = flags.length ? flags.join('')
+        : '<span class="claw-flag ok">no errors or warnings</span>';
 
-      // The two motors having different gains is not a thing you would ever set
-      // on purpose on a differential drive, so say so loudly rather than
-      // leaving it for the eye to catch across eight tiles.
+      // Limits the claw holds vs what balance_bot pushes: they should match.
+      const f1 = v => Number(v).toFixed(1);
+      const want = clawCfgBot || clawCfg;
+      const ampDrift = want.max_amps > 0 &&
+        (Math.abs(hw.max_amps_m1 - want.max_amps) > 0.05 || Math.abs(hw.max_amps_m2 - want.max_amps) > 0.05);
+      const minDrift = want.min_batt_v > 0 && Math.abs(hw.batt_min - want.min_batt_v) > 0.05;
+      const maxDrift = want.max_batt_v > 0 && Math.abs(hw.batt_max - want.max_batt_v) > 0.05;
+      const cfg = Number(hw.config) || 0;
+      const cells = (cfg >> 2) & 7;
+      const pins = hw.pins || [];
+      const pin = i => (pins[i] === undefined ? '––' : (CLAW_PIN_MODES[pins[i]] ?? hex(pins[i], 2)));
+      const pid = m => ['kp', 'ki', 'kd'].map(g => Number(hw[m + '_' + g]).toFixed(3)).join(' / ');
+
+      host.innerHTML = [
+        clawTile('Main / Logic', `${f1(hw.main_v)} / ${f1(hw.logic_v)} V`),
+        clawTile('Temp', `${f1(hw.temp_c)}°C`),
+        clawTile('Batt Limits', `${f1(hw.batt_min)}–${f1(hw.batt_max)} V`,
+                 (minDrift || maxDrift) ? 'bot pushes ' + [want.min_batt_v > 0 ? `min ${f1(want.min_batt_v)} V` : '', want.max_batt_v > 0 ? `max ${f1(want.max_batt_v)} V` : ''].filter(Boolean).join(', ') : 'min – max',
+                 minDrift || maxDrift),
+        clawTile('Current Limit', `${Number(hw.max_amps_m1).toFixed(2)} / ${Number(hw.max_amps_m2).toFixed(2)} A`,
+                 ampDrift ? `bot pushes ${Number(want.max_amps).toFixed(2)} A` : 'M1 / M2', ampDrift),
+        clawTile('M1 PID', pid('m1'), `QPPS ${hw.m1_qpps}`),
+        clawTile('M2 PID', pid('m2'), `QPPS ${hw.m2_qpps}`),
+        clawTile('Encoder Mode', `${hex(hw.enc_mode_m1, 2)} / ${hex(hw.enc_mode_m2, 2)}`, 'M1 / M2'),
+        clawTile('Config', hex(cfg, 4),
+                 `${['RC', 'Analog', 'Simple', 'Packet'][cfg & 3]} · ${CLAW_BAUDS[(cfg >> 5) & 7] ?? '?'} · ` +
+                 `addr ${hex(0x80 + ((cfg >> 9) & 7), 2)} · LiPo ${cells ? cells + 'S' : 'off'}`),
+        clawTile('Pins S3 S4 S5', `${pin(0)} · ${pin(1)} · ${pin(2)}`, `CTRL1 ${pin(3)} · CTRL2 ${pin(4)}`),
+      ].join('');
+
+      // Two motors with different gains is never deliberate on a diff drive.
       const asym = ['kp', 'ki', 'kd'].some(g =>
         Math.abs(Number(hw['m1_' + g]) - Number(hw['m2_' + g])) > 1e-3)
         || Number(hw.m1_qpps) !== Number(hw.m2_qpps);
-      const encDiff = Number(hw.enc_mode_m1) !== Number(hw.enc_mode_m2);
-
       if (note) {
-        const flags = [];
-        if (asym) flags.push('M1/M2 gains differ');
-        if (encDiff) flags.push('encoder modes differ');
-        note.textContent = flags.length ? flags.join(' · ') : 'read OK';
-        note.style.color = flags.length ? 'var(--orange)' : 'var(--txt3)';
+        const n = [];
+        if (flags.length) n.push(`${flags.length} flag${flags.length > 1 ? 's' : ''}`);
+        if (asym) n.push('M1/M2 gains differ');
+        if (ampDrift || minDrift || maxDrift) n.push('limits differ from bot');
+        note.textContent = n.length ? n.join(' · ') : 'read OK';
+        note.style.color = n.length ? 'var(--orange)' : 'var(--txt3)';
       }
     }
 
@@ -5939,6 +7052,9 @@
       ['qpps_max', 'QPPS Max', v => String(v)],
       ['accel_qpps', 'Accel', v => String(v)],
       ['max_amps', 'Current Limit', v => Number(v).toFixed(2) + ' A/motor'],
+      ['min_batt_v', 'Batt Min', v => Number(v).toFixed(1) + ' V'],
+      ['max_batt_v', 'Batt Max', v => Number(v).toFixed(1) + ' V'],
+      ['friction_ff', 'Friction FF', v => Number(v ?? 0).toFixed(3)],
       ['pol_l', 'Motor L', v => (v > 0 ? '+1' : '−1')],
       ['pol_r', 'Motor R', v => (v > 0 ? '+1' : '−1')],
       ['enc_pol_l', 'Enc L', v => (v > 0 ? '+1' : '−1')],
@@ -5949,44 +7065,31 @@
       ['baud', 'Baud', v => String(v)],
     ];
 
+    // One line, not a second grid of the same numbers: "in sync", or which
+    // controls differ from what the bot is actually running.
     function renderClawReadback() {
-      const host = document.getElementById('claw-readback');
-      if (!host) return;
       const age = document.getElementById('claw-rb-age');
-
+      const btn = document.getElementById('claw-revert');
       if (!clawCfgBot) {
-        host.innerHTML = '<div style="font-size:11px;color:var(--txt3)">no motor_config in telemetry yet</div>';
-        if (age) age.textContent = 'waiting…';
+        if (age) { age.textContent = 'waiting for the bot…'; age.style.color = 'var(--txt3)'; }
+        if (btn) btn.style.display = 'none';
         return;
       }
-
-      let drifted = 0;
-      const html = CLAW_RB_FIELDS.map(([k, label, fmt]) => {
-        const bv = clawCfgBot[k];
-        if (bv === undefined || bv === null)
-          return `<div class="rb-item"><div class="rb-k">${label}</div><div class="rb-v" style="color:var(--txt3)">––</div></div>`;
-        // Numeric compare with a tolerance: the PID gains round-trip through
-        // the RoboClaw as x/65536 fixed point, so an exact === never matches.
-        const uv = clawCfg[k];
-        const drift = uv !== undefined && Math.abs(Number(bv) - Number(uv)) > 1e-3;
-        if (drift) drifted++;
-        return `<div class="rb-item${drift ? ' drift' : ''}">` +
-          `<div class="rb-k">${label}</div>` +
-          `<div class="rb-v">${fmt(bv)}</div>` +
-          (drift ? `<div class="rb-ui">ui ${fmt(uv)}</div>` : '') +
-          `</div>`;
-      }).join('');
-      host.innerHTML = html;
-
+      // Numeric compare with a tolerance: the PID gains round-trip through the
+      // RoboClaw as x/65536 fixed point, so an exact === never matches.
+      const differ = CLAW_RB_FIELDS.filter(([k]) => {
+        const bv = clawCfgBot[k], uv = clawCfg[k];
+        return bv !== undefined && bv !== null && uv !== undefined &&
+               Math.abs(Number(bv) - Number(uv)) > 1e-3;
+      });
       if (age) {
-        const secs = ((Date.now() - clawCfgBotMs) / 1000).toFixed(1);
-        age.textContent = drifted
-          ? `${drifted} differ · ${secs}s ago`
-          : `in sync · ${secs}s ago`;
-        age.style.color = drifted ? 'var(--orange)' : 'var(--txt3)';
+        const secs = ((Date.now() - clawCfgBotMs) / 1000).toFixed(0);
+        age.textContent = differ.length
+          ? `bot differs: ${differ.map(([k, label, fmt]) => `${label} ${fmt(clawCfgBot[k])}`).join(', ')}`
+          : `bot in sync · ${secs}s ago`;
+        age.style.color = differ.length ? 'var(--orange)' : 'var(--txt3)';
       }
-      const btn = document.getElementById('claw-revert');
-      if (btn) btn.style.display = drifted ? '' : 'none';
+      if (btn) btn.style.display = differ.length ? '' : 'none';
     }
 
     // Discard the UI's copy and adopt what the bot actually has. The way out of
@@ -6001,19 +7104,36 @@
       renderClawReadback();
     }
 
-    function syncPolSeg(segId, val) {
-      // Was: parseFloat(b.textContent) === val. The -1 buttons are labelled with
-      // U+2212 MINUS SIGN (typographic, not ASCII '-'), and parseFloat of that is
-      // NaN -- so the -1 button never matched, and with val=-1 neither did +1.
-      // Both buttons sat unhighlighted and the card showed you nothing.
-      document.querySelectorAll('#' + segId + ' .seg-btn').forEach(b =>
-        b.classList.toggle('active', Number(b.dataset.pol) === Number(val)));
-    }
-
-    function syncBaudSeg(baud) {
-      document.querySelectorAll('#baud-seg .seg-btn').forEach(b =>
-        b.classList.toggle('active', parseInt(b.dataset.baud) === baud));
-      setTxt('claw-baud-disp', baud > 0 ? String(baud) : '––', 'var(--txt)');
+    /* Claw tab bars. Full scale per motor is the limit the RoboClaw itself
+     * reported on the last READ (M1 and M2 can differ), falling back to the
+     * limit the bot pushes. With no limit known at all, bars are empty and
+     * the text still shows the amps. */
+    function paintAmpBars() {
+      const hw = lastClawHw || {};
+      const fb = state.maxAmps > 0 ? state.maxAmps : null;
+      const lims = [hw.max_amps_m1 > 0 ? +hw.max_amps_m1 : fb, hw.max_amps_m2 > 0 ? +hw.max_amps_m2 : fb];
+      const amps = [state.m1Amps, state.m2Amps], pks = [state.m1AmpsPk, state.m2AmpsPk];
+      const scale = document.getElementById('amp-scale');
+      if (scale) scale.textContent = lims[0] == null ? 'limit unknown'
+        : lims[0] === lims[1] ? `limit ${lims[0].toFixed(2)} A` : `limit ${lims[0].toFixed(2)} / ${lims[1].toFixed(2)} A`;
+      for (let i = 0; i < 2; i++) {
+        const fill = document.getElementById('amp-fill-' + (i + 1));
+        const pk = document.getElementById('amp-pk-' + (i + 1));
+        const v = document.getElementById('amp-v-' + (i + 1));
+        if (!fill || !pk || !v) continue;
+        const a = amps[i] == null ? null : Math.abs(amps[i]), lim = lims[i];
+        const frac = (a == null || !lim) ? 0 : Math.min(1, a / lim);
+        const col = frac >= 1 ? 'var(--red)' : frac >= 0.75 ? 'var(--yellow)' : 'var(--green)';
+        fill.style.width = (frac * 100).toFixed(1) + '%';
+        fill.style.background = col;
+        const p = pks[i] == null ? null : Math.abs(pks[i]);
+        if (p != null && lim && p > 0) {
+          pk.style.opacity = '.85';
+          pk.style.left = `calc(${(Math.min(1, p / lim) * 100).toFixed(1)}% - 1px)`;
+        } else pk.style.opacity = '0';
+        v.textContent = a == null ? '––' : `${a.toFixed(2)} A` + (p != null ? ` pk ${p.toFixed(2)}` : '');
+        v.style.color = a == null ? 'var(--txt3)' : col;
+      }
     }
 
     /* Peaks are a running max held in the firmware, so clearing them is a
@@ -6031,6 +7151,8 @@
         pol_l: clawCfg.pol_l, pol_r: clawCfg.pol_r,
         enc_pol_l: clawCfg.enc_pol_l, enc_pol_r: clawCfg.enc_pol_r,
         baud: clawCfg.baud, max_amps: clawCfg.max_amps,
+        min_batt_v: clawCfg.min_batt_v, max_batt_v: clawCfg.max_batt_v,
+        friction_ff: clawCfg.friction_ff,
       });
       renderClawReadback();
     }
@@ -6083,6 +7205,19 @@
         el.textContent = (a <= 0)
           ? 'off - controller keeps its own setting'
           : a.toFixed(2) + ' A per motor, ' + (a * 2).toFixed(2) + ' A total draw';
+      } else if (key === 'min_batt_v') {
+        const v = Number(clawCfg.min_batt_v) || 0;
+        el.textContent = (v <= 0)
+          ? 'off - claw keeps its own'
+          : (v / 3).toFixed(2) + ' V/cell on 3S; below it the claw flags Main Batt Low';
+      } else if (key === 'max_batt_v') {
+        const v = Number(clawCfg.max_batt_v) || 0;
+        el.textContent = (v <= 0) ? 'keep the claw\'s own' : 'over-voltage (regen) limit';
+      } else if (key === 'friction_ff') {
+        const v = Number(clawCfg.friction_ff) || 0;
+        el.textContent = (clawCfg.mode !== 0)
+          ? 'duty mode only - unused in this drive mode'
+          : (v <= 0 ? 'off' : (v * 100).toFixed(0) + '% duty added in the command direction (beats stiction)');
       }
     }
 
@@ -6098,10 +7233,22 @@
        * turn a 2.5 A limit into 3 A, which is the kind of silent 20% that
        * ends up melting something. */
       let v;
-      if (key === 'max_amps') {
+      if (key === 'min_batt_v' || key === 'max_batt_v') {
+        /* 0 = leave the claw's own; otherwise 6..34 V, and min below max. */
+        v = parseFloat(raw);
+        if (!isFinite(v) || v < 0 || v > 34 || (v > 0 && v < 6)) { syncClawTab(); return; }
+        v = Math.round(v * 10) / 10;
+        const lo = key === 'min_batt_v' ? v : clawCfg.min_batt_v;
+        const hi = key === 'max_batt_v' ? v : clawCfg.max_batt_v;
+        if (lo > 0 && hi > 0 && lo >= hi) { syncClawTab(); return; }
+      } else if (key === 'max_amps') {
         v = parseFloat(raw);
         if (!isFinite(v) || v < 0 || v > 30) { syncClawTab(); return; }
         v = Math.round(v * 100) / 100;
+      } else if (key === 'friction_ff') {
+        v = parseFloat(raw);
+        if (!isFinite(v) || v < 0 || v > 0.5) { syncClawTab(); return; }
+        v = Math.round(v * 1000) / 1000;
       } else {
         v = Math.round(parseFloat(raw));
         if (!isFinite(v) || v < 1) { syncClawTab(); return; }
@@ -6121,19 +7268,8 @@
       sendClawPID();
     }
 
-    function setPolarity(key, val) {
-      clawCfg[key] = val;
-      const segMap = {
-        pol_l: 'pol-l-seg', pol_r: 'pol-r-seg',
-        enc_pol_l: 'enc-pol-l-seg', enc_pol_r: 'enc-pol-r-seg',
-      };
-      syncPolSeg(segMap[key], val);
-      sendMotorConfig();
-    }
-
-    function setBaud(baud) {
-      clawCfg.baud = baud;
-      syncBaudSeg(baud);
+    function setPolarity(key, reversed) {
+      clawCfg[key] = reversed ? -1 : 1;
       sendMotorConfig();
     }
 
@@ -6157,7 +7293,7 @@
       const ip = (document.getElementById('cfg-bbb-ip')?.value || '').trim();
       const sameOrigin = location.protocol.startsWith('http') && location.port === '8888';
       const base = sameOrigin ? '' : (ip ? `http://${ip}:8888` : null);
-      if (base === null) { say('set the bot IP in Settings to download the ring', 'var(--orange)'); return; }
+      if (base === null) { say('set the bot host in Settings to download the ring', 'var(--orange)'); return; }
       say('fetching ring…');
       try {
         const res = await fetch(base + '/bbot_ring.csv?sec=' + sec, { cache: 'no-store' });
@@ -6174,11 +7310,6 @@
       }
     }
 
-
-    function doReboot() {
-      if (!confirm('Restart the balance_bot service on the BBB?')) return;
-      sendCmd({ type: 'reboot_app' });
-    }
 
     // Paint the Claw tab once at load so it says what it is waiting for, rather
     // than sitting empty until the first packet arrives.
@@ -6252,12 +7383,12 @@
     buildPosSliders();
     buildResSelectors();
     syncYawGyroUI();   // builds the D-source step buttons and the enc/gyro badge
-    wireKick('ab-kick-back', -1);
-    wireKick('ab-kick-fwd', 1);
+    wireKick('ab-kick', 1);
     // NOT left to updateRC(): that returns early unless the RC panel is
     // visible, which kept the trim control out of the Pitch card until the RC
     // tab had been opened once. Nothing in it depends on SBUS.
     buildBalTrim();
+    buildKickCard();
     buildPose();   /* lives on Tuning now — see above */
     rebuildPlots();
     requestAnimationFrame(loop);

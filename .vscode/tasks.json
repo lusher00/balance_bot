@@ -3,7 +3,7 @@
     "tasks": [
         {
             "label": "sync and build",
-            "detail": "\u2303\u2325B \u2014 rsync to the bot, then make && make install",
+            "detail": "⌃⌥B — rsync to the bot, then make && make install",
             "type": "shell",
             "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='recordings' --exclude='logs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "presentation": {
@@ -31,8 +31,30 @@
             }
         },
         {
+            "label": "push config",
+            "detail": "merge config/overrides.conf into the bot's live robot.conf (backup first) and restart balance_bot",
+            "type": "shell",
+            "command": "${workspaceFolder}/tools/push_conf.sh",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "push config (dry run)",
+            "detail": "show the diff the overrides would make to the bot's robot.conf, change nothing",
+            "type": "shell",
+            "command": "${workspaceFolder}/tools/push_conf.sh --dry",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
             "label": "sync and build (no install)",
-            "detail": "\u2303\u2325N \u2014 rsync to the bot, then make only -- never touches the running service, even if the binary changed",
+            "detail": "⌃⌥N — rsync to the bot, then make only -- never touches the running service, even if the binary changed",
             "type": "shell",
             "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='recordings' --exclude='logs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make'",
             "presentation": {
@@ -58,7 +80,7 @@
         },
         {
             "label": "clean sync and build",
-            "detail": "\u2303\u2325\u21e7B \u2014 make clean on the bot, then sync, build and install",
+            "detail": "⌃⌥⇧B — make clean on the bot, then sync, build and install",
             "type": "shell",
             "command": "ssh boneblue-0 'cd ~/balance_bot && make clean' && rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='recordings' --exclude='logs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/ && ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "presentation": {
@@ -84,7 +106,7 @@
         },
         {
             "label": "get log",
-            "detail": "\u2303\u2325L \u2014 copy the 100 Hz ring (/dev/shm/bbot_ring_*.csv) off the bot into logs/",
+            "detail": "⌃⌥L — copy the 100 Hz ring (/dev/shm/bbot_ring_*.csv) off the bot into logs/",
             "type": "shell",
             "command": "mkdir -p ${workspaceFolder}/logs && curl -sf http://boneblue-0:8888/bbot_ring.csv -o ${workspaceFolder}/logs/bbot_ring_$(date +%Y%m%d_%H%M%S).csv && ls -lht ${workspaceFolder}/logs | head -3",
             "presentation": {
@@ -96,7 +118,7 @@
         },
         {
             "label": "sync",
-            "detail": "\u2303\u2325S \u2014 rsync to the bot only, no build",
+            "detail": "⌃⌥S — rsync to the bot only, no build",
             "type": "shell",
             "command": "rsync -av --delete --exclude='.git' --exclude='obj' --exclude='bin' --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' --exclude='.DS_Store' --exclude='_to_delete' --exclude='Claude outputs' --exclude='recordings' --exclude='logs' --exclude='bbot_dashboard.html' --exclude='robot.conf' --exclude='pidconfig.txt' ${workspaceFolder}/ boneblue-0:~/balance_bot/",
             "presentation": {
@@ -108,7 +130,7 @@
         },
         {
             "label": "build",
-            "detail": "\u2303\u2325K \u2014 make on the bot (no sync, no install)",
+            "detail": "⌃⌥K — make on the bot (no sync, no install)",
             "type": "shell",
             "command": "ssh boneblue-0 'cd ~/balance_bot && make'",
             "presentation": {
@@ -134,7 +156,7 @@
         },
         {
             "label": "build and install",
-            "detail": "\u2303\u2325I \u2014 make && make install on the bot (no sync)",
+            "detail": "⌃⌥I — make && make install on the bot (no sync)",
             "type": "shell",
             "command": "ssh boneblue-0 'cd ~/balance_bot && make && make install'",
             "presentation": {
@@ -160,7 +182,7 @@
         },
         {
             "label": "install",
-            "detail": "\u2303\u2325P \u2014 make install on the bot",
+            "detail": "⌃⌥P — make install on the bot",
             "type": "shell",
             "command": "ssh boneblue-0 'cd ~/balance_bot && make install'",
             "presentation": {
@@ -172,7 +194,7 @@
         },
         {
             "label": "clean",
-            "detail": "\u2303\u2325C \u2014 make clean on the bot",
+            "detail": "⌃⌥C — make clean on the bot",
             "type": "shell",
             "command": "ssh boneblue-0 'cd ~/balance_bot && make clean'",
             "presentation": {
@@ -196,7 +218,7 @@
         },
         {
             "label": "journal",
-            "detail": "\u2303\u2325J \u2014 follow the journal for balance_bot and the bridge",
+            "detail": "⌃⌥J — follow the journal for balance_bot and the bridge",
             "type": "shell",
             "command": "ssh -t boneblue-0 'journalctl -u balance_bot -u balance_bot_server -f -n 100'",
             "presentation": {
@@ -207,7 +229,7 @@
         },
         {
             "label": "journal (this boot, errors only)",
-            "detail": "\u2303\u2325\u21e7J \u2014 priority warning and above since boot, across all three units",
+            "detail": "⌃⌥⇧J — priority warning and above since boot, across all three units",
             "type": "shell",
             "command": "ssh -t boneblue-0 'journalctl -u balance_bot -u balance_bot_server -u bbot-watch -b -p warning --no-pager'",
             "presentation": {
@@ -218,7 +240,7 @@
         },
         {
             "label": "dmesg",
-            "detail": "follow the kernel ring buffer \u2014 where start.sh writes its run stamps",
+            "detail": "follow the kernel ring buffer — where start.sh writes its run stamps",
             "type": "shell",
             "command": "ssh -t boneblue-0 'sudo dmesg -w -T'",
             "presentation": {
@@ -229,7 +251,7 @@
         },
         {
             "label": "run start.sh",
-            "detail": "\u2303\u2325\u21e7R \u2014 bench run on the bot. Prefer the 'bot: start.sh' terminal profile: Ctrl-C there reaches the cleanup trap instead of VS Code asking to kill the task.",
+            "detail": "⌃⌥⇧R — bench run on the bot. Prefer the 'bot: start.sh' terminal profile: Ctrl-C there reaches the cleanup trap instead of VS Code asking to kill the task.",
             "type": "shell",
             "command": "ssh -t boneblue-0 'cd ~/balance_bot && ./start.sh'",
             "presentation": {
@@ -243,7 +265,7 @@
         },
         {
             "label": "run start.sh (control run)",
-            "detail": "control condition \u2014 no input source, no server, tagged in the kernel log",
+            "detail": "control condition — no input source, no server, tagged in the kernel log",
             "type": "shell",
             "command": "ssh -t boneblue-0 'cd ~/balance_bot && ./start.sh --input none --no-server --label \"control\"'",
             "presentation": {
@@ -257,7 +279,7 @@
         },
         {
             "label": "service: restart",
-            "detail": "\u2303\u2325\u21e7I \u2014 restart balance_bot and the bridge, then show status",
+            "detail": "⌃⌥⇧I — restart balance_bot and the bridge, then show status",
             "type": "shell",
             "command": "ssh -t boneblue-0 'sudo systemctl restart balance_bot balance_bot_server && sleep 1 && systemctl status balance_bot --no-pager -l | head -20'",
             "presentation": {
@@ -268,7 +290,7 @@
         },
         {
             "label": "service: stop",
-            "detail": "\u2303\u2325X \u2014 stop the bridge first, then the bot (Requires= drags it back otherwise)",
+            "detail": "⌃⌥X — stop the bridge first, then the bot (Requires= drags it back otherwise)",
             "type": "shell",
             "command": "ssh -t boneblue-0 'sudo systemctl stop balance_bot_server balance_bot && systemctl is-active balance_bot balance_bot_server || true'",
             "presentation": {
@@ -279,7 +301,7 @@
         },
         {
             "label": "service: status",
-            "detail": "\u2303\u2325\u21e7U \u2014 status of all three units",
+            "detail": "⌃⌥⇧U — status of all three units",
             "type": "shell",
             "command": "ssh -t boneblue-0 'systemctl status balance_bot balance_bot_server bbot-watch --no-pager -l | head -60'",
             "presentation": {
@@ -302,7 +324,7 @@
         },
         {
             "label": "service: restart + watch log",
-            "detail": "Restarts the service and follows its journal live. Production path \u2014 same args the bot boots with.",
+            "detail": "Restarts the service and follows its journal live. Production path — same args the bot boots with.",
             "type": "shell",
             "command": "ssh -t boneblue-0 'sudo systemctl restart balance_bot balance_bot_server; journalctl -u balance_bot -u balance_bot_server -f -n 0 -o short-precise'",
             "problemMatcher": [],

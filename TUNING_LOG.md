@@ -477,3 +477,267 @@ it. New `[system]` keys: `kick_assist`, `kick_max_deg`, `kick_duty` (0.35),
 `kick_timeout_ms`.
 
 UNTESTED on hardware. First run should be on the bench with the wheels clear.
+
+## 2026-10-07 — push and OOB recoveries fail the same way; three fixes
+
+Captures: `bbot_ring_1791395611843` (67 s clean hold), `1791396254845` /
+`1791396277660` / `1791396298590` (one push, overlapping ring dumps, merged
+t=1169.6-1279.4), `1791397494105` (52 s clean hold, then a fall with no push).
+Config throughout: kp 0.06 / ki 0.027 / kd 0.008, vel_scale_stop 3.7, mode 1,
+qpps_max 800, max_amps 3.5, loop 98.7 Hz.
+
+### The clean holds
+
+| | pitch RMS | 1-4 Hz | duty RMS | enc p-p | drift |
+|---|---|---|---|---|---|
+| 1791395611843 | 0.83 | 13.2 | 0.051 | 36 | -2 / 67 s |
+| 1791397494105 (first 52 s) | 0.75-1.1 | -- | 0.035-0.045 | ~20 | -- |
+
+Both runs are one limit cycle at **0.75 Hz**, constant amplitude (per-cycle p-p
+2.26 +/- 0.25 deg). The setpoint drives it, not the pitch loop: pit_setpoint RMS
+0.90 vs measurement 0.83, 86% of the setpoint is velDamp. Neither damper is
+clipping any more (velDamp max 1.78 of 2.0, posCorr max 0.32), so the 09-20
+relay regime is gone. What is left is the actuator:
+
+- commanded qpps vs RoboClaw-reported qpps: r = 0.11 at any lag to 0.6 s, sign
+  agreement 49%. Commands of 0-10, 10-20, 20-40, 40-80, 80-200 qpps all
+  produce the same 10-15 qpps actual. Balancing in place is 1 encoder count
+  per 70-100 ms; the RoboClaw's internal speed estimate is noise at that rate
+  and its velocity PID is regulating noise.
+- pit_output -> enc_velocity lag **0.29 s** (same 280 ms as 09-20). 78 deg of
+  phase at 0.75 Hz. That is the cycle.
+
+Still the case for `mode = 0`. Not done in this entry; the three fixes below
+apply in either mode.
+
+### The push (1791396277660, t=1227.5-1229.5)
+
+1. While pushed, setpoint sat at its cap (-3.54: velDamp 2.0 + posCorr 1.0)
+   with duty ~0. Released at 1228.56 with 3.5 deg of stored lean: +5.4 deg at
+   40 deg/s in 0.4 s.
+2. The wheels had been dragged unevenly, so yaw_error reached **-48 deg**.
+   yaw_output -0.31, and the mixer gave it equal say: 1229.05 L +0.07 / R -0.55,
+   1229.10 L +0.38 / R -0.11 -- **wheels in opposite directions mid-fall**.
+3. 1229.01-1229.10: L 3.52 A, R 3.70 A, over-current warning bits set
+   (status 0x30000). 1229.16-1229.41: commanded -158 -> -785 qpps, left wheel
+   pinned at -107..-117, **both motors -0.06..-0.15 A**. 250 ms of zero torque
+   at full command while pitch rate went -50 -> -134 deg/s. Battery 10.8 V min.
+
+### The OOB flip-flop (nine clears, 1229-1261)
+
+Every clear is at +/-12 deg with the body swinging through at 30-76 deg/s.
+Within 150 ms velDamp is at 2.0 and posCorr at 1.0 -- setpoint +/-3.1 before
+upright. P and D cancel crossing upright (P -0.34, D +0.63 at 1241.31), net
+0.25-0.40 duty against 76 deg/s. Out the far side, output 0.8, amps hit 3.5 A
+(3.09, 3.51), same pinned-speed / ~0 A starvation. OOB the other way 0.5-1.2 s
+later, identical every cycle.
+
+### The no-push fall (1791397494105, t=2461.65-2462.58)
+
+An ordinary larger swing of the 0.75 Hz cycle (pitch +2, encVel 7). Right wheel
+49 qpps, left 24. 2462.01: **right motor 3.36 A**, over-current bit
+(0xC0010000). Right speed +33 -> -23 -> -87 in 80 ms, left stays +15 -> 0: the
+right wheel lost drive and was back-driven as the body pitched back. Then
+yaw_error 2 -> 8 -> 37 -> 69 deg, yaw_output +0.60, right duty **pinned at
+1.00**, left 0.0-0.28 of a 1.12 balance command. Spun (yaw_error at the 90
+clamp), OOB 0.6 s after the trigger.
+
+Every loss of balance in all five files starts with a motor at ~3.5 A.
+
+### Changes (this build)
+
+1. **Pitch D on the gyro.** `[pitch] d_src = 1` (default). Differenced DMP
+   angle vs `state.theta_dot`: identical below 10 Hz (r=0.88, same sign), 134
+   vs 28 in the 10-49 Hz band. Duty 10-49 Hz band was its largest band (1.90).
+   Lets kd go to ~0.014 (what catching 70 deg/s needs) without the chatter.
+   `d_src = 0` restores the old path.
+2. **Yaw authority cap in the mixer.** `[yaw] max_authority = 0.15`,
+   `taper_start = 0.5`. |yaw_output| <= max_authority, and the cap shrinks
+   linearly to 0 as |balance_output| goes taper_start -> 1.0. A wheel at 1.0
+   cannot take a differential; it would only subtract from the other wheel.
+   Logged as `yaw_applied` and `yaw_lim`.
+3. **Position loop held off after an OOB clear.** `[position]
+   hold_after_oob_ms = 500`. Target tracks the wheels, correction and damping
+   0, pos_last_correction stays 0 so max_angle_rate eases it back in.
+   Logged as `pos_hold` (1 = hold, 2 = ramping back in over a second
+   hold_after_oob_ms window; added 2026-10-08 after t=360.82 showed velDamp
+   stepping 0 -> -2.0 in 150 ms when the hold lifted).
+4. Ring header now records `yaw_mixer`, `pitch_d_src`, `hold_after_oob_ms`.
+   Three new columns at the end of every row: `yaw_applied,yaw_lim,pos_hold`.
+
+### Config, not code (robot.conf on the bot)
+
+- `max_amps 3.5` -> the board's limit, or at least 10. Recovery is a 200 ms
+  pulse. This is the most certain single change in this entry.
+- After the gyro-D build is confirmed: kd 0.008 -> 0.012 -> 0.015, score the
+  1-4 Hz band and duty RMS per run.
+- `mode = 0` remains the fix for the 0.29 s actuator lag. Separate session;
+  expect the first run to be worse before it is better.
+
+UNTESTED on hardware. Bench first, wheels clear; then floor with a hand ready.
+
+## 2026-10-08 (00:00) — first captures on the new build
+
+`bbot_ring_1791432509685` (66 s hold), `1791432540143` (hold, two pushes, two
+OOBs), `1791432362190` (mostly parked). 76 columns, header shows yaw_mixer and
+pitch_d_src=1. qpps_max now 1000. **max_amps still 3.5.** Battery 10.9 V rest,
+9.7 V min under load (min_batt_v is 9).
+
+Hold, 66 s, vs the 10-07 afternoon runs:
+
+| | 10-07 | 10-08 |
+|---|---|---|
+| pitch RMS | 0.75-1.1 | 0.50-0.78 |
+| duty RMS | 0.035-0.045 | 0.025-0.037 |
+| dTerm RMS | 0.043 | 0.020-0.031 |
+| enc range | ~20-36 | ~14 |
+
+Push #1 (t=344.6): pitch to 1.3 deg, recovered in 1.5 s, no OOB.
+
+Push #2 (t=357.4-358.6): sustained push, setpoint at its 3.5 deg cap with ~0.1
+duty for 0.5 s. On release: L 3.19/2.94/3.53 A, R 2.83 A at 358.17-358.29,
+then 358.35-358.54 both motors -0.07..-0.13 A while commanded 752 -> 940 qpps,
+wheels 151 -> 228. OOB at 358.60. Same max_amps signature as every 10-07 fall.
+
+Yaw cap: confirmed working. yaw_lim went 0.15 -> 0.10 -> 0.03 -> 0 as the
+balance command rose; the wheels got L -0.94 / R -0.89, no split.
+
+Post-OOB hold: confirmed working. pos_hold=1 for 50 rows after the 360.28
+clear; pitch came 11 -> 0 -> -4.7 deg and turned around (previous builds went
+through to -18 and OOB'd the other way). Right motor hit 3.31/3.58 A at
+360.67-360.77 and the wheels diverged while the hold was still on.
+
+One defect found and fixed in this build: when the hold lifted at 360.82 the
+velDamp term stepped 0 -> -2.0 in 150 ms (it is applied after max_angle_rate).
+The position contribution is now ramped 0 -> 1 over a second hold_after_oob_ms
+window; `pos_hold` logs 2 during the ramp.
+
+Still not done: max_amps. Charge the battery.
+
+## 2026-10-09 — best hold yet; push yield added
+
+`bbot_ring_1791436262807`: mode 1, qpps_max 1500, max_amps 5, kd 0.008 on the
+gyro. Battery 10.6 V at rest.
+
+Hold, 50 s (t=874-925): pitch RMS **0.43-0.57**, p-p 1.0-1.8, duty RMS
+0.026-0.038, enc held within ~10 ticks. Best capture on record.
+
+t=929.8-930.6: pushed backward for ~1 s. velDamp pinned 2.0, posCorr 1.0,
+setpoint at the -2.9 cap, duty ~0.05 -- the stored-lean case, exactly as
+predicted on 10-08. On release (930.6+) pitch -3.5 -> -5.4, L 3.3/4.4 A, and
+from 931.1 the wheel speeds stop matching the commands in sign (L commanded
+-430..-806, measured +205..+756, 3.7-4.4 A). claw_vbatt sagged **10.5 -> 7.6 V**
+during this (min_batt_v is 9). Whatever the RoboClaw does at 7.6 V main with
+its PID loops saturated, it is not something to tune around: the pack is empty
+or has gone high-resistance. 10.6 V resting on a 3S pack is ~15%.
+
+Push yield added (this build): clean holds never saturate velDamp (671edc06:
+0 ticks); pushes hold it at the cap for 60-135 ticks. `[position] yield_ms`
+(300): velDamp at >= 97% of vel_damp_max for that long -> target follows the
+wheels, spring 0, damping scaled by `yield_damp_gain` (0.25). Ends after
+`yield_ms` below stopped_vel, then the hold ramps back in over
+hold_after_oob_ms. `pos_hold` = 3 while yielding. Off with yield_ms = 0.
+
+Expected on the next push capture: setpoint leaves the cap ~300 ms into the
+push and the release starts from under 1 deg of lean instead of 3.
+
+## 2026-10-09 (evening) — steering: two defects, one of them mine
+
+Reported: dashboard D-pad does nothing for left/right; transmitter not doing
+much either.
+
+1. **The yaw nudge was overwritten.** `{"type":"nudge","axis":"yaw"}` did
+   `state.yaw += d`, but robot.c does `state.yaw = yaw_target` every tick the
+   stick path is live (transmitter on, or Pi applying). The nudge survived one
+   tick. Now `robot_nudge_yaw()` moves `yaw_target` itself.
+2. **The 10-07 yaw cap killed turning.** kp 0.005 x 15 deg nudge = 0.075 duty;
+   x 45 deg (the IPC limit) = 0.225, clamped to 0.15 = 150 QPPS of
+   differential at qpps_max 1000. The velocity loop delivers ~10-15 QPPS for
+   anything under ~200 (10-07 measurement). Before the cap a 90 deg lead gave
+   0.45 and it turned. Split the cap: `max_authority` (0.15) while holding
+   heading, `max_authority_turn` (0.40) while a turn is commanded (stick/Pi x
+   off centre, or a nudge in the last 2 s). Taper above taper_start applies
+   to both. Added `turn_ff` (0.25): differential duty added straight from the
+   stick/Pi x while held, so a turn starts without waiting for the heading
+   error to grow. `yaw_applied` in the ring includes it.
+
+Transmitter: not diagnosable from the captures so far -- every one was taken
+with it off (in_drive, in_turn 0 throughout). Next: 20 s capture, TX on,
+sticks moved. `in_drive`/`in_turn` show whether the sticks arrive at all;
+`yaw_applied` and `cmd_wireL/R` show what the mixer did with them.
+
+## 2026-10-10 (21:15) — BASELINE: mode 0, outer loop at half gain
+
+`bbot_ring_1791681529337`, 250 s, armed and balancing throughout, no OOB, no
+yield, target fixed. Whole run: pitch RMS **0.32 deg**, worst 5 s window
+0.43, |pitch| never above 1.0. Position -14..35 ticks (2.5 in) over four
+minutes. Duty RMS 0.04, current 0.35 A mean / 1.2 A peak. No spectral band
+above 10 -- nothing cycling. Previous best (10-07, mode 1): 0.83 RMS, 36
+ticks, 1.5 A, 67 s.
+
+Configuration (config/overrides.conf, pushed with tools/push_conf.sh):
+
+    [motor]       mode 0  qpps_max 1000  max_amps 5  friction_ff 0.05
+    [pitch_duty]  kp 0.14  ki 0.035  kd 0.010   (d_src 1, gyro)
+    [yaw_duty]    kp 0.02  ki 0  kd 0
+    [position]    vel_src 0  vel_damp_fc 0  vel_scale_stop 7.4
+                  scale_d 180  lead_max 120  (spring cap 0.67 deg)
+                  yield_ms 300  yield_err_ticks 120  hold_after_oob_ms 500
+    [system]      oob_angle_deg 12.5  reengage_deg 6  reengage_rate 30
+
+How it got here, in one line each:
+- mode 0 removed the RoboClaw velocity loop's 200-400 ms dead time
+  (cmd -> wheel lag 20-40 ticks -> 1 tick).
+- duty gains: kd 0.03 rang at 3.9 Hz; 0.010 does not. kp 0.14.
+- friction_ff 0.05: wheels answer 0.02 duty (34 qpps) instead of stalling.
+- the 0.8 Hz hunt was the velocity-damping loop (velDamp pinned at its
+  +/-2 cap every half cycle) through the body's 0.2 s tracking lag;
+  vel_scale_stop 3.7 -> 7.4 with scale_d 90 -> 180 and lead_max 60 -> 120
+  halved the loop gain at the same spring/damper ratio and spring cap.
+  vel_src 1 and vel_damp_fc 3 were tried and reverted: a switch to vel_src 1
+  at 6089 preceded a fall within 3.6 s.
+- yield_err_ticks 120: the yield was re-homing the bot on its own swing.
+
+Open: a motor channel (left 10-10, right 10-07/10-09) drops to ~0.1 A under
+large commands, intermittently. Not seen in this run (peak 1.2 A).
+
+Next: one push at this damping; then scale_d 150 / lead_max 100 for a firmer
+return to spot.
+
+## 2026-10-10 ~22:00  root cause of the "dead motor channel": regen clamp
+
+The "Open" item above is resolved. The RoboClaw main-battery max voltage
+(cmd 57, dashboard Batt Max) read back 0. With max = 0 the bus is always
+above the limit, so the controller clamps regenerative braking: whenever
+the loop commands a large duty against wheels that are rolling the other
+way (every push recovery, every post-OOB catch), the commanded channel
+delivers ~0 A / slightly negative current and the wheel freewheels. That
+is the -0.1 A "dead channel" seen on the left 10-10 and the right
+10-07/10-09, and the reason the falls happened at -1.0 duty with no
+braking. It was never wiring.
+
+Why the firmware did not fix it: motor_hal_set_batt_limits with
+max_batt_v = 0 reads the controller's 0, fails validation (ret -100)
+and leaves the controller as it was.
+
+Fix: Batt Max set to 16 V on the dashboard; [motor] min_batt_v = 9 /
+max_batt_v = 16 pinned in config/overrides.conf so a push_conf restores
+it. Verification pending: repeat the hard push and expect 3-5 A braking
+current at the -1.0 duty moment with the wheels decelerating within a
+couple of ticks.
+
+Verification result (bbot_ring_1791682959092, push at 27.9 s): NOT fixed.
+With Batt Max reading 16 V, the braking quadrant still delivers nothing:
+duties -1.0 against wheels at +476/+385 qpps, currents 1.75/0.14 A then
+-0.13/-0.10 A within 80 ms, wheel decel 360 qpps/s under full reverse
+command versus 635 qpps/s coasting after the OOB cut. Over the whole
+capture, ticks with |duty|>0.3 and |speed|>100: motoring quadrant means
+3.2 A (L) / 2.7 A (R); braking quadrant 0.36 A (L) / 0.20 A (R). Both
+channels, same shape. Main-voltage-high warning bit never set, but vbatt
+is sampled at ~10 Hz and a regen spike into a bus that cannot sink current
+would be clamped by the controller in well under 1 ms.
+So the threshold was not the limiting factor. Open question is the power
+path: whether anything between the RoboClaw main terminals and the cells
+(diode, ideal-diode, BMS discharge FET, the Blue's DC-in path) blocks
+reverse current. If regen has nowhere to go the RoboClaw clamps it
+regardless of max_batt_v.

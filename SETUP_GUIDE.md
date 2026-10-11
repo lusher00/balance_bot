@@ -14,7 +14,7 @@ This guide walks you through setting up the entire system from scratch.
 - **Jumper T16 or compatible transmitter** (optional) — RC control
 - **NPN transistor (2N3904) + 10kΩ resistor** — SBUS signal inverter
 - **Xbox controller** (optional) — Manual control via USB
-- **Raspberry Pi 5 with vision system** (optional) — Object tracking input over UART
+- **Raspberry Pi 5 with vision system** (optional) — follows a target and drives the robot over robot-link on the USB network
 - **2-wheel balancing robot chassis** — With DC motors and quadrature encoders
 - **2S–3S LiPo battery** — For BeagleBone and motors
 
@@ -120,21 +120,20 @@ sudo ./bin/balance_bot -i sbus -d sbus
 # SBUS block should show live channel values
 ```
 
-### 3.2 Object Tracking Input (optional — RPi5 or similar)
+### 3.2 Pi drive / object tracking (optional — Raspberry Pi 5)
 
-Connect vision system UART TX to BeagleBone UART1 RX (P9.26):
+The UART object-tracking input described here previously is gone: nothing ever
+sent it, and it could not turn the robot. The Pi now talks to the Bone over the
+USB gadget network (Pi `192.168.7.1`, Bone `192.168.7.2`) through robot-link --
+no extra wiring beyond the USB cable.
 
-```
-Vision system TX → BeagleBone P9.26 (UART1 RX)
-GND              → GND
-```
-
-Both devices are 3.3V — safe to connect directly (no inverter needed for UART).
-
-The robot expects newline-delimited position frames:
-```
-CAT,0.30,-0.15,0.87
-```
+- Install robot-link on both boards (robot-link's `docs/DEPLOYMENT.md`); on the
+  Bone that is the `robot-link-boned` service, which relays the Pi's drive
+  commands to this program's IPC socket.
+- On the Pi, hailo-tracker's Follow card chooses the target and sends the
+  commands.
+- On the dashboard, arm and turn **Pi Drive** on. Any stick input overrides the
+  Pi; the transmitter does not need to be on. See the README's *Pi drive*.
 
 ### 3.3 Xbox Controller (optional)
 

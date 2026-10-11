@@ -101,7 +101,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             sec = max(0.0, float(parse_qs(urlparse(self.path).query).get("sec", ["60"])[0]))
         except ValueError:
             sec = 60.0
-        data = [open(p, "rb").read() for p in segs]     # 10 MB max, from RAM
+        data = [open(p, "rb").read() for p in segs]     # 16 MB max, from RAM
         # drop a partially written last line of the newest segment
         cut = data[-1].rfind(b"\n")
         data[-1] = data[-1][:cut + 1] if cut >= 0 else b""
@@ -116,7 +116,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         hdr, _ = split_header(data[0])
         rows = b"".join(split_header(d)[1] for d in data)
         if sec > 0:
-            want = int(sec * 100 * 260)                 # ~260 bytes/row, generous
+            # Bytes per row measured from the tail, not assumed: the row
+            # width changes whenever columns are added (260 -> ~470 bytes on
+            # 2026-09-28), and a fixed guess returns the wrong number of
+            # seconds. 10% slack so the window is never short.
+            tail = rows[-200000:]
+            nl = tail.count(b"\n")
+            bpr = (len(tail) / nl) if nl else 500.0
+            want = int(sec * 100 * bpr * 1.1)
             if len(rows) > want:
                 start = rows.find(b"\n", len(rows) - want) + 1
                 before, rows = rows[:start], rows[start:]

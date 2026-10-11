@@ -83,11 +83,23 @@ void robot_config_defaults(robot_config_t *c)
     c->yaw.kp = YAW_KP;
     c->yaw.ki = YAW_KI;
     c->yaw.kd = YAW_KD;
+    c->pitch_duty.kp = PITCH_DUTY_KP_DEFAULT;
+    c->pitch_duty.ki = PITCH_DUTY_KI_DEFAULT;
+    c->pitch_duty.kd = PITCH_DUTY_KD_DEFAULT;
+    c->yaw_duty.kp = YAW_DUTY_KP_DEFAULT;
+    c->yaw_duty.ki = YAW_DUTY_KI_DEFAULT;
+    c->yaw_duty.kd = YAW_DUTY_KD_DEFAULT;
     c->yaw_gyro_scale = YAW_GYRO_SCALE_DEFAULT;
+    c->yaw_max_authority = YAW_MAX_AUTHORITY_DEFAULT;
+    c->yaw_max_authority_turn = YAW_MAX_AUTHORITY_TURN_DEFAULT;
+    c->yaw_turn_ff = YAW_TURN_FF_DEFAULT;
+    c->yaw_taper_start = YAW_TAPER_START_DEFAULT;
+    c->pitch_d_src = PITCH_D_SRC_DEFAULT;
     c->kick_assist = KICK_ASSIST_DEFAULT;
     c->kick_max_deg = KICK_MAX_DEG_DEFAULT;
     c->kick_duty = KICK_DUTY_DEFAULT;
     c->kick_timeout_ms = KICK_TIMEOUT_MS_DEFAULT;
+    c->kick_amps = KICK_AMPS_DEFAULT;
 
     c->imu.pitch_offset = 0.0f;
     c->imu.yaw_offset = 0.0f;
@@ -96,6 +108,8 @@ void robot_config_defaults(robot_config_t *c)
     c->theta_trim = 0.0f;
     c->arm_at_boot = 0;   /* off by default -- must be explicitly ticked */
     c->oob_angle_deg = 15.0f;   /* matches robot.c's compiled-in default */
+    c->reengage_deg = REENGAGE_DEG_DEFAULT;
+    c->reengage_rate = REENGAGE_RATE_DEFAULT;
 
     c->position.zone_a = POS_ZONE_A_DEFAULT;
     c->position.zone_b = POS_ZONE_B_DEFAULT;
@@ -117,6 +131,10 @@ void robot_config_defaults(robot_config_t *c)
     c->position.max_correction = POS_MAX_CORRECTION_DEFAULT;
     c->position.max_angle_rate = POS_MAX_ANGLE_RATE_DEFAULT;
     c->position.back_to_spot = POS_BACK_TO_SPOT_DEFAULT;
+    c->position.hold_after_oob_ms = POS_HOLD_AFTER_OOB_MS_DEFAULT;
+    c->position.yield_ms = POS_YIELD_MS_DEFAULT;
+    c->position.yield_damp_gain = POS_YIELD_DAMP_GAIN_DEFAULT;
+    c->position.yield_err_ticks = POS_YIELD_ERR_TICKS_DEFAULT;
     c->position.drive_mode = POS_DRIVE_MODE_DEFAULT;
     c->position.drive_rate = POS_DRIVE_RATE_DEFAULT;
     c->position.runaway_limit = POS_RUNAWAY_LIMIT_DEFAULT;
@@ -128,6 +146,9 @@ void robot_config_defaults(robot_config_t *c)
     c->motor.qpps_max = MOTOR_QPPS_MAX_DEFAULT;
     c->motor.accel_qpps = MOTOR_ACCEL_QPPS_DEFAULT;
     c->motor.max_amps = MOTOR_MAX_AMPS_DEFAULT;
+    c->motor.friction_ff = MOTOR_FRICTION_FF_DEFAULT;
+    c->motor.min_batt_v = 0.0f;   /* 0 = leave the RoboClaw's own */
+    c->motor.max_batt_v = 0.0f;
     c->motor.pol_l = 1.0f;
     c->motor.pol_r = 1.0f;
     c->motor.enc_pol_l = 1.0f;
@@ -202,6 +223,19 @@ int robot_config_load(const char *path, robot_config_t *c)
             if (KEY("kp")) c->pitch.kp = fv;
             else if (KEY("ki")) c->pitch.ki = fv;
             else if (KEY("kd")) c->pitch.kd = fv;
+            else if (KEY("d_src")) c->pitch_d_src = (int)fv;
+        }
+        else if (ieq(section, "pitch_duty"))
+        {
+            if (KEY("kp")) c->pitch_duty.kp = fv;
+            else if (KEY("ki")) c->pitch_duty.ki = fv;
+            else if (KEY("kd")) c->pitch_duty.kd = fv;
+        }
+        else if (ieq(section, "yaw_duty"))
+        {
+            if (KEY("kp")) c->yaw_duty.kp = fv;
+            else if (KEY("ki")) c->yaw_duty.ki = fv;
+            else if (KEY("kd")) c->yaw_duty.kd = fv;
         }
         else if (ieq(section, "yaw") || ieq(section, "steering"))
         {
@@ -209,6 +243,10 @@ int robot_config_load(const char *path, robot_config_t *c)
             else if (KEY("ki")) c->yaw.ki = fv;
             else if (KEY("kd")) c->yaw.kd = fv;
             else if (KEY("gyro_scale")) c->yaw_gyro_scale = fv;
+            else if (KEY("max_authority")) c->yaw_max_authority = fv;
+            else if (KEY("max_authority_turn")) c->yaw_max_authority_turn = fv;
+            else if (KEY("turn_ff")) c->yaw_turn_ff = fv;
+            else if (KEY("taper_start")) c->yaw_taper_start = fv;
         }
         else if (ieq(section, "imu"))
         {
@@ -237,6 +275,10 @@ int robot_config_load(const char *path, robot_config_t *c)
             else if (KEY("vel_scale_turning")) c->position.vel_scale_turning = fv;
             else if (KEY("stopped_vel")) c->position.stopped_vel = (int32_t)fv;
             else if (KEY("pos_deadband")) c->position.pos_deadband = (int32_t)fv;
+            else if (KEY("hold_after_oob_ms")) c->position.hold_after_oob_ms = (int32_t)fv;
+            else if (KEY("yield_ms")) c->position.yield_ms = (int32_t)fv;
+            else if (KEY("yield_damp_gain")) c->position.yield_damp_gain = fv;
+            else if (KEY("yield_err_ticks")) c->position.yield_err_ticks = (int32_t)fv;
             else if (KEY("max_correction")) c->position.max_correction = fv;
             else if (KEY("max_angle_rate")) c->position.max_angle_rate = fv;
             else if (KEY("back_to_spot")) c->position.back_to_spot = (int)fv;
@@ -254,7 +296,10 @@ int robot_config_load(const char *path, robot_config_t *c)
             else if (KEY("kick_max_deg")) c->kick_max_deg = fv;
             else if (KEY("kick_duty")) c->kick_duty = fv;
             else if (KEY("kick_timeout_ms")) c->kick_timeout_ms = (int)fv;
+            else if (KEY("kick_amps")) c->kick_amps = fv;
             else if (KEY("oob_angle_deg")) c->oob_angle_deg = fv;
+            else if (KEY("reengage_deg")) c->reengage_deg = fv;
+            else if (KEY("reengage_rate")) c->reengage_rate = fv;
         }
         else if (ieq(section, "sbus"))
         {
@@ -274,6 +319,9 @@ int robot_config_load(const char *path, robot_config_t *c)
             else if (KEY("qpps_max")) c->motor.qpps_max = (int)fv;
             else if (KEY("accel_qpps")) c->motor.accel_qpps = (int)fv;
             else if (KEY("max_amps")) c->motor.max_amps = fv;
+            else if (KEY("friction_ff")) c->motor.friction_ff = fv;
+            else if (KEY("min_batt_v")) c->motor.min_batt_v = fv;
+            else if (KEY("max_batt_v")) c->motor.max_batt_v = fv;
             else if (KEY("pol_l")) c->motor.pol_l = fv;
             else if (KEY("pol_r")) c->motor.pol_r = fv;
             else if (KEY("enc_pol_l")) c->motor.enc_pol_l = fv;
@@ -322,15 +370,30 @@ int robot_config_save(const char *path, const robot_config_t *c)
     fprintf(f, "[system]\n");
     fprintf(f, "arm_at_boot = %d\n", c->arm_at_boot);
     fprintf(f, "oob_angle_deg = %.1f\n", c->oob_angle_deg);
+    fprintf(f, "# After a cut, motors return only inside reengage_deg AND below\n");
+    fprintf(f, "# reengage_rate deg/s. 0 = re-engage at oob_angle_deg (old behaviour).\n");
+    fprintf(f, "reengage_deg = %.1f\n", c->reengage_deg);
+    fprintf(f, "reengage_rate = %.1f\n", c->reengage_rate);
     fprintf(f, "kick_assist = %d\n", c->kick_assist);
     fprintf(f, "kick_max_deg = %.1f\n", c->kick_max_deg);
     fprintf(f, "kick_duty = %.2f\n", c->kick_duty);
     fprintf(f, "kick_timeout_ms = %d\n", c->kick_timeout_ms);
+    fprintf(f, "# Current limit during a kick, amps per motor. 0 = keep the claw's own.\n");
+    fprintf(f, "kick_amps = %.2f\n", c->kick_amps);
     fprintf(f, "\n");
+    fprintf(f, "# Two gain sets. [pitch]/[yaw] are live in velocity modes (1, 2);\n");
+    fprintf(f, "# [pitch_duty]/[yaw_duty] in duty mode (0). The inactive set is kept as is.\n");
     fprintf(f, "[pitch]\n");
     fprintf(f, "kp = %.4f\n", c->pitch.kp);
     fprintf(f, "ki = %.4f\n", c->pitch.ki);
     fprintf(f, "kd = %.4f\n", c->pitch.kd);
+    fprintf(f, "# d_src: 0 = difference the DMP angle, 1 = gyro rate (cleaner above 10 Hz)\n");
+    fprintf(f, "d_src = %d\n", c->pitch_d_src);
+    fprintf(f, "\n");
+    fprintf(f, "[pitch_duty]\n");
+    fprintf(f, "kp = %.4f\n", c->pitch_duty.kp);
+    fprintf(f, "ki = %.4f\n", c->pitch_duty.ki);
+    fprintf(f, "kd = %.4f\n", c->pitch_duty.kd);
     fprintf(f, "\n");
 
     fprintf(f, "# Steering loop: wheel-rotation difference -> differential duty. A real PID.\n");
@@ -339,6 +402,19 @@ int robot_config_save(const char *path, const robot_config_t *c)
     fprintf(f, "ki = %.4f\n", c->yaw.ki);
     fprintf(f, "kd = %.4f\n", c->yaw.kd);
     fprintf(f, "gyro_scale = %.4f\n", c->yaw_gyro_scale);
+    fprintf(f, "# Mixer cap on the yaw differential (duty). Balance always wins:\n");
+    fprintf(f, "# the cap shrinks linearly from taper_start to 0 at |balance| = 1.\n");
+    fprintf(f, "max_authority = %.3f\n", c->yaw_max_authority);
+    fprintf(f, "# While a turn is commanded (stick, Pi, or a yaw nudge in the last 2 s)\n");
+    fprintf(f, "# the cap is max_authority_turn, and turn_ff x stick is added directly.\n");
+    fprintf(f, "max_authority_turn = %.3f\n", c->yaw_max_authority_turn);
+    fprintf(f, "turn_ff = %.3f\n", c->yaw_turn_ff);
+    fprintf(f, "\n");
+    fprintf(f, "[yaw_duty]\n");
+    fprintf(f, "kp = %.4f\n", c->yaw_duty.kp);
+    fprintf(f, "ki = %.4f\n", c->yaw_duty.ki);
+    fprintf(f, "kd = %.4f\n", c->yaw_duty.kd);
+    fprintf(f, "taper_start = %.3f\n", c->yaw_taper_start);
     fprintf(f, "\n");
 
     fprintf(f, "# Position hold: encoder error -> lean-angle bias.\n");
@@ -362,6 +438,12 @@ int robot_config_save(const char *path, const robot_config_t *c)
     fprintf(f, "vel_scale_move    = %.3f\n", c->position.vel_scale_move);
     fprintf(f, "vel_scale_turning = %.3f\n", c->position.vel_scale_turning);
     fprintf(f, "stopped_vel       = %d\n", c->position.stopped_vel);
+    fprintf(f, "hold_after_oob_ms = %d\n", c->position.hold_after_oob_ms);
+    fprintf(f, "# Push yield: velDamp saturated for yield_ms -> give up the spot, keep\n");
+    fprintf(f, "# yield_damp_gain of the damping, ramp back in once stopped. 0 = off.\n");
+    fprintf(f, "yield_ms          = %d\n", c->position.yield_ms);
+    fprintf(f, "yield_damp_gain   = %.3f\n", c->position.yield_damp_gain);
+    fprintf(f, "yield_err_ticks   = %d\n", c->position.yield_err_ticks);
     fprintf(f, "pos_deadband      = %d\n", c->position.pos_deadband);
     fprintf(f, "max_correction    = %.3f\n", c->position.max_correction);
     fprintf(f, "max_angle_rate    = %.3f\n", c->position.max_angle_rate);
@@ -413,6 +495,11 @@ int robot_config_save(const char *path, const robot_config_t *c)
     fprintf(f, "qpps_max   = %d\n", c->motor.qpps_max);
     fprintf(f, "accel_qpps = %d\n", c->motor.accel_qpps);
     fprintf(f, "max_amps   = %.2f\n", c->motor.max_amps);
+    fprintf(f, "# Duty mode only: duty added in the command direction to beat stiction. 0 = off\n");
+    fprintf(f, "friction_ff = %.3f\n", c->motor.friction_ff);
+    fprintf(f, "# RoboClaw main battery limits, volts; 0 = leave the claw's own\n");
+    fprintf(f, "min_batt_v = %.1f\n", c->motor.min_batt_v);
+    fprintf(f, "max_batt_v = %.1f\n", c->motor.max_batt_v);
     fprintf(f, "pol_l      = %.1f\n", c->motor.pol_l);
     fprintf(f, "pol_r      = %.1f\n", c->motor.pol_r);
     fprintf(f, "enc_pol_l  = %.1f\n", c->motor.enc_pol_l);
@@ -442,16 +529,21 @@ int robot_config_save(const char *path, const robot_config_t *c)
 void robot_config_get_current(robot_config_t *c)
 {
     robot_config_defaults(c);
-    c->pitch.kp = pitch_pid.kp;
-    c->pitch.ki = pitch_pid.ki;
-    c->pitch.kd = pitch_pid.kd;
-    c->yaw.kp = yaw_pid.kp;
-    c->yaw.ki = yaw_pid.ki;
-    c->yaw.kd = yaw_pid.kd;
+    robot_gains_store_live(); /* live PIDs -> the set for the current mode */
+    c->pitch = g_gains_pitch_vel;
+    c->yaw = g_gains_yaw_vel;
+    c->pitch_duty = g_gains_pitch_duty;
+    c->yaw_duty = g_gains_yaw_duty;
     c->yaw_gyro_scale = g_yaw_gyro_scale;
+    c->yaw_max_authority = g_yaw_max_authority;
+    c->yaw_max_authority_turn = g_yaw_max_authority_turn;
+    c->yaw_turn_ff = g_yaw_turn_ff;
+    c->yaw_taper_start = g_yaw_taper_start;
+    c->pitch_d_src = g_pitch_d_src;
     c->kick_assist = g_kick_assist;
     c->kick_max_deg = g_kick_max_deg;
     c->kick_duty = g_kick_duty;
+    c->kick_amps = g_kick_amps;
     c->kick_timeout_ms = g_kick_timeout_ms;
     c->position = g_pos_config;
     c->motor = g_motor_config;
@@ -460,16 +552,27 @@ void robot_config_get_current(robot_config_t *c)
     c->theta_trim = state.theta_offset;
     c->arm_at_boot = g_arm_at_boot;
     c->oob_angle_deg = g_oob_angle_deg;
+    c->reengage_deg = g_reengage_deg;
+    c->reengage_rate = g_reengage_rate;
 }
 
 void robot_config_apply(const robot_config_t *c)
 {
-    pid_set_gains(&pitch_pid, c->pitch.kp, c->pitch.ki, c->pitch.kd);
-    pid_set_gains(&yaw_pid, c->yaw.kp, c->yaw.ki, c->yaw.kd);
+    g_gains_pitch_vel = c->pitch;
+    g_gains_yaw_vel = c->yaw;
+    g_gains_pitch_duty = c->pitch_duty;
+    g_gains_yaw_duty = c->yaw_duty;
+    robot_gains_select(c->motor.mode);
     g_yaw_gyro_scale = c->yaw_gyro_scale;
+    g_yaw_max_authority = c->yaw_max_authority;
+    g_yaw_max_authority_turn = c->yaw_max_authority_turn;
+    g_yaw_turn_ff = c->yaw_turn_ff;
+    g_yaw_taper_start = c->yaw_taper_start;
+    g_pitch_d_src = c->pitch_d_src;
     g_kick_assist = c->kick_assist;
     g_kick_max_deg = c->kick_max_deg;
     g_kick_duty = c->kick_duty;
+    g_kick_amps = c->kick_amps;
     g_kick_timeout_ms = c->kick_timeout_ms;
     g_pos_config = c->position;
     g_motor_config = c->motor;
@@ -478,6 +581,13 @@ void robot_config_apply(const robot_config_t *c)
     state.theta_offset = c->theta_trim;
     g_arm_at_boot = c->arm_at_boot;
     g_oob_angle_deg = c->oob_angle_deg;
+    g_reengage_deg = c->reengage_deg;
+    g_reengage_rate = c->reengage_rate;
+}
+
+const char *robot_config_default_path(void)
+{
+    return ROBOT_CONFIG_DEFAULT;
 }
 
 int robot_config_save_current(const char *path)
@@ -504,7 +614,17 @@ void pos_config_apply(const pos_config_t *cfg)
 
 void motor_config_apply(const motor_config_t *cfg)
 {
+    /* A mode change swaps the live gain set. Store what the live PIDs hold
+     * into the OLD mode's set first, so dashboard edits are not lost. */
+    const int old_mode = g_motor_config.mode;
+    robot_gains_store_live();
     g_motor_config = *cfg;
+    if (cfg->mode != old_mode)
+    {
+        robot_gains_select(cfg->mode);
+        LOG_WARN("motor mode %d -> %d: live gains switched to the %s set",
+                 old_mode, cfg->mode, cfg->mode == MOTOR_HAL_MODE_DUTY ? "duty" : "velocity");
+    }
     LOG_INFO("motor_config applied: mode=%d qpps_max=%d accel_qpps=%d pol_l=%.1f pol_r=%.1f "
              "enc_pol_l=%.1f enc_pol_r=%.1f claw_kp=%.4f claw_ki=%.4f claw_kd=%.4f max_amps=%.2f",
              cfg->mode, cfg->qpps_max, cfg->accel_qpps, cfg->pol_l, cfg->pol_r,
@@ -513,6 +633,7 @@ void motor_config_apply(const motor_config_t *cfg)
     /* Config changes reach the controller here, not just this struct. */
     if (cfg->max_amps > 0.0f)
         motor_hal_set_current_limit(cfg->max_amps);
+    motor_hal_set_batt_limits(cfg->min_batt_v, cfg->max_batt_v);
 }
 
 /* ── migration ────────────────────────────────────────────────────────────── */
@@ -584,6 +705,8 @@ static int load_legacy_pid(const char *path, robot_config_t *c)
         else if (ieq(k, "qpps_max")) c->motor.qpps_max = (int)v;
         else if (ieq(k, "accel_qpps")) c->motor.accel_qpps = (int)v;
         else if (ieq(k, "max_amps")) c->motor.max_amps = v;
+        else if (ieq(k, "min_batt_v")) c->motor.min_batt_v = v;
+        else if (ieq(k, "max_batt_v")) c->motor.max_batt_v = v;
         else if (ieq(k, "pol_l")) c->motor.pol_l = v;
         else if (ieq(k, "pol_r")) c->motor.pol_r = v;
         else if (ieq(k, "enc_pol_l")) c->motor.enc_pol_l = v;

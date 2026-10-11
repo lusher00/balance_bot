@@ -12,7 +12,6 @@ debug_config_t g_debug_config;
 
 #define DIS PI_DRIVE_DISARMED
 #define GATE PI_DRIVE_GATE_CLOSED
-#define KILL PI_DRIVE_RC_KILL
 #define STICK PI_DRIVE_STICK
 #define NOCMD PI_DRIVE_NO_COMMAND
 #define APPLY PI_DRIVE_APPLYING
@@ -27,25 +26,19 @@ static void expect(const char *what, pi_drive_state_t got, pi_drive_state_t want
 
 int main(void)
 {
-    /*                              armed gate sbus kill drive turn fresh */
+    /*                              armed gate drive turn fresh */
     expect("disarmed beats everything",
-           pi_drive_decide(0, 1, 1, 2, 0.5f, 0, 1), DIS);
+           pi_drive_decide(0, 1, 0.5f, 0, 1), DIS);
     expect("gate closed: Pi ignored",
-           pi_drive_decide(1, 0, 0, 0, 0, 0, 1), GATE);
-    expect("transmitter on, kill switch not at RUN: Pi ignored",
-           pi_drive_decide(1, 1, 1, 0, 0, 0, 1), KILL);
-    expect("kill mid position also blocks",
-           pi_drive_decide(1, 1, 1, 1, 0, 0, 1), KILL);
+           pi_drive_decide(1, 0, 0, 0, 1), GATE);
     expect("stick off centre wins over a fresh Pi command",
-           pi_drive_decide(1, 1, 1, 2, 0.2f, 0, 1), STICK);
+           pi_drive_decide(1, 1, 0.2f, 0, 1), STICK);
     expect("turn stick alone also wins",
-           pi_drive_decide(1, 1, 1, 2, 0, -0.1f, 1), STICK);
-    expect("stick centred, fresh command: Pi drives",
-           pi_drive_decide(1, 1, 1, 2, 0, 0, 1), APPLY);
-    expect("transmitter off (kill reads 0), fresh command: Pi drives",
-           pi_drive_decide(1, 1, 0, 0, 0, 0, 1), APPLY);
+           pi_drive_decide(1, 1, 0, -0.1f, 1), STICK);
+    expect("no stick input (transmitter off or centred): Pi drives",
+           pi_drive_decide(1, 1, 0, 0, 1), APPLY);
     expect("gate open but command expired: centred stick",
-           pi_drive_decide(1, 1, 0, 0, 0, 0, 0), NOCMD);
+           pi_drive_decide(1, 1, 0, 0, 0), NOCMD);
 
     /* Expiry and clamping through the real store. */
     float x, y;

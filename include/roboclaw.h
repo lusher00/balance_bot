@@ -169,6 +169,11 @@ int roboclaw_set_max_current(struct roboclaw *rc, uint8_t address, int motor, fl
 
 /** @brief Read back a motor's hardware current limit, in amps. */
 int roboclaw_read_max_current(struct roboclaw *rc, uint8_t address, int motor, float *amps);
+int roboclaw_set_main_battery_limits(struct roboclaw *rc, uint8_t address, float vmin, float vmax);
+int roboclaw_read_main_battery_limits(struct roboclaw *rc, uint8_t address, float *vmin, float *vmax);
+int roboclaw_logic_battery_voltage(struct roboclaw *rc, uint8_t address, float *volts);
+int roboclaw_read_status(struct roboclaw *rc, uint8_t address, uint32_t *status);
+int roboclaw_read_pin_functions(struct roboclaw *rc, uint8_t address, uint8_t pins[5]);
 
 /* Read settings back OUT of the controller, as opposed to the setters above.
  * robot.conf says what balance_bot does to the numbers; these say what the

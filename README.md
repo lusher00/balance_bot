@@ -15,7 +15,7 @@ dashboard over WebSocket.
 - **Cascade control** — pitch (angle, PID), yaw (heading, PID), position hold (encoder-based, zone-scheduled — not a PID)
 - **SBUS input** — FrSky R-XSR receiver via BeagleBone UART with custom 115200 baud driver and signal inverter circuit
 - **Xbox controller input** — hot-plug via `/dev/input/js0`
-- **Cat following mode** — vision input from Raspberry Pi 5 running a Hailo-8L NPU, received over UART
+- **Pi drive (cat following)** — the Raspberry Pi 5's hailo-tracker follows a target (cat, then dog, then any animal) and proposes drive commands over robot-link on the USB network; the dashboard's **Pi Drive** gate lets them in, any stick input overrides them, and the robot always balances (see [Pi drive](#pi-drive))
 - **Web dashboard** — telemetry, live tuning, graphs, RC channel mapping, pose/position controls and tune analysis, served from the BBB
 - **Tune analysis** — every recording scored for trim, ringing, saturation and station-keeping, in the browser and from the CLI
 - **Live ncurses display** — SBUS channels, PID state, encoders, IMU, motors, system status
@@ -115,6 +115,9 @@ a transmitter left out of trim cannot command movement the instant it links.
 | `src/input_sbus.c` | SBUS frame parser, custom baud rate, channel decode |
 | `src/input_xbox.c` | Xbox controller via Linux joystick API |
 | `src/display.c` | ncurses live display, threaded redraw |
+| `src/pi_drive.c` | Pi drive commands: store with expiry, the gate, and the per-tick "who drives" decision |
+| `src/uart_input.c` | Legacy `PKT,x,y,conf` UART reader. Still built and opened by `-i ext`, but nothing reads it since 2026-09-21 |
+| `tests/test_pi_drive.c` | Host test for the Pi drive arbitration: `make test-pi-drive` |
 
 | Tool | Description |
 |------|-------------|
@@ -123,7 +126,7 @@ a transmitter left out of trim cannot command movement the instant it links.
 | `tools/check_link.sh` | Finds undefined symbols without linking |
 | `tools/bbot_watch.py` | 1 Hz system recorder for diagnosing lockups |
 | `tools/wifi_prefer.sh` | Picks the best available network once, 45 s after boot. `iwd` has no priority field and does not roam between SSIDs, so the ordering has to live outside it |
-| `config/bashrc` | The shell environment: aliases, service control, `bhelp` / `ahelp`. Install with `./config/install_bashrc.sh --apply` |
+| `bashrc.bone` + `config/bot_aliases.sh` | The shell environment (`bashrc.bone`) and this project's service/tool aliases (`bot_aliases.sh`, sourced from the repo); `bhelp` / `ahelp` list both. Install with `./config/install_bashrc.sh --apply`, which refuses if the two files define the same name |
 
 ---
 
@@ -188,7 +191,7 @@ make install-units          # copies only the units that changed, reloads if any
 sudo systemctl enable balance_bot balance_bot_server
 ```
 
-Five services make up a running bot. `botss` shows all of them at once; `rbots`
+Six services make up a running bot. `botss` shows all of them at once; `rbots`
 restarts all of them. Note that `botss` is *status*, not restart.
 
 | Unit | What it is |
@@ -197,10 +200,12 @@ restarts all of them. Note that `botss` is *status*, not restart.
 | `balance_bot_server` | Node WebSocket bridge. `Requires=balance_bot` |
 | `balance_bot_web` | `serve_web.py` on port 8888 — the dashboard |
 | `batt_monitor` | Battery supervision |
-| `bbb_oled` | OLED status display |
+| `bbb_oled` | OLED status display (the vendored `oled-utils/oled_status.py`) |
+| `robot-link-boned` | The Pi link, from the separate robot-link repo (`~/robot-link`, rsynced from the Mac). Its aliases (`links`, `lstat`, `lsay`, `pioff`, `linkfg`, ...) are in `config/bot_aliases.sh` |
 
 Only `balance_bot.service` and `balance_bot_server.service` are versioned in
-`systemd/` today. The other three live on the board only.
+`systemd/` today. `batt_monitor` is installed by its own repo's `setup-bone.sh`, robot-link-boned
+by robot-link's deploy, and `bbb_oled` by `make install-oled`.
 
 `systemd/wifi-prefer.{service,timer}` is separate and optional — a one-shot
 network chooser that runs 45 s after boot.
@@ -212,6 +217,8 @@ sudo balance_bot [options]
 
 Options:
   -i <mode>     Input mode: sbus | xbox | ext | none  (default: none)
+                ext opens the legacy UART reader, which no longer drives
+                anything -- external drive comes from the Pi (see Pi drive)
   -p <file>     Config file                            (default: robot.conf)
   -u <device>   UART device for SBUS or EXT input
   -m <device>   RoboClaw UART device                  (default: /dev/ttyO1)
@@ -264,14 +271,40 @@ value has not reached the bot).
 
 ### Dashboard tabs
 
+Bottom-left there are two floating boxes, one per board, in the same shape.
+
+The **Bone's** shows the transmitter (on/off from the receiver flags, RC rate,
+switch positions, stick values), board health (loop, cpu, load, context
+switches, memory, temp — SoC, or the claw's labelled `claw` when the SoC
+exposes none), wifi, the dashboard feed, and its services with
+start/stop/restart.
+
+The **Pi's** shows its own board — cpu, load against **four** cores, memory,
+temp, and the Pi's under-voltage flags including *since boot*, which is the
+only record this robot keeps of a brown-out that has already happened — then
+its links (wifi address and signal, the RNDIS address with whatever the kernel
+named that interface this boot, and whether robot-link is up to the Bone), then
+its services. Read straight from the Pi's own `/api/services` rather than
+through robot-link, so it still answers when the link is exactly what is
+broken; the host follows the Lidar tab's field.
+
+sshd appears on both and is controllable from neither: stopping it from a web
+page is how a debuggable board becomes one you have to walk over to. A service
+percentage is of one core, so the Pi's are judged against its core count — 241%
+of four cores is a busy tracker, not a board in trouble, while 94% on the
+Bone's single core is. Either box collapses to a one-line summary when
+clicked.
+
 | Tab | Contents |
 |-----|----------|
-| Control | ARM/DISARM, E-STOP, CLR ESTOP, Zero IMU, Zero Encoders, mode/motor mode pickers, encoder readout, MJPEG video with cat overlay |
+| Control | ARM/DISARM, E-STOP, CLR ESTOP, **KICK UP** (hold to stand it up; the bot picks the direction from the lean, and says beside the button when it refuses), Zero IMU, Zero Encoders, **Pi Drive** gate (with who-is-driving), motor mode picker, encoder readout, MJPEG video with cat overlay |
 | PID | Pitch / Position / Yaw picker. Kp/Ki/Kd for pitch and yaw; position shows its zone config instead, since it has no gains. Balance trim lives on the pitch card |
 | Graph | Live scrolling plots, dual-axis combined view, series toggle, CSV record/download |
-| Claw | RoboClaw drive mode, QPPS, acceleration, **current limit**, polarity, velocity PID |
+| Claw | **RoboClaw** card: one READ pulls main/logic volts, temp, decoded error and warning flags, battery and current limits (orange where the claw disagrees with what the bot pushes), M1/M2 PID and QPPS, encoder modes, config register (decoded), S3–S5 pin functions. Motor current is two bars, full scale = the claw's own current limit, with a peak tick; click to clear the peaks. **Settings**: drive mode, QPPS, accel, current limit, battery min/max, serial baud, motor and encoder reverse (stacked per side), velocity PID, a one-line "bot in sync / differs", and the card's actions — pull bot values, save robot.conf, download robot.conf to the browser's machine. Restarting services is on the perf HUD, not here |
 | RC | Live SBUS channels and switches, channel mapping / scale / invert / deadband, pose (pitch, yaw) and position controls |
 | Tune | Tune-quality report for the last recording, saved run history, and A/B comparison including a config diff |
+| Lidar | Polar plot of the LDS-006 scan — rings every metre, 0° up, forward 30° in amber, no-return samples not drawn — plus nearest return per 45° sector, RPM counted from the scan, a one-line health summary, typed range, min-signal and Pi host:port, smooth / despeckle toggles, and motor start/stop. Polled straight from the lidar daemon on the Pi (`lds006-lidar-utils`); no lidar data crosses robot-link and none of it reaches the balance loop |
+| System | Robot Link / Pi 5 status |
 | Debug | Syntax-highlighted raw telemetry JSON |
 | Settings | BBB IP/port, Pi 5 IP, video URL, telemetry option toggles |
 
@@ -368,6 +401,8 @@ require_center = 1
 mode = 0               # 0 = duty, 1 = velocity, 2 = velocity + accel
 accel_qpps = 5000      # MODE 2 ONLY — ignored in modes 0 and 1
 max_amps = 2.5         # per-motor hardware current limit, 0 = leave controller alone
+min_batt_v = 0.0       # RoboClaw main-battery minimum, volts; 0 = leave the claw's own
+max_batt_v = 0.0       # RoboClaw main-battery maximum (regen), volts; 0 = keep the claw's
 pol_l = -1.0
 enc_pol_l = -1.0
 
@@ -409,6 +444,31 @@ Two things worth knowing:
   step and the controller's velocity PID does whatever duty it takes to hit it
   immediately, so di/dt is unbounded. If current peaks look violent, mode 2
   with a sane ramp is the first lever.
+
+### Battery cutoff on the RoboClaw
+
+`min_batt_v` / `max_batt_v` set the RoboClaw's own main-battery limits (packet
+command 57). Below the minimum the claw flags *Main Batt Low*; the maximum is
+its over-voltage limit, which matters under regenerative braking. Set them on
+the Claw tab (Drive Stage) or in `robot.conf`; 0 leaves the claw's own value.
+
+They are pushed at init, on every change, and after every CLR ESTOP -- because
+on firmware v4.2.8 WriteNVM resets the claw's configuration, so nothing can be
+"saved into" the RoboClaw once and trusted. The journal shows each push:
+`RoboClaw main battery limits: min 9.0 V max 34.0 V (read back ...)`.
+
+Choose the minimum **below** batt_monitor's critical threshold (9.6 V on 3S), so
+the orderly shutdown -- Pi first, then the Bone -- happens before the claw stops
+the motors; a balancing robot that loses its motors falls over. 9.0 V
+(3.0 V/cell) is a reasonable last line. The claw measures at its own terminals,
+under load, so compare its main-battery reading with batt_monitor's on the Claw
+tab before trusting a number close to the threshold.
+
+**Check what the claw does below the minimum before relying on it**: with the
+wheels off the ground, set the minimum just above the pack voltage, drive, and
+confirm on a READ that the flag appears and the motors stop -- then set it back.
+roboclaw-util's `batt` / `set_batt MIN [MAX]` do the same from a shell with the
+service stopped.
 
 A bench supply is a poor instrument here: its meter averages over hundreds of
 milliseconds while the events are milliseconds, and a current-limited supply
@@ -640,6 +700,39 @@ answered together.
 
 ---
 
+## Pi drive
+
+The Raspberry Pi 5 runs hailo-tracker, whose follower turns a tracked target
+into a drive command (`x` turn, `y` drive, -1..1, the same units as the stick).
+robot-link carries it here and robot-link-boned relays it as `{"type":"drive"}`.
+The robot always balances; these commands, like the stick, only move what it
+balances around. Every control tick, `pi_drive_decide()` picks one source:
+
+| State | Who drives |
+| --- | --- |
+| `disarmed` | nobody; the gate is shut |
+| `gate closed` | the stick, if a transmitter is on; the Pi is ignored |
+| `stick` | the stick, whenever it is off centre (it always wins) |
+| `no command` | nobody: the gate is open but the Pi's last command expired |
+| `applying` | the Pi |
+
+- The **Pi Drive** gate on the dashboard's Control tab starts off at boot, can
+  only be opened while armed, and closes on every disarm and e-stop.
+- The transmitter is not needed, and its kill switch is deliberately not part
+  of the decision: the robot normally runs with the transmitter off, and a
+  receiver in failsafe reports "kill".
+- The Pi's input goes through exactly the code the stick does -- `drive_mode`,
+  `drive_rate`/`drive_scale`, `turn_rate` integration, position-hold behaviour.
+  The stand-up kick still reads the stick only; the Pi can never kick.
+- A command older than its `ttl_ms` is treated as a centred stick, so a crashed
+  tracker, Pi or link stops the robot within ~300 ms.
+
+`make test-pi-drive` runs the arbitration and expiry tests on any machine.
+The first real run: robot on its stand, the tracker's max drive and steer low
+(0.1 / 0.2), a hand on disarm, and step through the Follow card's "Bone control"
+line on the Pi -- `disarmed`, `gate closed`, `gate open, waiting`, `obeying Pi`,
+`stick has control` -- as described in robot-link's `docs/DEPLOYMENT.md`.
+
 ## IPC Command Reference
 
 Commands are JSON sent over WebSocket to `server.js`, which forwards them to the Unix socket:
@@ -649,14 +742,20 @@ Commands are JSON sent over WebSocket to `server.js`, which forwards them to the
 | Arm / disarm | `{"type":"arm","value":true}` |
 | E-stop (assert) | `{"type":"e_stop"}` |
 | Clear e-stop (WriteNVM reset) | `{"type":"reset_estop"}` |
-| Set mode | `{"type":"set_mode","value":1}` (0=idle 1=balance 2=ext 3=manual) |
+| Set mode | `{"type":"set_mode","value":1}` — still accepted and reported, but no longer changes behaviour: the robot always balances and drive input comes from the stick or the Pi |
+| Pi drive gate | `{"type":"pi_drive","value":true}` — only stays open while armed; shut again on disarm and e-stop |
+| Pi drive command | `{"type":"drive","x":0.2,"y":0.3,"ttl_ms":300}` — sent by robot-link-boned ~10 Hz; x turn (+ right), y drive (+ forward), -1..1; expires after `ttl_ms` (50..1000) |
 | Set gains | `{"type":"set_pid","controller":"pitch","kp":40,"ki":0,"kd":5}` |
 | Enable controller | `{"type":"set_controller","controller":"yaw","enabled":true}` |
 | Save config | `{"type":"save_pid"}` |
+| Stand-up kick config | `{"type":"set_kick","assist":1,"duty":0.8,"max_deg":25,"timeout_ms":1200,"amps":6}` — all optional, clamped and saved; `duty` is raw PWM, `amps` 0 keeps the claw's own limit |
+| Download robot.conf | `{"type":"get_conf"}` — the bot answers with `{"type":"conf_file","name":...,"text":...,"truncated":false}`, the file verbatim; the dashboard saves it client-side |
+| Service control | `{"type":"service","unit":"bbb_oled\|batt_monitor\|robot-link-boned\|balance_bot\|balance_bot_server\|all","action":"start\|stop\|restart"}` — balance_bot and balance_bot_server accept restart only; `all` + start/stop covers the auxiliary units |
 | Zero IMU + encoders | `{"type":"zero_imu"}` |
 | Zero encoders only | `{"type":"zero_encoders"}` |
 | Position hold config | `{"type":"set_pos_config","zone_a":8000,"scale_d":80,...}` |
-| Motor config | `{"type":"set_motor_config","mode":0,"max_amps":2.5}` — `max_amps` >30 is rejected, not clamped |
+| Motor config | `{"type":"set_motor_config","mode":0,"max_amps":2.5,"min_batt_v":9.0}` — `max_amps` >30 is rejected, not clamped; battery limits must be 0 or 6–34 V with min below max |
+| Read the RoboClaw | `{"type":"read_claw_hw"}` — the result arrives as `claw_hw` in the next config message (PID/QPPS, encoder modes, config, volts, temp, status bits, battery and current limits, pin functions) |
 | Clear current peaks | `{"type":"reset_amp_peaks"}` |
 | RC mapping | `{"type":"set_sbus_config","drive_channel":3,"drive_scale":0.25}` |
 | Nudge pose / position | `{"type":"nudge","axis":"pose","delta":0.1}` — axes: `pitch` (trim), `pose` (lean), `yaw`, `fwd` |
@@ -666,6 +765,14 @@ Commands are JSON sent over WebSocket to `server.js`, which forwards them to the
 Controller names are `pitch`, `position` and `yaw`. The older `balance` and
 `steering` are still accepted, so an out-of-date browser tab keeps working.
 
+The socket splits the byte stream into whole JSON objects, so several commands
+may arrive in one read (robot-link does this at 10 Hz) and newline-terminated
+and bare senders both work. Every command is answered with `{"status":...}`.
+
+Every telemetry packet also carries
+`"pi_drive":{"gate":bool,"state":"...","applying":bool}` whatever the telemetry
+toggles are; robot-link reads it to tell the Pi whether it is obeyed.
+
 Send one by hand with:
 
 ```bash
@@ -673,6 +780,85 @@ echo '{"type":"set_pos_config","drive_mode":1}' | socat - UNIX-CONNECT:/tmp/bala
 ```
 
 ---
+
+## Findings and gotchas
+
+- **The operator was choosing the kick direction, and half the choices were
+  wrong.** Two buttons, forwards and backwards, each a 50/50 guess — and the
+  wrong guess drives the contact patch out from under the robot and lays it
+  down harder than it fell. The direction is not a preference: to stand up,
+  the wheels must travel *under* the centre of mass, which is the direction
+  the balance loop would drive for that lean. The firmware now derives it from
+  `theta - theta_offset` and the buttons (and the transmitter's stick) mean
+  only "go". The sign needs no calibration of its own: the pitch PID sees
+  `error = setpoint - theta`, so a positive lean already produces the duty
+  that catches it, with motor polarity baked into `pol_l`/`pol_r` — if the
+  robot balances, the kick sign is right. One KICK UP button now.
+
+- **A kick in velocity mode is a crawl, not a shove.** `motor_hal_set_both()`
+  turns its argument into a SPEED target when the claw is in velocity mode, so
+  `kick_duty 0.35` with `qpps_max 500` asked for 175 QPPS and left the torque
+  to a velocity PID tuned for balancing an upright robot. The kick now goes
+  through `motor_hal_kick()`, which sends raw PWM (MIXEDDUTY) whatever the
+  drive mode is — through the same motion gate — and the default duty is 0.80,
+  since it finally means what it says. The claw's current limit is then the
+  real ceiling on torque; `kick_amps` raises it for the duration of a press and
+  restores it on release, or 0 to leave it alone.
+
+- **The kick was cancelled by the rule it exists to override.** The motion
+  gate — the single choke point every drive command passes through — refuses
+  motion whenever the effective angle is outside `oob_angle_deg`. A stand-up
+  kick only happens *outside* that angle, so every kick was commanded at full
+  duty and turned into a coast at the last moment: a twitch of the motors, a
+  clean `0.350` in the ring log, and a robot still on its kickstand. The log
+  read that way because `robot.c` recorded the commanded duty without checking
+  whether the write was accepted. Both fixed: the gate now takes `kick_max_deg`
+  as its ceiling while a kick is being written (everything else it checks —
+  armed, trying, e-stop, IMU health — still applies), and a refused write is
+  reported as zero rather than as the duty that was asked for.
+
+- **A refused kick was indistinguishable from a dead button.** `kick_direction()`
+  logged only the kicks that *worked*; the six gates that can turn one down —
+  `kick_assist` off, not armed, IMU stale, inside `oob_angle_deg`, past
+  `kick_max_deg`, or awaiting a recentre after a timeout — all returned 0 in
+  silence. A 63 s ring capture of a press at a perfectly kickable 17.9° showed
+  no motor write at all and nothing anywhere to say which gate had said no.
+  The reason is now logged once per press, published as `kick_block` in
+  telemetry, and shown beside the KICK buttons. The kick's own settings and
+  `theta_offset` are in the ring log's config block too — without them a
+  recording cannot say whether the effective angle was even in the window.
+ (Pi drive, 2026-09-21)
+
+- **The old EXT_INPUT path could never have worked.** It wrote up to a 17° lean
+  straight into `theta_ref`, bypassing drive mode and `drive_scale`, and assigned
+  the heading target instead of integrating a turn rate -- the same bug the SBUS
+  path had fixed, where at most 1° of wheel differential is invisible. It was
+  removed rather than repaired; the Pi uses the stick's path.
+- **Mode was vestigial.** Nothing implemented IDLE or MANUAL; the dashboard's
+  Balance / Ext Ctrl picker only switched that broken UART branch on or off. It
+  is now the Pi Drive gate.
+- **One `read()` was treated as one command.** With a second client sending at
+  10 Hz, two commands in one read would have been parsed as one. The socket now
+  frames by JSON object (tested: split, coalesced, bare, braces in strings).
+- **Gating the Pi on the RC kill switch blocked it almost always** -- the
+  transmitter is usually off and a failsafed receiver reports kill. Removed.
+- **"obeying Pi" with zero motion means no target**, not a Bone fault: the
+  tracker's Follow card says why it is searching.
+- **CLR ESTOP silently undid the claw's configuration.** `motor_hal_roboclaw_reset()`
+  sends WriteNVM, which on v4.2.8 resets the controller, then reconnected
+  without pushing anything back: after every e-stop clear the claw ran on its
+  default current limit and a wiped velocity PID. It now re-applies current
+  limit, velocity PID and battery limits (`motor_hal_apply_claw_settings()`).
+- **The Claw tab's baud buttons changed only the Bone's side.** Picking anything
+  but the claw's actual baud lost the link. Baud is now a single field that asks
+  for confirmation first and says outright that the claw's NVM has to match; the
+  claw's own rate is in the READ tile's decoded config register.
+- **The Claw tab's config readback could claim "differs" right after loading**:
+  the in-sync check ran before the controls were seeded from the bot. Fixed,
+  and the claw read is now compared against what the bot pushes.
+- **The vendored OLED copy had drifted** from oled-utils (no Robot Link support).
+  Copy from `~/oled-utils` after every change there; `make install-oled` picks
+  it up on the next deploy.
 
 ## Node.js Bridge (`server/`)
 

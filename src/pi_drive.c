@@ -23,7 +23,6 @@
  *
  *   disarmed      not armed -- nothing drives, and the gate is shut
  *   gate closed   the dashboard's Pi-drive gate is off (the default)
- *   rc kill       a transmitter is on and its kill switch is not at RUN
  *   stick         the SBUS stick is off centre: the operator wins
  *   no command    gate open, but no unexpired command from the Pi
  *   applying      the Pi's x/y are the drive input this tick
@@ -91,8 +90,7 @@ void pi_drive_set_state(pi_drive_state_t s) { g_state = s; }
 
 pi_drive_state_t pi_drive_state(void) { return g_state; }
 
-pi_drive_state_t pi_drive_decide(int armed, int gate, int sbus_connected,
-                                 int sbus_kill, float stick_drive,
+pi_drive_state_t pi_drive_decide(int armed, int gate, float stick_drive,
                                  float stick_turn, int pi_fresh)
 {
     /* Order matters: every earlier reason outranks the later ones. */
@@ -100,8 +98,10 @@ pi_drive_state_t pi_drive_decide(int armed, int gate, int sbus_connected,
         return PI_DRIVE_DISARMED;
     if (!gate)
         return PI_DRIVE_GATE_CLOSED;
-    if (sbus_connected && sbus_kill < 2)
-        return PI_DRIVE_RC_KILL;
+    /* The transmitter's kill switch deliberately has no say here: the robot
+     * is normally run with the transmitter off, and a receiver in failsafe
+     * reports "kill", so gating on it would block the Pi almost always. The
+     * gate, arming and a stick off centre are what control the Pi. */
     if (stick_drive != 0.0f || stick_turn != 0.0f)
         return PI_DRIVE_STICK;    /* input_sbus.c has already deadbanded */
     if (!pi_fresh)
@@ -115,7 +115,6 @@ const char *pi_drive_state_name(pi_drive_state_t s)
     {
     case PI_DRIVE_DISARMED:    return "disarmed";
     case PI_DRIVE_GATE_CLOSED: return "gate closed";
-    case PI_DRIVE_RC_KILL:     return "rc kill";
     case PI_DRIVE_STICK:       return "stick";
     case PI_DRIVE_NO_COMMAND:  return "no command";
     case PI_DRIVE_APPLYING:    return "applying";

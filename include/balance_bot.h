@@ -84,6 +84,40 @@
  * side by side so one run tells you both sign and magnitude -- see
  * README.md "Yaw derivative source". */
 #define YAW_GYRO_SCALE_DEFAULT 0.0f
+/* Yaw authority in the mixer. left = balance - yaw, right = balance + yaw,
+ * and with no limit the yaw loop had equal say to balance: 2026-10-07
+ * bbot_ring_1791397494105 t=2462.0-2462.6, one wheel current-limited, yaw
+ * error ran 8 -> 90 deg, yaw_output 0.60, right duty pinned at 1.00 while the
+ * left got 0.0-0.28 of a 1.12 balance command. Spun and fell in 0.6 s. The
+ * push capture (1791396277660 t=1229.05) shows the same: wheels commanded in
+ * OPPOSITE directions mid-fall. Heading is never worth the balance.
+ *   yaw_max_authority  hard cap on |yaw_output| (duty)
+ *   yaw_taper_start    |balance_output| above which the cap shrinks linearly
+ *                      to 0 at |balance_output| = 1.0  */
+#define YAW_MAX_AUTHORITY_DEFAULT 0.15f
+#define YAW_TAPER_START_DEFAULT 0.5f
+/* 2026-10-09: the 0.15 cap killed steering. Yaw kp 0.005 x a 15 deg nudge is
+ * 0.075 duty, and with a 45 deg nudge (the IPC limit) 0.225 -- clamped to
+ * 0.15, i.e. 150 QPPS of differential at qpps_max 1000, which the RoboClaw's
+ * velocity loop does not deliver (measured: commands under ~200 QPPS all
+ * produce 10-15). Before the cap a 90 deg lead gave 0.45 and the bot turned.
+ * So the cap is split: max_authority while merely holding heading (where the
+ * differential is noise and the captures show it steals the balance), and
+ * max_authority_turn while a turn is being COMMANDED -- stick off centre, a
+ * Pi x command, or a dashboard yaw nudge in the last YAW_TURN_CMD_HOLD_MS.
+ * The taper above taper_start applies to both.
+ * turn_ff: differential duty added directly from the stick/Pi x while held,
+ * so a turn starts without waiting for the heading error to grow past the
+ * velocity-mode dead zone. The heading loop then holds where it ends up. */
+#define YAW_MAX_AUTHORITY_TURN_DEFAULT 0.40f
+#define YAW_TURN_FF_DEFAULT 0.25f
+#define YAW_TURN_CMD_HOLD_MS 2000
+/* Pitch D source. 0 = difference the DMP angle (old), 1 = gyro rate
+ * (state.theta_dot). Measured 2026-10-07 bbot_ring_1791395611843: the
+ * differenced angle carries 134 units in the 10-49 Hz band against 28 for the
+ * gyro, identical below 10 Hz (r=0.88, same sign). Five times the HF noise
+ * into the duty through kd for no damping gained. */
+#define PITCH_D_SRC_DEFAULT 1
 
 /* ── Stand-up kick ────────────────────────────────────────────────────────
  * Parked on the kickstand the robot rests at 17-20 deg, well outside
@@ -108,7 +142,18 @@
  * Set kick_assist = 0 to disable the whole path. */
 #define KICK_ASSIST_DEFAULT 1
 #define KICK_MAX_DEG_DEFAULT 25.0f
-#define KICK_DUTY_DEFAULT 0.35f
+/* Raw PWM, not a velocity-mode number: motor_hal_kick() bypasses the drive
+ * mode. 0.35 was inherited from when this went through set_both, where in
+ * velocity mode it meant 175 QPPS — a crawl, with the torque left to a PID
+ * tuned for balancing. Standing a robot up wants most of the voltage there
+ * is. The claw's own current limit is what keeps it honest. */
+#define KICK_DUTY_DEFAULT 0.80f
+
+/* Current limit, amps per motor, applied for the duration of a kick and
+ * restored on release. 0 = leave the claw's configured limit alone, which is
+ * the right default: raising it is a decision about the motors, not about the
+ * software. Two serial round trips per press, none per tick. */
+#define KICK_AMPS_DEFAULT 0.0f
 #define KICK_TIMEOUT_MS_DEFAULT 1200
 #define KICK_STICK_DEADBAND 0.25f   /* stick deflection that counts as a request */
 
@@ -142,6 +187,34 @@
 #define POS_RETURN_RATE_DEFAULT 100.0f   /* ticks/s ~ 127 mm/s (1 enc_pos tick = 1.27 mm) */
 #define POS_RETURN_ACCEL_DEFAULT 200.0f  /* ticks/s^2 ~ 0.25 m/s^2, ~1.5 deg of lean */
 #define POS_BACK_TO_SPOT_DEFAULT 1       // Full zone hold by default
+/* After an OOB clear the bot is still swinging through upright at 30-76 deg/s
+ * (2026-10-07 ring captures, nine clears). The position loop re-armed on the
+ * same tick and had velDamp and posCorr saturated within 150 ms, so the pitch
+ * setpoint was at +/-3 deg before the body was upright -- it fought the catch.
+ * For this long after a clear the position loop contributes nothing: target
+ * tracks the wheels, correction and damping are 0, and the pitch loop alone
+ * arrests the swing. Then the rate limiter eases the hold back in. */
+#define POS_HOLD_AFTER_OOB_MS_DEFAULT 500
+/* Push yield. Under a sustained push the hold loop leans into the hand at its
+ * full cap (velDamp 2.0 + posCorr 1.0 = 3+ deg) with ~0.1 duty, for as long
+ * as the push lasts -- 2026-10-09 bbot_ring_1791436262807 t=929.8-930.6,
+ * 2026-10-08 ...540143 t=357.6-358.1. When the hand leaves, that stored lean
+ * plus the wheel motion is a 40 deg/s fall before the controller has done
+ * anything, and the recovery is what hits the current limit. Clean holds
+ * never saturate velDamp at all (671edc06: 0 ticks); pushes hold it there
+ * for 60-135 ticks. So: saturated for yield_ms -> give up the spot. Target
+ * follows the wheels, spring is 0, damping is scaled by yield_damp_gain.
+ * Ends once the wheels have been below stopped_vel for yield_ms, then the
+ * hold ramps back in over hold_after_oob_ms. Logged as pos_hold=3. */
+#define POS_YIELD_MS_DEFAULT 300
+#define POS_YIELD_DAMP_GAIN_DEFAULT 0.25f
+/* 2026-10-10: in mode 0 the hold's own swing reaches encVel 8-14, which
+ * saturates velDamp at vel_scale_stop 3.7 and tripped the yield 16 times in
+ * two sessions with no push (yaw error 1-5 deg) -- each one re-snapped the
+ * target 20-60 ticks and the bot walked across the floor. A push drags it
+ * 150-300 ticks from the target; the swing stays within +/-40. So the yield
+ * also requires |target - position| above this. */
+#define POS_YIELD_ERR_TICKS_DEFAULT 120
 #define POS_KI_DEFAULT     0.0f          // off — opt in from the dashboard
 #define POS_I_MAX_DEFAULT  2.0f          // deg; ~4x the standing lean seen so far
 #define POS_VEL_DAMP_MAX_DEFAULT 0.0f    // 0 = unlimited, original behaviour
@@ -320,6 +393,10 @@ typedef struct
                              // never rested and hunted around the target. Set
                              // it to roughly half the tolerance you actually
                              // want and the limit cycle loses its driver.
+    int32_t hold_after_oob_ms; // position loop held at zero this long after an OOB clear
+    int32_t yield_ms;          // velDamp saturated this long -> push yield (0 = off)
+    int32_t yield_err_ticks;   // ...AND |enc error| above this (a push, not the hold's own swing)
+    float yield_damp_gain;     // damping kept while yielding (fraction)
     int back_to_spot;        // 1 = full zone-based hold (A/B/C/D);
                              // 0 = only correct inside zone_c (loose hold, position hold mode)
 
@@ -396,6 +473,7 @@ typedef struct
  * lasts — long enough to cook a fuse holder, which is not a transient event a
  * capacitor can absorb. Raise it only after watching real numbers. */
 #define MOTOR_MAX_AMPS_DEFAULT 2.5f
+#define MOTOR_FRICTION_FF_DEFAULT 0.0f
 #define MOTOR_BAUD_DEFAULT 460800
 
 // RoboClaw internal velocity-PID defaults (fixed-point × 65536 on the wire)
@@ -454,6 +532,19 @@ typedef struct
     // whenever set_motor_config changes it. 0 = leave the controller's own
     // setting alone.
     float max_amps;
+
+    // RoboClaw main battery limits in volts (cmd 57), pushed at init, on every
+    // change and after every e-stop reset. min: below it the claw flags Main
+    // Batt Low. max: over-voltage limit (regen). 0 = leave the claw's own.
+    float min_batt_v;
+    float max_batt_v;
+
+    // Duty mode only. Fixed duty added in the direction of the command so
+    // the motor is driven above its stiction floor from the first tick. In
+    // velocity mode the RoboClaw's own loop did this implicitly (and slowly:
+    // 200-400 ms of nothing, then a current-limit pulse -- 2026-10-09 ring
+    // captures). 0 = off. Not applied to the kick path.
+    float friction_ff;
 } motor_config_t;
 
 // ============================================================================
@@ -604,10 +695,32 @@ extern int g_arm_at_boot;
 // robot_config_t.oob_angle_deg; set_oob_angle applies and persists it
 // immediately, unlike arm_at_boot which only takes effect on next boot.
 extern float g_oob_angle_deg;
+/* Re-engage hysteresis. The cut is at oob_angle_deg; coming back is not.
+ * Every OOB clear in the 10-07/10-08 captures happened at 12 deg with the
+ * body moving 30-76 deg/s, and the loop grabbed it mid-swing: with 0.3 s of
+ * actuator lag that is an overshoot to the far side, which is why standing it
+ * up needs a hand on it. Motors come back only when |angle| < reengage_deg
+ * AND |rate| < reengage_rate: lift it near upright, hold it still for a
+ * moment, it takes over from a calm start. st_oob logs 1 for the whole cut
+ * including the wait. Kick assist is unchanged (its window is above oob). */
+#define REENGAGE_DEG_DEFAULT 6.0f
+#define REENGAGE_RATE_DEFAULT 30.0f
+extern float g_reengage_deg;
+extern float g_reengage_rate;
+extern volatile int g_oob_cut; /* 1 = motors cut (OOB or waiting to re-engage) */
 /* Steering-loop derivative source. 0 = difference the encoder heading (the
  * original, quantised, jittery path). Nonzero = gyro Z * this, in phi_diff
  * deg/s. Sign included. See YAW_GYRO_SCALE_DEFAULT. */
 extern float g_yaw_gyro_scale;
+extern float g_yaw_max_authority;
+extern float g_yaw_max_authority_turn;
+extern float g_yaw_turn_ff;
+extern float g_yaw_taper_start;
+/* Dashboard yaw nudge: moves the heading target robot.c integrates the stick
+ * into. Writing state.yaw directly was overwritten on the next tick whenever
+ * the transmitter was on (state.yaw = yaw_target every tick). */
+void robot_nudge_yaw(float delta_deg);
+extern int g_pitch_d_src;
 
 /* Stand-up kick. See KICK_ASSIST_DEFAULT. g_kick_request is the dashboard's
  * hold-to-kick: -1 / 0 / +1, set by IPC, cleared when the kick ends. */
@@ -621,6 +734,39 @@ extern volatile uint64_t g_kick_request_us;   /* when it was last refreshed */
  * treated as released. Deadman: a dropped socket or a closed laptop lid stops
  * the wheels instead of latching them on. */
 #define KICK_REQUEST_STALE_US 300000ULL
+
+/* Why a held kick did nothing. Every one of these used to be a silent return,
+ * which made a refused kick indistinguishable from an unwired button. */
+typedef enum {
+    KICK_BLOCK_NONE = 0,   /* allowed, or nobody is asking */
+    KICK_BLOCK_DISABLED,   /* kick_assist is off in robot.conf */
+    KICK_BLOCK_DISARMED,   /* not armed */
+    KICK_BLOCK_IMU,        /* IMU stale: no angle to trust */
+    KICK_BLOCK_UPRIGHT,    /* inside oob_angle_deg — the balance loop has it */
+    KICK_BLOCK_TOO_FAR,    /* past kick_max_deg — lying down, a kick throws it */
+    KICK_BLOCK_RECENTRE,   /* previous kick timed out; release and retry */
+} kick_block_t;
+
+extern kick_block_t g_kick_block;
+
+/* Non-zero only while a sanctioned kick is being written to the motors; the
+ * motion gate reads it to allow that one motion outside the balance window. */
+extern volatile int g_kick_motion;
+extern float g_kick_amps;
+
+static inline const char *kick_block_text(kick_block_t b)
+{
+    switch (b)
+    {
+    case KICK_BLOCK_DISABLED: return "kick_assist off";
+    case KICK_BLOCK_DISARMED: return "not armed";
+    case KICK_BLOCK_IMU:      return "IMU stale";
+    case KICK_BLOCK_UPRIGHT:  return "upright — inside the OOB angle";
+    case KICK_BLOCK_TOO_FAR:  return "past kick_max_deg";
+    case KICK_BLOCK_RECENTRE: return "release and retry";
+    default:                  return "";
+    }
+}
 /* Set when theta stops changing; blocks actuation. See robot.c. */
 extern volatile int g_imu_stale;
 
@@ -665,7 +811,6 @@ typedef enum
 {
     PI_DRIVE_DISARMED = 0,
     PI_DRIVE_GATE_CLOSED,
-    PI_DRIVE_RC_KILL,
     PI_DRIVE_STICK,
     PI_DRIVE_NO_COMMAND,
     PI_DRIVE_APPLYING
@@ -676,10 +821,9 @@ int pi_drive_get(float *x, float *y);              /* 1 = fresh command    */
 void pi_drive_set_gate(int open);
 int pi_drive_gate(void);
 void pi_drive_set_state(pi_drive_state_t s);       /* control loop, per tick */
-/* Pure: who drives this tick. Stick values are the deadbanded, kill/arm-gated
+/* Pure: who drives this tick. Stick values are the deadbanded
  * sbus_get_drive()/sbus_get_turn() (0 when no transmitter). */
-pi_drive_state_t pi_drive_decide(int armed, int gate, int sbus_connected,
-                                 int sbus_kill, float stick_drive,
+pi_drive_state_t pi_drive_decide(int armed, int gate, float stick_drive,
                                  float stick_turn, int pi_fresh);
 pi_drive_state_t pi_drive_state(void);
 const char *pi_drive_state_name(pi_drive_state_t s);
@@ -884,6 +1028,25 @@ typedef struct
     float kp, ki, kd;
 } pid_gains_t;
 
+/* Two gain sets, one per actuator mode. The loop output means different
+ * things in each: a fraction of qpps_max (a speed) in modes 1/2, a fraction
+ * of full PWM (a voltage) in mode 0, so a number tuned for one is wrong by a
+ * factor of several in the other. [motor] mode selects which set is live;
+ * the other is stored untouched and written back unchanged on save. Seed
+ * values for the duty set are starting points, not tuned. */
+#define PITCH_DUTY_KP_DEFAULT 0.25f
+#define PITCH_DUTY_KI_DEFAULT 0.05f
+#define PITCH_DUTY_KD_DEFAULT 0.03f
+#define YAW_DUTY_KP_DEFAULT 0.02f
+#define YAW_DUTY_KI_DEFAULT 0.0f
+#define YAW_DUTY_KD_DEFAULT 0.0f
+extern pid_gains_t g_gains_pitch_vel, g_gains_yaw_vel;   /* modes 1, 2 */
+extern pid_gains_t g_gains_pitch_duty, g_gains_yaw_duty; /* mode 0      */
+/* Copy the live PID gains into the set that belongs to g_motor_config.mode. */
+void robot_gains_store_live(void);
+/* Load the set for `mode` into the live PIDs (resets their state). */
+void robot_gains_select(int mode);
+
 /**
  * @brief Everything tunable on the robot, in one struct backed by one file.
  *
@@ -893,20 +1056,30 @@ typedef struct
  */
 typedef struct
 {
-    pid_gains_t pitch;    /* was balance — pitch angle -> duty, real PID   */
-    pid_gains_t yaw;        /* was steering — wheel diff -> duty, real PID   */
+    pid_gains_t pitch;    /* velocity-mode set (modes 1, 2); [pitch] in robot.conf */
+    pid_gains_t yaw;        /* velocity-mode set; [yaw]                             */
+    pid_gains_t pitch_duty; /* duty-mode set (mode 0); [pitch_duty]                 */
+    pid_gains_t yaw_duty;   /* duty-mode set; [yaw_duty]                            */
     pos_config_t position;  /* was position — zone-scheduled hold, NOT a PID    */
     motor_config_t motor;
     imu_offsets_t imu;
     sbus_config_t sbus;
     float theta_trim;       /* was balance_angle; applied as state.theta_offset */
     float yaw_gyro_scale;   /* 0 = yaw D from encoders; else gyro Z, scaled+signed */
+    float yaw_max_authority; /* mixer cap on |yaw_output|, see YAW_MAX_AUTHORITY_DEFAULT */
+    float yaw_max_authority_turn; /* cap while a turn is commanded */
+    float yaw_turn_ff;      /* differential duty per unit of stick/Pi x while held */
+    float yaw_taper_start;  /* |balance_output| where the yaw cap starts shrinking */
+    int pitch_d_src;        /* 0 = differenced angle, 1 = gyro rate (PITCH_D_SRC_DEFAULT) */
     int kick_assist;        /* 1 = allow the stand-up kick (see KICK_* below)    */
     float kick_max_deg;     /* assist refuses above this |theta - trim|          */
     float kick_duty;        /* duty it drives at, both wheels, same sign         */
     int kick_timeout_ms;    /* longest single kick before it insists on a recentre */
+    float kick_amps;        /* per-motor current limit while kicking; 0 = claw's own */
     int arm_at_boot;        /* 1 = auto-arm on startup instead of waiting for ARM */
     float oob_angle_deg;    /* hard safety cutoff -- see g_oob_angle_deg */
+    float reengage_deg;     /* after a cut, motors return only inside this angle... */
+    float reengage_rate;    /* ...and below this |pitch rate| (deg/s). 0 = old behaviour */
 } robot_config_t;
 
 void robot_config_defaults(robot_config_t *c);
@@ -917,6 +1090,10 @@ void robot_config_apply(const robot_config_t *c);
 
 /** Snapshot every live global and rewrite the whole file. The only way to save. */
 int robot_config_save_current(const char *path);
+
+/** The path save_current() writes when given NULL — also the file the dashboard
+ *  downloads with get_conf. */
+const char *robot_config_default_path(void);
 
 /** Load robot.conf, or build it from the legacy pidconfig.txt + IMU file once. */
 int robot_config_load_or_migrate(const char *path, robot_config_t *c);

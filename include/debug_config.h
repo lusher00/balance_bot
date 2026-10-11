@@ -228,6 +228,12 @@ typedef struct
     float oled_cpu_pct;
     bool batt_alive;      // batt_monitor
     float batt_cpu_pct;
+    bool link_alive;      // robot-link-boned (the Pi link)
+    float link_cpu_pct;
+    // sshd. Not ours and not restartable from the dashboard, but its death is
+    // what turns a debuggable board into one you have to walk over to.
+    bool ssh_alive;
+    float ssh_cpu_pct;
 } system_telemetry_t;
 
 /**

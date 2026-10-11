@@ -137,6 +137,34 @@ static void link_result(int ok)
 
 int motor_hal_link_down(void) { return g_link_down; }
 
+/* ── wire-level diagnostics (see motor_hal.h) ──────────────────────
+ * Written from the control loop thread (and telemetry_update, which runs in
+ * the same loop). Read with motor_hal_get_diag() from the same thread, so no
+ * locking beyond what the serial calls already do. */
+static motor_hal_diag_t g_diag;
+
+static uint64_t diag_now_us(void)
+{
+    return rc_nanos_since_boot() / 1000ULL;
+}
+
+static void diag_cmd(int kind, int32_t wire_l, int32_t wire_r, int ret, uint64_t t0)
+{
+    g_diag.cmd_seq++;
+    g_diag.cmd_kind = kind;
+    g_diag.cmd_wire_l = wire_l;
+    g_diag.cmd_wire_r = wire_r;
+    g_diag.cmd_ret = ret;
+    g_diag.cmd_us = (uint32_t)(diag_now_us() - t0);
+    if (ret != 0)
+        g_diag.cmd_fails++;
+}
+
+void motor_hal_get_diag(motor_hal_diag_t *out)
+{
+    *out = g_diag;
+}
+
 /* ── helpers ────────────────────────────────────────────────────── */
 
 static int refresh_encoders(void)
@@ -146,9 +174,14 @@ static int refresh_encoders(void)
     if (link_blocked())
         return -1;
     int32_t m1, m2;
+    const uint64_t t0 = diag_now_us();
     pthread_mutex_lock(&g_rc_mutex);
     int ret = roboclaw_encoders(g_rc, RC_ADDRESS, &m1, &m2);
     pthread_mutex_unlock(&g_rc_mutex);
+    g_diag.enc_us = (uint32_t)(diag_now_us() - t0);
+    g_diag.enc_ret = ret;
+    if (ret != ROBOCLAW_OK)
+        g_diag.enc_fails++;
     link_result(ret == ROBOCLAW_OK);
     if (ret != ROBOCLAW_OK)
     {
@@ -212,6 +245,7 @@ int motor_hal_init(const char *device, int baud)
      * a fuse acts on I2t over seconds and a capacitor covers microseconds only. */
     if (g_motor_config.max_amps > 0.0f)
         motor_hal_set_current_limit(g_motor_config.max_amps);
+    motor_hal_set_batt_limits(g_motor_config.min_batt_v, g_motor_config.max_batt_v);
 
     if (roboclaw_reset_encoders(g_rc, RC_ADDRESS) != ROBOCLAW_OK)
         LOG_WARN("motor_hal_roboclaw: encoder reset at init failed");
@@ -258,7 +292,12 @@ int motor_hal_roboclaw_reset(void)
         LOG_ERROR("motor_hal_roboclaw: reinit failed after reset");
         return -1;
     }
-    LOG_INFO("motor_hal_roboclaw: reset complete, e-stop cleared");
+    /* WriteNVM on v4.2.8 resets the controller's configuration: the current
+     * limit, velocity PID and battery limits robot.conf owns are gone. Push
+     * them back before anything can drive -- this used to be missing, so after
+     * every CLR ESTOP the claw ran on its defaults. */
+    motor_hal_apply_claw_settings();
+    LOG_INFO("motor_hal_roboclaw: reset complete, e-stop cleared, settings re-applied");
     return 0;
 }
 
@@ -268,6 +307,29 @@ static motor_hal_gate_fn g_gate = NULL; /* NULL = deny everything */
 
 void motor_hal_set_motion_gate(motor_hal_gate_fn fn) { g_gate = fn; }
 
+/* ── Motion gate ── the single choke point for drive commands. ───────────
+ * Checked at the last moment before bytes go to the RoboClaw, so no caller --
+ * present or future, main loop, kick or IPC -- can get motion past it. Every
+ * permit/deny change is logged at WARN with the reason, so the log proves
+ * whether this program ever commanded motion. Callers that are denied send a
+ * coast rather than nothing: in velocity mode "nothing" leaves the RoboClaw
+ * holding whatever speed it last had. */
+static int gate_permits(float left, float right)
+{
+    static int last_ok = -1;
+    const char *why = "no gate registered";
+    int ok = (g_gate != NULL) && g_gate(&why);
+    if (ok != last_ok)
+    {
+        if (ok)
+            LOG_WARN("motion gate: OPEN (L=%.3f R=%.3f)", left, right);
+        else
+            LOG_WARN("motion gate: CLOSED -- %s", why);
+        last_ok = ok;
+    }
+    return ok;
+}
+
 int motor_hal_set_both(float left, float right)
 {
     if (g_stub)
@@ -275,28 +337,9 @@ int motor_hal_set_both(float left, float right)
     if (!g_rc)
         return -1;
 
-    /* ── Motion gate ── the single choke point for drive commands. ───────
-     * Checked here, at the last moment before bytes go to the RoboClaw, so no
-     * caller -- present or future, main loop or IPC -- can get motion past it.
-     * Deny sends coast, not nothing: in velocity mode "nothing" leaves the
-     * RoboClaw holding whatever speed it last had. Every permit/deny change is
-     * logged at WARN with the reason, so the log proves whether this program
-     * ever commanded motion. */
-    {
-        static int last_ok = -1;
-        const char *why = "no gate registered";
-        int ok = (g_gate != NULL) && g_gate(&why);
-        if (ok != last_ok)
-        {
-            if (ok)
-                LOG_WARN("motion gate: OPEN (L=%.3f R=%.3f)", left, right);
-            else
-                LOG_WARN("motion gate: CLOSED -- %s", why);
-            last_ok = ok;
-        }
-        if (!ok)
-            return motor_hal_coast();
-    }
+    g_diag.gate_ok = gate_permits(left, right);
+    if (!g_diag.gate_ok)
+        return motor_hal_coast();
 
     /* clamp to ±1.0 */
     if (left > 1.0f)
@@ -319,9 +362,15 @@ int motor_hal_set_both(float left, float right)
      * us, which is exactly the behaviour we want. Nothing is gained by spending
      * 15 ms per tick discovering that again. */
     if (link_blocked())
+    {
+        diag_cmd(MOTOR_CMD_LINK_SKIP, 0, 0, -1, diag_now_us());
         return -1;
+    }
 
     int ret;
+    int kind = MOTOR_CMD_NONE;
+    int32_t wire_l = 0, wire_r = 0;
+    const uint64_t t0 = diag_now_us();
     pthread_mutex_lock(&g_rc_mutex);
 
     if (mode == MOTOR_HAL_MODE_VELOCITY_ACCEL)
@@ -330,6 +379,9 @@ int motor_hal_set_both(float left, float right)
         int32_t spd_r = (int32_t)(pol_r * right * (float)qpps_max);
         int32_t spd_l = (int32_t)(pol_l * left * (float)qpps_max);
         ret = roboclaw_speed_accel_m1m2(g_rc, RC_ADDRESS, spd_r, spd_l, accel);
+        kind = MOTOR_CMD_SPEED_ACCEL;
+        wire_l = spd_l;
+        wire_r = spd_r;
         if (ret != ROBOCLAW_OK)
             /* Written once per control tick while driving. */
             LOG_WARN_EVERY(2000, "motor_hal_roboclaw: speed_accel command failed (%d)", ret);
@@ -340,6 +392,9 @@ int motor_hal_set_both(float left, float right)
         int32_t spd_r = (int32_t)(pol_r * right * (float)qpps_max);
         int32_t spd_l = (int32_t)(pol_l * left * (float)qpps_max);
         ret = roboclaw_speed_m1m2(g_rc, RC_ADDRESS, spd_r, spd_l);
+        kind = MOTOR_CMD_SPEED;
+        wire_l = spd_l;
+        wire_r = spd_r;
         if (ret != ROBOCLAW_OK)
             /* Per control tick in velocity mode — throttled for the same
              * reason as speed_accel above. */
@@ -348,15 +403,72 @@ int motor_hal_set_both(float left, float right)
     else
     {
         /* raw PWM duty cycle (MIXEDDUTY, cmd 34) — default, no encoder feedback */
+        /* Friction feed-forward: see motor_config_t.friction_ff. Applied to
+         * any non-zero command in its own direction, then re-clamped. */
+        const float ff = g_motor_config.friction_ff;
+        if (ff > 0.0f)
+        {
+            if (left > 0.002f) left += ff; else if (left < -0.002f) left -= ff;
+            if (right > 0.002f) right += ff; else if (right < -0.002f) right -= ff;
+            if (left > 1.0f)
+                left = 1.0f;
+            if (left < -1.0f)
+                left = -1.0f;
+            if (right > 1.0f)
+                right = 1.0f;
+            if (right < -1.0f)
+                right = -1.0f;
+        }
         int16_t d1 = (int16_t)(pol_r * right * (float)DUTY_MAX);
         int16_t d2 = (int16_t)(pol_l * left * (float)DUTY_MAX);
         ret = roboclaw_duty_m1m2(g_rc, RC_ADDRESS, d1, d2);
+        kind = MOTOR_CMD_DUTY;
+        wire_l = d2;
+        wire_r = d1;
         if (ret != ROBOCLAW_OK)
             /* Per control tick in duty mode. */
             LOG_WARN_EVERY(2000, "motor_hal_roboclaw: duty command failed (%d)", ret);
     }
 
     pthread_mutex_unlock(&g_rc_mutex);
+    diag_cmd(kind, wire_l, wire_r, ret, t0);
+    link_result(ret == ROBOCLAW_OK);
+    return (ret == ROBOCLAW_OK) ? 0 : -1;
+}
+
+int motor_hal_kick(float duty)
+{
+    if (g_stub)
+        return 0;
+    if (!g_rc)
+        return -1;
+    g_diag.gate_ok = gate_permits(duty, duty);
+    if (!g_diag.gate_ok)
+        return motor_hal_coast();
+    if (link_blocked())
+    {
+        diag_cmd(MOTOR_CMD_LINK_SKIP, 0, 0, -1, diag_now_us());
+        return -1;
+    }
+
+    if (duty > 1.0f)
+        duty = 1.0f;
+    if (duty < -1.0f)
+        duty = -1.0f;
+
+    /* MIXEDDUTY regardless of g_motor_config.mode — see the header. Polarity
+     * still applies: the kick has to push the same way the drive does, or it
+     * lays the robot down instead of standing it up. */
+    const int16_t d1 = (int16_t)(g_motor_config.pol_r * duty * (float)DUTY_MAX);
+    const int16_t d2 = (int16_t)(g_motor_config.pol_l * duty * (float)DUTY_MAX);
+
+    const uint64_t t0 = diag_now_us();
+    pthread_mutex_lock(&g_rc_mutex);
+    int ret = roboclaw_duty_m1m2(g_rc, RC_ADDRESS, d1, d2);
+    pthread_mutex_unlock(&g_rc_mutex);
+    diag_cmd(MOTOR_CMD_KICK, d2, d1, ret, t0);
+    if (ret != ROBOCLAW_OK)
+        LOG_WARN_EVERY(2000, "motor_hal_roboclaw: kick duty command failed (%d)", ret);
     link_result(ret == ROBOCLAW_OK);
     return (ret == ROBOCLAW_OK) ? 0 : -1;
 }
@@ -385,14 +497,19 @@ int motor_hal_coast(void)
     if (!g_rc)
         return -1;
     if (link_blocked())
+    {
+        diag_cmd(MOTOR_CMD_LINK_SKIP, 0, 0, -1, diag_now_us());
         return -1;
+    }
 
     /* MIXEDDUTY 0 regardless of g_motor_config.mode. See the header for why
      * this cannot go through motor_hal_set_both(): in velocity mode a zero
      * there is a closed-loop request to HOLD zero, not an absence of drive. */
+    const uint64_t t0 = diag_now_us();
     pthread_mutex_lock(&g_rc_mutex);
     int ret = roboclaw_duty_m1m2(g_rc, RC_ADDRESS, 0, 0);
     pthread_mutex_unlock(&g_rc_mutex);
+    diag_cmd(MOTOR_CMD_COAST, 0, 0, ret, t0);
     if (ret != ROBOCLAW_OK)
         LOG_WARN_EVERY(2000, "motor_hal_roboclaw: coast (duty 0) failed (%d)", ret);
     link_result(ret == ROBOCLAW_OK);
@@ -502,7 +619,26 @@ int motor_hal_read_hw_settings(claw_hw_settings_t *out)
         ret = roboclaw_read_encoder_mode(g_rc, RC_ADDRESS, &em1, &em2);
     if (ret == ROBOCLAW_OK)
         ret = roboclaw_read_config(g_rc, RC_ADDRESS, &cfg);
+    /* Health and limits for the Claw tab. */
+    int16_t mv = 0;
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_main_battery_voltage(g_rc, RC_ADDRESS, &mv);
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_logic_battery_voltage(g_rc, RC_ADDRESS, &out->logic_v);
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_temperature(g_rc, RC_ADDRESS, &out->temp_c);
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_read_status(g_rc, RC_ADDRESS, &out->status);
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_read_main_battery_limits(g_rc, RC_ADDRESS, &out->batt_min, &out->batt_max);
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_read_max_current(g_rc, RC_ADDRESS, 0, &out->max_amps_m1);
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_read_max_current(g_rc, RC_ADDRESS, 1, &out->max_amps_m2);
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_read_pin_functions(g_rc, RC_ADDRESS, out->pins);
     pthread_mutex_unlock(&g_rc_mutex);
+    out->main_v = mv / 10.0f;
 
     if (ret != ROBOCLAW_OK)
     {
@@ -536,6 +672,8 @@ int motor_hal_read_voltage(float *volts)
         return -1;
     /* RoboClaw returns tenths of a volt (e.g. 118 = 11.8 V) */
     *volts = raw / 10.0f;
+    g_diag.vbatt = *volts;
+    g_diag.vbatt_t_us = diag_now_us();
     return 0;
 }
 
@@ -559,6 +697,9 @@ int motor_hal_read_encoder_speeds(int32_t *m1_qpps, int32_t *m2_qpps)
     /* Apply encoder polarity to match position encoder convention */
     *m1_qpps = (int32_t)(g_motor_config.enc_pol_r * (float)m1);
     *m2_qpps = (int32_t)(g_motor_config.enc_pol_l * (float)m2);
+    g_diag.spd_r = *m1_qpps;
+    g_diag.spd_l = *m2_qpps;
+    g_diag.spd_t_us = diag_now_us();
     return 0;
 }
 
@@ -582,6 +723,9 @@ int motor_hal_read_currents(float *m1_amps, float *m2_amps)
      * labels line up with the encoder convention used everywhere else. */
     *m1_amps = a1;
     *m2_amps = a2;
+    g_diag.amps_r = a1;
+    g_diag.amps_l = a2;
+    g_diag.amps_t_us = diag_now_us();
     return 0;
 }
 
@@ -609,6 +753,48 @@ int motor_hal_set_current_limit(float amps)
     g_motor_config.max_amps = amps;
     LOG_INFO("RoboClaw current limit: %.2f A per motor (%.2f A total)", amps, amps * 2.0f);
     return 0;
+}
+
+int motor_hal_set_batt_limits(float vmin, float vmax)
+{
+    if (vmin <= 0.0f)
+        return 0; /* leave whatever the controller already has */
+    if (g_stub)
+        return 0;
+    if (!g_rc)
+        return -1;
+    float cur_min = 0.0f, cur_max = 0.0f, rb_min = 0.0f, rb_max = 0.0f;
+    int ret = ROBOCLAW_OK;
+    pthread_mutex_lock(&g_rc_mutex);
+    if (vmax <= 0.0f)
+    {
+        ret = roboclaw_read_main_battery_limits(g_rc, RC_ADDRESS, &cur_min, &cur_max);
+        vmax = cur_max;
+    }
+    if (ret == ROBOCLAW_OK && !(vmin >= 6.0f && vmax <= 34.0f && vmin < vmax))
+        ret = -100; /* outside what the controller accepts */
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_set_main_battery_limits(g_rc, RC_ADDRESS, vmin, vmax);
+    if (ret == ROBOCLAW_OK)
+        ret = roboclaw_read_main_battery_limits(g_rc, RC_ADDRESS, &rb_min, &rb_max);
+    pthread_mutex_unlock(&g_rc_mutex);
+    if (ret != ROBOCLAW_OK)
+    {
+        LOG_WARN("motor_hal_set_batt_limits: failed (%d) min %.1f V max %.1f V", ret, vmin, vmax);
+        return -1;
+    }
+    /* WARN, not INFO: the service runs --quiet, and "did the cutoff reach the
+     * RoboClaw" must be answerable from the journal. */
+    LOG_WARN("RoboClaw main battery limits: min %.1f V max %.1f V (read back %.1f / %.1f)",
+             vmin, vmax, rb_min, rb_max);
+    return 0;
+}
+
+void motor_hal_apply_claw_settings(void)
+{
+    motor_hal_set_current_limit(g_motor_config.max_amps);
+    motor_hal_set_claw_pid(g_motor_config.claw_kp, g_motor_config.claw_ki, g_motor_config.claw_kd);
+    motor_hal_set_batt_limits(g_motor_config.min_batt_v, g_motor_config.max_batt_v);
 }
 
 int motor_hal_read_current_limit(float *amps)
@@ -667,4 +853,29 @@ int motor_hal_set_baud(int baud)
     }
     LOG_INFO("motor_hal_set_baud: reconnected at %d baud", baud);
     return 0;
+}
+
+/* ── diagnostics polls (robot.c, one each per 10 ticks) ─────────────── */
+
+int motor_hal_poll_status(void)
+{
+    if (g_stub || !g_rc)
+        return -1;
+    if (link_blocked())
+        return -1;
+    uint32_t st = 0;
+    pthread_mutex_lock(&g_rc_mutex);
+    int ret = roboclaw_read_status(g_rc, RC_ADDRESS, &st);
+    pthread_mutex_unlock(&g_rc_mutex);
+    g_diag.status_ret = ret;
+    g_diag.status_t_us = diag_now_us();
+    if (ret == ROBOCLAW_OK)
+        g_diag.status = st;
+    return (ret == ROBOCLAW_OK) ? 0 : -1;
+}
+
+int motor_hal_poll_vbatt(void)
+{
+    float v;
+    return motor_hal_read_voltage(&v); /* stores into g_diag on success */
 }

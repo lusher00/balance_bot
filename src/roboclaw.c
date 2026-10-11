@@ -815,6 +815,74 @@ int roboclaw_set_max_current(struct roboclaw *rc, uint8_t address, int motor, fl
 	return send_cmd_wait_answer(rc, bytes, ROBOCLAW_ACK_BYTES, 0);
 }
 
+/* SETMAINVOLTAGES (57): [min:2][max:2], 0.1 V units. Below min the claw
+ * flags Main Batt Low; max is the over-voltage (regen) limit. RAM only on
+ * v4.2.8 -- WriteNVM resets it -- so balance_bot re-applies it every start. */
+int roboclaw_set_main_battery_limits(struct roboclaw *rc, uint8_t address, float vmin, float vmax)
+{
+	uint8_t bytes = 0;
+	rc->buffer[bytes++] = address;
+	rc->buffer[bytes++] = SETMAINVOLTAGES;
+	bytes += encode_uint16(rc->buffer, bytes, (uint16_t)(vmin * 10.0f + 0.5f));
+	bytes += encode_uint16(rc->buffer, bytes, (uint16_t)(vmax * 10.0f + 0.5f));
+	bytes += encode_checksum(rc->buffer, bytes);
+	return send_cmd_wait_answer(rc, bytes, ROBOCLAW_ACK_BYTES, 0);
+}
+
+/* Small fixed-length reads used by the dashboard's Claw tab. Each: send
+ * [address][cmd][crc], receive n data bytes + CRC. */
+static int read_fixed(struct roboclaw *rc, uint8_t address, uint8_t cmd, int n)
+{
+	uint8_t bytes = 0;
+	rc->buffer[bytes++] = address;
+	rc->buffer[bytes++] = cmd;
+	uint16_t crc = calculate_crc16(rc->buffer, bytes);
+	return send_cmd_wait_answer(rc, bytes, n + 2, crc);
+}
+
+/* GETLBATT (25): logic battery, 0.1 V. */
+int roboclaw_logic_battery_voltage(struct roboclaw *rc, uint8_t address, float *volts)
+{
+	int ret = read_fixed(rc, address, GETLBATT, 2);
+	if (ret == ROBOCLAW_OK)
+		*volts = decode_uint16(rc->buffer + 2) / 10.0f;
+	return ret;
+}
+
+/* GETERROR (90): 32-bit status -- error and warning bits (firmware 4.x). */
+int roboclaw_read_status(struct roboclaw *rc, uint8_t address, uint32_t *status)
+{
+	int ret = read_fixed(rc, address, GETERROR, 4);
+	if (ret == ROBOCLAW_OK)
+		*status = ((uint32_t)decode_uint16(rc->buffer + 2) << 16) | decode_uint16(rc->buffer + 4);
+	return ret;
+}
+
+/* GETPINFUNCTIONS (75): S3, S4, S5, CTRL1, CTRL2 mode bytes. */
+int roboclaw_read_pin_functions(struct roboclaw *rc, uint8_t address, uint8_t pins[5])
+{
+	int ret = read_fixed(rc, address, GETPINFUNCTIONS, 5);
+	if (ret == ROBOCLAW_OK)
+		memcpy(pins, rc->buffer + 2, 5);
+	return ret;
+}
+
+/* GETMINMAXMAINVOLTAGES (59): [min:2][max:2][CRC:2]. */
+int roboclaw_read_main_battery_limits(struct roboclaw *rc, uint8_t address, float *vmin, float *vmax)
+{
+	uint8_t bytes = 0;
+	uint16_t crc;
+	rc->buffer[bytes++] = address;
+	rc->buffer[bytes++] = GETMINMAXMAINVOLTAGES;
+	crc = calculate_crc16(rc->buffer, bytes);
+	int ret = send_cmd_wait_answer(rc, bytes, 6, crc);
+	if (ret != ROBOCLAW_OK)
+		return ret;
+	*vmin = (float)decode_uint16(rc->buffer + bytes) / 10.0f;
+	*vmax = (float)decode_uint16(rc->buffer + bytes + 2) / 10.0f;
+	return ROBOCLAW_OK;
+}
+
 /* GETM1MAXCURRENT (135) / GETM2MAXCURRENT (136): max(4) + min(4) + CRC(2). */
 int roboclaw_read_max_current(struct roboclaw *rc, uint8_t address, int motor, float *amps)
 {

@@ -40,6 +40,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 #ifdef __linux__
 #include <linux/sockios.h>   /* SIOCOUTQ — see client_has_headroom() */
 #endif
@@ -57,6 +58,10 @@ static int parse_json_command(const char *json_cmd);
 static void build_telemetry_json(char *buffer, size_t size);
 static void build_rc_json(char *buffer, size_t size);
 static void build_config_json(char *buffer, size_t size);
+
+/* Set by a get_conf command, cleared once robot.conf has been sent. Declared
+ * here because the command handler runs long before the sender below it. */
+static volatile sig_atomic_t conf_file_req = 0;
 
 /* Last successful RoboClaw settings read.  Zeroed (valid=0) until a client
  * asks for one via read_claw_hw; the dashboard shows "not read yet" rather
@@ -334,7 +339,9 @@ static int handle_command(const char *json_cmd, char *response, size_t response_
  * - {"type":"set_sbus_config","drive_channel":3,"drive_scale":0.10,...}
  * - {"type":"set_telemetry","encoders":true,"imu_full":false,...}
  * - {"type":"arm","value":true}
- * - {"type":"set_mode","value":1}
+ * - {"type":"set_mode","value":1}           (accepted, no longer changes behaviour)
+ * - {"type":"pi_drive","value":true}        Pi-drive gate (open only while armed)
+ * - {"type":"drive","x":..,"y":..,"ttl_ms":..}  Pi drive command (robot-link)
  *
  * @param json_cmd JSON command string
  * @return 0 on success, -1 on error
@@ -358,6 +365,110 @@ static void *ipc_estop_reset_thread(void *arg)
     state.trying = 0;
     LOG_INFO("estop reset complete — latch cleared");
     return NULL;
+}
+
+/* ── Service control from the dashboard ─────────────────────────────────── */
+
+/* The bot's own units. Nothing else can be named. */
+static const char *const SVC_UNITS[] = {
+    "balance_bot", "balance_bot_server", "balance_bot_web",
+    "batt_monitor", "bbb_oled", "robot-link-boned",
+};
+#define SVC_COUNT ((int)(sizeof(SVC_UNITS) / sizeof(SVC_UNITS[0])))
+
+/* The two that carry the dashboard itself: stopping either from the dashboard
+ * would cut it off with no way to start it again, so they only restart. */
+static int svc_is_core(const char *unit)
+{
+    return strcmp(unit, "balance_bot") == 0 || strcmp(unit, "balance_bot_server") == 0;
+}
+
+/* Copy the string value of "key":"..." into out; 0 if absent or too long. */
+static int json_str(const char *json, const char *key, char *out, size_t n)
+{
+    char pat[48];
+    snprintf(pat, sizeof(pat), "\"%s\":\"", key);
+    const char *p = strstr(json, pat);
+    if (!p)
+        return 0;
+    p += strlen(pat);
+    const char *q = strchr(p, '"');
+    if (!q || (size_t)(q - p) >= n)
+        return 0;
+    memcpy(out, p, (size_t)(q - p));
+    out[q - p] = '\0';
+    return 1;
+}
+
+/* systemctl --no-block <action> <units...>, fire and forget. Double fork so
+ * there is no zombie and the IPC thread never waits on systemd; --no-block so
+ * a restart of balance_bot itself is queued, answered, and then carried out. */
+static void svc_run(const char *action, const char *const *units, int n)
+{
+    pid_t pid = fork();
+    if (pid == 0)
+    {
+        if (fork() != 0)
+            _exit(0);
+        const char *argv[4 + SVC_COUNT];
+        int k = 0;
+        argv[k++] = "systemctl";
+        argv[k++] = "--no-block";
+        argv[k++] = action;
+        for (int i = 0; i < n; i++)
+            argv[k++] = units[i];
+        argv[k] = NULL;
+        execvp("systemctl", (char *const *)argv);
+        _exit(127);
+    }
+    if (pid > 0)
+        waitpid(pid, NULL, 0);
+}
+
+/* {"type":"service","unit":"robot-link-boned","action":"restart"}
+ *   unit:   one of SVC_UNITS, or "all"
+ *   action: start | stop | restart
+ * "all": restart = every unit (balance_bot included, queued last by systemd);
+ * start / stop = the auxiliary units only -- never the two core ones. */
+static int service_command(const char *json_cmd)
+{
+    char unit[40], action[12];
+    if (!json_str(json_cmd, "unit", unit, sizeof(unit)) ||
+        !json_str(json_cmd, "action", action, sizeof(action)))
+        return -1;
+    if (strcmp(action, "start") && strcmp(action, "stop") && strcmp(action, "restart"))
+        return -1;
+
+    if (strcmp(unit, "all") == 0)
+    {
+        const char *list[SVC_COUNT];
+        int n = 0;
+        for (int i = 0; i < SVC_COUNT; i++)
+            if (strcmp(action, "restart") == 0 || !svc_is_core(SVC_UNITS[i]))
+                list[n++] = SVC_UNITS[i];
+        LOG_WARN("dashboard: %s %s (%d units)", action,
+                 strcmp(action, "restart") == 0 ? "all bot services" : "auxiliary services", n);
+        svc_run(action, list, n);
+        return 0;
+    }
+
+    for (int i = 0; i < SVC_COUNT; i++)
+    {
+        if (strcmp(unit, SVC_UNITS[i]) != 0)
+            continue;
+        if (svc_is_core(unit) && strcmp(action, "restart") != 0)
+        {
+            LOG_WARN("dashboard: refusing to %s %s -- it carries the dashboard; restart only",
+                     action, unit);
+            return -1;
+        }
+        LOG_WARN("dashboard: %s %s", action, unit);
+        const char *one[1] = {SVC_UNITS[i]};
+        svc_run(action, one, 1);
+        return 0;
+    }
+    LOG_WARN("dashboard: unknown service '%s'", unit);
+    return -1;
 }
 
 static int parse_json_command(const char *json_cmd)
@@ -507,11 +618,74 @@ static int parse_json_command(const char *json_cmd)
         return 0;
     }
 
-    // {"type":"kick","value":1}   +1 / -1 to hold, 0 to release
+    /* {"type":"set_kick","assist":1,"duty":0.8,"max_deg":25,
+     *  "timeout_ms":1200,"amps":6}
+     *
+     * The stand-up kick's settings, all optional. Saved, unlike the kick
+     * itself: these are configuration, and tuning them by editing robot.conf
+     * over ssh while the robot lies on its side is not a workflow.
+     *
+     * duty is raw PWM now (see motor_hal_kick), so it means what it says.
+     * amps is the per-motor current limit applied for the duration of a
+     * press; 0 leaves the claw's configured limit alone. It is bounded by the
+     * same 30 A ceiling as max_amps, because the claw will take a larger
+     * number and try to honour it.
+     */
+    if (strstr(json_cmd, "\"type\":\"set_kick\""))
+    {
+        float f;
+        const char *q;
+        if ((q = strstr(json_cmd, "\"assist\":")))
+            g_kick_assist = strstr(q, "true") == q + 9 ? 1
+                          : (sscanf(q + 9, "%f", &f) == 1 ? (f != 0.0f) : g_kick_assist);
+        if ((q = strstr(json_cmd, "\"duty\":")) && sscanf(q + 7, "%f", &f) == 1)
+        {
+            if (f < 0.0f) f = 0.0f;
+            if (f > 1.0f) f = 1.0f;
+            g_kick_duty = f;
+        }
+        if ((q = strstr(json_cmd, "\"max_deg\":")) && sscanf(q + 10, "%f", &f) == 1)
+        {
+            /* Below the OOB angle a kick can never fire; past 60 degrees it is
+             * lying flat and a kick throws it rather than standing it up. */
+            if (f < g_oob_angle_deg) f = g_oob_angle_deg;
+            if (f > 60.0f) f = 60.0f;
+            g_kick_max_deg = f;
+        }
+        if ((q = strstr(json_cmd, "\"timeout_ms\":")) && sscanf(q + 13, "%f", &f) == 1)
+        {
+            if (f < 100.0f) f = 100.0f;
+            if (f > 5000.0f) f = 5000.0f;
+            g_kick_timeout_ms = (int)f;
+        }
+        if ((q = strstr(json_cmd, "\"amps\":")) && sscanf(q + 7, "%f", &f) == 1)
+        {
+            if (f < 0.0f) f = 0.0f;
+            if (f > 30.0f)
+            {
+                LOG_WARN("set_kick: amps %.2f rejected (30 A ceiling)", f);
+                f = g_kick_amps;
+            }
+            g_kick_amps = f;
+        }
+        LOG_WARN("kick config: assist=%d duty=%.2f max_deg=%.1f timeout=%d ms amps=%.2f",
+                 g_kick_assist, g_kick_duty, g_kick_max_deg, g_kick_timeout_ms, g_kick_amps);
+        if (robot_config_save_current(NULL) != 0)
+            LOG_ERROR("set_kick: saved settings but robot.conf write FAILED");
+        ipc_config_touch();
+        return 0;
+    }
+
+    // {"type":"kick","value":1}   non-zero to hold, 0 to release
     //
     // The dashboard's hold-to-kick. This is a LEVEL, not a pulse: the page
-    // sends +/-1 on mousedown and 0 on mouseup/leave, and the control loop
-    // stops the moment it reads 0. Everything that makes it safe -- armed,
+    // sends a non-zero value on mousedown and 0 on mouseup/leave, and the
+    // control loop stops the moment it reads 0.
+    //
+    // The VALUE'S SIGN IS IGNORED. Which way to kick is decided by the lean,
+    // in kick_direction() — the wheels have to go under the centre of mass,
+    // and the robot knows which side that is. The sign is still accepted so
+    // an older page keeps working. Everything that makes it safe -- armed,
     // angle window, centre-before-each-kick, timeout, motion gate -- lives in
     // kick_direction() in robot.c and applies identically to this path and to
     // the transmitter's. Nothing here can bypass it.
@@ -826,8 +1000,11 @@ static int parse_json_command(const char *json_cmd)
         }
         else if (strstr(json_cmd, "\"axis\":\"yaw\""))
         {
-            /* Degrees of phi_diff, same units as the steering setpoint. */
-            state.yaw += d;
+            /* Degrees of phi_diff, same units as the steering setpoint. Goes
+             * through robot.c so it lands on the target the stick integrates
+             * into -- writing state.yaw here was overwritten next tick
+             * whenever the transmitter was on. */
+            robot_nudge_yaw(d);
             LOG_INFO("nudge yaw: steering target = %.2f", state.yaw);
             return 0; /* transient, not persisted */
         }
@@ -957,6 +1134,10 @@ static int parse_json_command(const char *json_cmd)
         PCFG_FLOAT("vel_scale_turning", vel_scale_turning);
         PCFG_INT("stopped_vel", stopped_vel);
         PCFG_INT("pos_deadband", pos_deadband);
+        PCFG_INT("hold_after_oob_ms", hold_after_oob_ms);
+        PCFG_INT("yield_ms", yield_ms);
+        PCFG_FLOAT("yield_damp_gain", yield_damp_gain);
+        PCFG_INT("yield_err_ticks", yield_err_ticks);
         PCFG_FLOAT("max_correction", max_correction);
         PCFG_FLOAT("max_angle_rate", max_angle_rate);
         PCFG_INT("back_to_spot", back_to_spot);
@@ -1025,6 +1206,9 @@ static int parse_json_command(const char *json_cmd)
         MCFG_FLOAT("enc_pol_l", enc_pol_l);
         MCFG_FLOAT("enc_pol_r", enc_pol_r);
         MCFG_FLOAT("max_amps", max_amps);
+        MCFG_FLOAT("friction_ff", friction_ff);
+        MCFG_FLOAT("min_batt_v", min_batt_v);
+        MCFG_FLOAT("max_batt_v", max_batt_v);
 
         /* Baud rate change: close and reopen serial at new rate */
         {
@@ -1064,6 +1248,19 @@ static int parse_json_command(const char *json_cmd)
             return -1;
         }
 
+        /* Battery limits: 0 = leave the claw's own; otherwise what the
+         * RoboClaw accepts (6..34 V), and min below max when both are set. */
+        if (cfg.min_batt_v < 0.0f) cfg.min_batt_v = 0.0f;
+        if (cfg.max_batt_v < 0.0f) cfg.max_batt_v = 0.0f;
+        if ((cfg.min_batt_v > 0.0f && (cfg.min_batt_v < 6.0f || cfg.min_batt_v > 34.0f)) ||
+            (cfg.max_batt_v > 0.0f && (cfg.max_batt_v < 6.0f || cfg.max_batt_v > 34.0f)) ||
+            (cfg.min_batt_v > 0.0f && cfg.max_batt_v > 0.0f && cfg.min_batt_v >= cfg.max_batt_v))
+        {
+            LOG_WARN("set_motor_config: battery limits %.1f / %.1f V rejected (6..34 V, min < max)",
+                     cfg.min_batt_v, cfg.max_batt_v);
+            return -1;
+        }
+
         motor_config_apply(&cfg);
         LOG_INFO("iPhone: motor_config updated — mode=%d qpps_max=%d accel=%d baud=%d pol=%.1f/%.1f max_amps=%.2f",
                  cfg.mode, cfg.qpps_max, cfg.accel_qpps, cfg.baud, cfg.pol_l, cfg.pol_r, cfg.max_amps);
@@ -1080,6 +1277,9 @@ static int parse_json_command(const char *json_cmd)
         LOG_INFO("current peaks cleared");
         return 0;
     }
+
+    if (strstr(json_cmd, "\"type\":\"service\""))
+        return service_command(json_cmd);
 
     // {"type":"reboot_app"}
     // Schedules a systemd service restart 1 second from now.
@@ -1162,6 +1362,19 @@ static int parse_json_command(const char *json_cmd)
                      hw.enc_mode_m1, hw.enc_mode_m2, hw.config);
         }
         ipc_config_touch();
+        return 0;
+    }
+
+    /* {"type":"get_conf"}
+     *
+     * Hand the dashboard the robot.conf file itself so it can be saved on the
+     * client machine. The file, not a re-serialisation of the config packet:
+     * a backup you cannot drop straight back onto the bot is not a backup.
+     * Sent from the loop thread like every other outbound packet -- see
+     * ipc_broadcast_config_if_dirty(). */
+    if (strstr(json_cmd, "\"type\":\"get_conf\""))
+    {
+        conf_file_req = 1;
         return 0;
     }
 
@@ -1319,7 +1532,11 @@ static void build_telemetry_json(char *buffer, size_t size)
                          * affordable on a single core. */
                         "\"node_up\":%s,\"node_cpu\":%.1f,"
                         "\"oled_up\":%s,\"oled_cpu\":%.1f,"
-                        "\"batt_up\":%s,\"batt_cpu\":%.1f},",
+                        "\"batt_up\":%s,\"batt_cpu\":%.1f,"
+                        "\"link_up\":%s,\"link_cpu\":%.1f,"
+                        "\"ssh_up\":%s,\"ssh_cpu\":%.1f,"
+                        /* Why a held kick is doing nothing, if it is. */
+                        "\"kick_block\":\"%s\"},",
                         motor_hal_link_down() ? "false" : "true",
                         g_telemetry_data.system.battery_voltage,
                         g_telemetry_data.system.armed ? "true" : "false",
@@ -1352,7 +1569,12 @@ static void build_telemetry_json(char *buffer, size_t size)
                         g_telemetry_data.system.oled_alive ? "true" : "false",
                         g_telemetry_data.system.oled_cpu_pct,
                         g_telemetry_data.system.batt_alive ? "true" : "false",
-                        g_telemetry_data.system.batt_cpu_pct);
+                        g_telemetry_data.system.batt_cpu_pct,
+                        g_telemetry_data.system.link_alive ? "true" : "false",
+                        g_telemetry_data.system.link_cpu_pct,
+                        g_telemetry_data.system.ssh_alive ? "true" : "false",
+                        g_telemetry_data.system.ssh_cpu_pct,
+                        kick_block_text(g_kick_block));
     }
 
     /* motor_config / pos_config / sbus_config used to be rebuilt and appended
@@ -1573,7 +1795,7 @@ static void build_config_json(char *buffer, size_t size)
                     "\"motor_config\":{\"mode\":%d,\"qpps_max\":%d,\"accel_qpps\":%d,"
                     "\"pol_l\":%.1f,\"pol_r\":%.1f,\"enc_pol_l\":%.1f,\"enc_pol_r\":%.1f,"
                     "\"claw_kp\":%.6f,\"claw_ki\":%.6f,\"claw_kd\":%.6f,\"baud\":%d,"
-                    "\"max_amps\":%.2f},",
+                    "\"max_amps\":%.2f,\"min_batt_v\":%.1f,\"max_batt_v\":%.1f,\"friction_ff\":%.3f},",
                     g_motor_config.mode,
                     g_motor_config.qpps_max,
                     g_motor_config.accel_qpps,
@@ -1585,7 +1807,16 @@ static void build_config_json(char *buffer, size_t size)
                     g_motor_config.claw_ki,
                     g_motor_config.claw_kd,
                     g_motor_config.baud,
-                    g_motor_config.max_amps);
+                    g_motor_config.max_amps,
+                    g_motor_config.min_batt_v,
+                    g_motor_config.max_batt_v,
+                    g_motor_config.friction_ff);
+
+    pos = json_append(buffer, pos, size,
+                    "\"kick_config\":{\"assist\":%s,\"duty\":%.2f,\"max_deg\":%.1f,"
+                    "\"timeout_ms\":%d,\"amps\":%.2f},",
+                    g_kick_assist ? "true" : "false",
+                    g_kick_duty, g_kick_max_deg, g_kick_timeout_ms, g_kick_amps);
 
     /* What the CONTROLLER reports, as opposed to what we told it.  Separate
      * key on purpose -- conflating the two is how you end up trusting
@@ -1596,11 +1827,22 @@ static void build_config_json(char *buffer, size_t size)
                         "\"claw_hw\":{\"valid\":true,"
                         "\"m1_kp\":%.6f,\"m1_ki\":%.6f,\"m1_kd\":%.6f,\"m1_qpps\":%u,"
                         "\"m2_kp\":%.6f,\"m2_ki\":%.6f,\"m2_kd\":%.6f,\"m2_qpps\":%u,"
-                        "\"enc_mode_m1\":%u,\"enc_mode_m2\":%u,\"config\":%u},",
+                        "\"enc_mode_m1\":%u,\"enc_mode_m2\":%u,\"config\":%u,"
+                        "\"main_v\":%.1f,\"logic_v\":%.1f,\"temp_c\":%.1f,\"status\":%lu,"
+                        "\"batt_min\":%.1f,\"batt_max\":%.1f,"
+                        "\"max_amps_m1\":%.2f,\"max_amps_m2\":%.2f,"
+                        "\"pins\":[%u,%u,%u,%u,%u]},",
                         g_claw_hw.m1_kp, g_claw_hw.m1_ki, g_claw_hw.m1_kd, g_claw_hw.m1_qpps,
                         g_claw_hw.m2_kp, g_claw_hw.m2_ki, g_claw_hw.m2_kd, g_claw_hw.m2_qpps,
                         (unsigned)g_claw_hw.enc_mode_m1, (unsigned)g_claw_hw.enc_mode_m2,
-                        (unsigned)g_claw_hw.config);
+                        (unsigned)g_claw_hw.config,
+                        g_claw_hw.main_v, g_claw_hw.logic_v, g_claw_hw.temp_c,
+                        (unsigned long)g_claw_hw.status,
+                        g_claw_hw.batt_min, g_claw_hw.batt_max,
+                        g_claw_hw.max_amps_m1, g_claw_hw.max_amps_m2,
+                        (unsigned)g_claw_hw.pins[0], (unsigned)g_claw_hw.pins[1],
+                        (unsigned)g_claw_hw.pins[2], (unsigned)g_claw_hw.pins[3],
+                        (unsigned)g_claw_hw.pins[4]);
     }
     else
     {
@@ -1835,8 +2077,68 @@ void ipc_config_touch(void)
     config_dirty = 1;
 }
 
+/* robot.conf, verbatim, as one JSON line. Its own buffer because it is far
+ * larger than any other packet and must never share BUFFER_SIZE with them. */
+static void ipc_broadcast_conf_file(void)
+{
+    const char *path = robot_config_default_path();
+    static char out[16384];
+    size_t pos = 0;
+
+    FILE *f = fopen(path, "r");
+    if (!f)
+    {
+        LOG_WARN("get_conf: cannot open %s: %s", path, strerror(errno));
+        pos = (size_t)snprintf(out, sizeof(out),
+                               "{\"type\":\"conf_file\",\"name\":\"%s\",\"error\":\"%s\"}\n",
+                               path, strerror(errno));
+        ipc_broadcast_line(out, pos, "conf_file", false);
+        return;
+    }
+
+    pos = (size_t)snprintf(out, sizeof(out),
+                           "{\"type\":\"conf_file\",\"name\":\"%s\",\"text\":\"", path);
+
+    /* Escape as we copy. Reserve room for the closing quote, brace, newline
+     * and the worst-case six bytes one character can become. */
+    const size_t limit = sizeof(out) - 16;
+    int truncated = 0, c;
+    while ((c = fgetc(f)) != EOF)
+    {
+        if (pos >= limit) { truncated = 1; break; }
+        switch (c)
+        {
+        case '"':  out[pos++] = '\\'; out[pos++] = '"';  break;
+        case '\\': out[pos++] = '\\'; out[pos++] = '\\'; break;
+        case '\n': out[pos++] = '\\'; out[pos++] = 'n';  break;
+        case '\t': out[pos++] = '\\'; out[pos++] = 't';  break;
+        case '\r': break;                 /* CR would only confuse the browser */
+        default:
+            if ((unsigned char)c < 0x20)   /* other controls have no business here */
+                break;
+            out[pos++] = (char)c;          /* UTF-8 passes through as-is */
+            break;
+        }
+    }
+    fclose(f);
+
+    if (truncated)
+        LOG_WARN("get_conf: %s is larger than the %zu-byte packet buffer, truncated",
+                 path, sizeof(out));
+
+    pos += (size_t)snprintf(out + pos, sizeof(out) - pos,
+                            "\",\"truncated\":%s}\n", truncated ? "true" : "false");
+    ipc_broadcast_line(out, pos, "conf_file", false);
+    LOG_INFO("get_conf: sent %s (%zu bytes on the wire)", path, pos);
+}
+
 void ipc_broadcast_config_if_dirty(void)
 {
+    if (conf_file_req)
+    {
+        conf_file_req = 0;
+        ipc_broadcast_conf_file();
+    }
     if (!config_dirty)
         return;
     config_dirty = 0;

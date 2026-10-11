@@ -28,6 +28,7 @@
 #include <dirent.h>   /* scanning /proc for the other bot processes */
 #include <sys/stat.h> /* stat() on /run/batt_status.json */
 #include <time.h>
+#include <glob.h>     /* thermal / hwmon sensor probe */
 
 // Global telemetry data (shared with IPC server)
 telemetry_data_t g_telemetry_data = {0};
@@ -468,17 +469,32 @@ static void update_board_health(void)
 
         if (!temp_probed)
         {
-            static const char *const candidates[] = {
-                "/sys/class/thermal/thermal_zone0/temp",
-                "/sys/devices/virtual/thermal/thermal_zone0/temp",
+            /* Any thermal zone, then any hwmon temperature input. The stock
+             * AM335x kernel exposes neither -- the SoC has no supported
+             * sensor -- in which case the dashboard shows the RoboClaw's
+             * temperature instead, labelled as such. */
+            static char found[256];
+            static const char *const patterns[] = {
+                "/sys/class/thermal/thermal_zone*/temp",
+                "/sys/devices/virtual/thermal/thermal_zone*/temp",
+                "/sys/class/hwmon/hwmon*/temp1_input",
             };
-            for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++)
+            for (size_t i = 0; i < sizeof(patterns) / sizeof(patterns[0]) && !temp_path; i++)
             {
-                if (access(candidates[i], R_OK) == 0)
+                glob_t g;
+                if (glob(patterns[i], 0, NULL, &g) == 0)
                 {
-                    temp_path = candidates[i];
-                    break;
+                    for (size_t j = 0; j < g.gl_pathc; j++)
+                    {
+                        if (access(g.gl_pathv[j], R_OK) == 0)
+                        {
+                            snprintf(found, sizeof(found), "%s", g.gl_pathv[j]);
+                            temp_path = found;
+                            break;
+                        }
+                    }
                 }
+                globfree(&g);
             }
             temp_probed = 1;
             if (temp_path)
@@ -507,6 +523,15 @@ static void update_board_health(void)
         static proc_watch_t w_node = {.needle = "server/server.js"};
         static proc_watch_t w_oled = {.needle = "bbb_oled.py"};
         static proc_watch_t w_batt = {.needle = "batt_monitor"};
+        static proc_watch_t w_link = {.needle = "robot-link-boned"};
+        /* "sshd:" with the colon: the listener's cmdline is "sshd: /usr/sbin/sshd -D"
+         * and each session is "sshd: user@pts/0", so this counts the daemon and
+         * every live session together — which is what "can I still get in?"
+         * actually means. */
+        static proc_watch_t w_ssh = {.needle = "sshd"};
+        proc_watch_sample(&w_link, dt, hz);
+        g_telemetry_data.system.link_alive = w_link.alive;
+        g_telemetry_data.system.link_cpu_pct = w_link.cpu_pct;
         proc_watch_sample(&w_node, dt, hz);
         proc_watch_sample(&w_oled, dt, hz);
         proc_watch_sample(&w_batt, dt, hz);
@@ -516,6 +541,9 @@ static void update_board_health(void)
         g_telemetry_data.system.oled_cpu_pct = w_oled.cpu_pct;
         g_telemetry_data.system.batt_alive = w_batt.alive;
         g_telemetry_data.system.batt_cpu_pct = w_batt.cpu_pct;
+        proc_watch_sample(&w_ssh, dt, hz);
+        g_telemetry_data.system.ssh_alive = w_ssh.alive;
+        g_telemetry_data.system.ssh_cpu_pct = w_ssh.cpu_pct;
     }
 }
 

@@ -32,6 +32,38 @@ robot_state_t state = {0};
 rc_mpu_data_t mpu_data;
 pid_controller_t pitch_pid, yaw_pid;
 
+/* Per-mode gain sets. See the pid_gains_t block in balance_bot.h. */
+pid_gains_t g_gains_pitch_vel = {PITCH_KP, PITCH_KI, PITCH_KD};
+pid_gains_t g_gains_yaw_vel = {YAW_KP, YAW_KI, YAW_KD};
+pid_gains_t g_gains_pitch_duty = {PITCH_DUTY_KP_DEFAULT, PITCH_DUTY_KI_DEFAULT, PITCH_DUTY_KD_DEFAULT};
+pid_gains_t g_gains_yaw_duty = {YAW_DUTY_KP_DEFAULT, YAW_DUTY_KI_DEFAULT, YAW_DUTY_KD_DEFAULT};
+
+void robot_gains_store_live(void)
+{
+    pid_gains_t p = {pitch_pid.kp, pitch_pid.ki, pitch_pid.kd};
+    pid_gains_t y = {yaw_pid.kp, yaw_pid.ki, yaw_pid.kd};
+    if (g_motor_config.mode == MOTOR_HAL_MODE_DUTY)
+    {
+        g_gains_pitch_duty = p;
+        g_gains_yaw_duty = y;
+    }
+    else
+    {
+        g_gains_pitch_vel = p;
+        g_gains_yaw_vel = y;
+    }
+}
+
+void robot_gains_select(int mode)
+{
+    const pid_gains_t *p = (mode == MOTOR_HAL_MODE_DUTY) ? &g_gains_pitch_duty : &g_gains_pitch_vel;
+    const pid_gains_t *y = (mode == MOTOR_HAL_MODE_DUTY) ? &g_gains_yaw_duty : &g_gains_yaw_vel;
+    pid_set_gains(&pitch_pid, p->kp, p->ki, p->kd);
+    pid_set_gains(&yaw_pid, y->kp, y->ki, y->kd);
+    pid_reset(&pitch_pid);
+    pid_reset(&yaw_pid);
+}
+
 /* Heading target, in the same units as phi_diff: degrees of differential wheel
  * rotation. File scope rather than a function-local static ONLY so that
  * robot_reset_heading() below can clear it. Nothing else may touch it.
@@ -157,6 +189,25 @@ static uint64_t next_rc_us = 0;
 static float last_left_duty = 0.0f;
 static float last_right_duty = 0.0f;
 
+/* Per-tick values the 100 Hz ring records that otherwise live only in locals
+ * of robot_run(). Written by the control loop, read by ring_tick() in the same
+ * loop -- no locking needed. */
+static float g_log_in_drive = 0.0f; /* drive input actually used this tick */
+static float g_log_in_turn = 0.0f;
+static int g_log_pi_state = 0;      /* pi_drive_state_t */
+static int g_log_oob = 0;           /* eff_angle beyond oob this tick */
+static int g_log_kick = 0;          /* stand-up kick drove the wheels this tick */
+static uint32_t g_log_tick_us = 0;  /* work time of the PREVIOUS loop tick */
+static float g_log_yaw_applied = 0.0f; /* yaw differential after the mixer cap */
+static float g_log_yaw_lim = 0.0f;     /* the cap in force this tick */
+static int g_log_pos_hold = 0;         /* position loop held at zero (post-OOB) */
+static uint64_t pos_hold_until_us = 0; /* set on OOB clear; see POS_HOLD_AFTER_OOB_MS_DEFAULT */
+static uint64_t pos_hold_ramp_end_us = 0; /* hold is ramped back in over a second window */
+static float pos_hold_gain = 1.0f;      /* 0 during the hold, 0->1 over the ramp, then 1 */
+static int pos_yield_active = 0;        /* push yield in force; see POS_YIELD_MS_DEFAULT */
+static int pos_yield_sat_ticks = 0;     /* consecutive ticks with velDamp at its cap */
+static int pos_yield_calm_ticks = 0;    /* consecutive ticks below stopped_vel while yielding */
+
 // Motor output handoff: ISR writes, main loop applies to hardware.
 // volatile prevents compiler optimizing away cross-context reads/writes.
 static volatile float pending_left_duty = 0.0f;
@@ -171,16 +222,33 @@ static volatile int motor_output_ready = 0;
 // compile-time constant -- 15.0f here is only the default before a config
 // loads or if the key is absent.
 float g_oob_angle_deg = 15.0f;
+float g_reengage_deg = REENGAGE_DEG_DEFAULT;
+float g_reengage_rate = REENGAGE_RATE_DEFAULT;
+volatile int g_oob_cut = 0;
 
 /* 0 = steering derivative from the encoder staircase (original behaviour).
  * Nonzero = from gyro Z, multiplied by this to reach phi_diff units. The sign
  * is part of it. See YAW_GYRO_SCALE_DEFAULT in balance_bot.h. */
 float g_yaw_gyro_scale = YAW_GYRO_SCALE_DEFAULT;
+float g_yaw_max_authority = YAW_MAX_AUTHORITY_DEFAULT;
+float g_yaw_max_authority_turn = YAW_MAX_AUTHORITY_TURN_DEFAULT;
+float g_yaw_turn_ff = YAW_TURN_FF_DEFAULT;
+static volatile uint64_t g_turn_cmd_until_us = 0; /* a yaw nudge counts as a commanded turn until this */
+
+void robot_nudge_yaw(float delta_deg)
+{
+    yaw_target += delta_deg;
+    state.yaw = yaw_target;
+    g_turn_cmd_until_us = rc_nanos_since_boot() / 1000ULL + (uint64_t)YAW_TURN_CMD_HOLD_MS * 1000ULL;
+}
+float g_yaw_taper_start = YAW_TAPER_START_DEFAULT;
+int g_pitch_d_src = PITCH_D_SRC_DEFAULT;
 
 /* Stand-up kick. See KICK_ASSIST_DEFAULT in balance_bot.h for the fencing. */
 int g_kick_assist = KICK_ASSIST_DEFAULT;
 float g_kick_max_deg = KICK_MAX_DEG_DEFAULT;
 float g_kick_duty = KICK_DUTY_DEFAULT;
+float g_kick_amps = KICK_AMPS_DEFAULT;
 int g_kick_timeout_ms = KICK_TIMEOUT_MS_DEFAULT;
 volatile int g_kick_request = 0;   /* dashboard hold-to-kick: -1, 0, +1 */
 volatile uint64_t g_kick_request_us = 0;
@@ -188,17 +256,45 @@ volatile uint64_t g_kick_request_us = 0;
 /* Returns the kick direction (-1, 0, +1) this tick, or 0 for "do not kick".
  * Holds the centre-seen latch and the timeout, so it must be called exactly
  * once per main-loop tick while out of bounds. */
+/* Why the last request was turned down. Published in telemetry and logged on
+ * the press, because a refusal used to look exactly like a dead button: the
+ * only line this function ever wrote was for a kick that WORKED, so every gate
+ * below failed in silence. A recording of one such press showed 63 seconds
+ * parked at a perfectly kickable 17.9 deg with no motor write at all, and
+ * nothing anywhere to say which gate had said no. */
+kick_block_t g_kick_block = KICK_BLOCK_NONE;
+
+/* Set for exactly the duration of one sanctioned kick write, and read by the
+ * motion gate.
+ *
+ * Without it the kick could never move a wheel. The gate's last clause refuses
+ * motion whenever the effective angle is outside oob_angle_deg — and a kick
+ * only exists OUTSIDE that angle, since inside it the balance loop owns the
+ * wheels. So every kick was commanded at full duty, refused at the choke
+ * point, and turned into a coast: a visible twitch of the motors, a 0.350 in
+ * the log (that is the commanded duty, recorded before the gate answers), and
+ * a robot that does not get up.
+ *
+ * The exemption is deliberately narrow. It is not "ignore the gate": armed,
+ * trying, e-stop, IMU health and sample count are all still checked, and the
+ * angle is still bounded — by kick_max_deg instead of oob_angle_deg, which is
+ * the same ceiling kick_direction() already enforced before asking. The flag
+ * is set and cleared around a single synchronous call in this thread, so no
+ * other caller can ever be inside it. */
+volatile int g_kick_motion = 0;
+
 static int kick_direction(float eff_angle)
 {
     static int centred_since_last = 1;  /* must see centre before each kick */
     static uint64_t kick_started_us = 0;
+    static kick_block_t logged = KICK_BLOCK_NONE;
 
     /* A request from either source. The dashboard button sets g_kick_request
-     * directly; the transmitter uses the drive stick past a deadband. */
+     * directly; the transmitter uses the drive stick past a deadband. Both are
+     * read as "go", NOT as a direction -- see below. */
     float stick = 0.0f;
     if (sbus_is_connected() && !sbus_get_failsafe())
         stick = sbus_get_drive();
-    int want = 0;
     const uint64_t now_us = rc_nanos_since_boot() / 1000;
     /* The dashboard request expires unless it keeps being refreshed, so a
      * dropped websocket cannot leave the wheels driving. */
@@ -206,32 +302,87 @@ static int kick_direction(float eff_angle)
                       (now_us - g_kick_request_us) < KICK_REQUEST_STALE_US)
                          ? g_kick_request
                          : 0;
-    if (dash != 0)
-        want = (dash > 0) ? 1 : -1;
-    else if (fabsf(stick) > KICK_STICK_DEADBAND)
-        want = (stick > 0.0f) ? 1 : -1;
+    const int asking = (dash != 0) || (fabsf(stick) > KICK_STICK_DEADBAND);
+
+    /* THE DIRECTION IS NOT THE OPERATOR'S TO CHOOSE.
+     *
+     * To stand the robot up the wheels have to travel UNDER the centre of
+     * mass, which is the direction the balance loop itself would drive for
+     * this lean -- and the robot already knows which way it is leaning. Two
+     * buttons meant a 50/50 guess, and the wrong guess drives the contact
+     * patch out from under it and lays the machine down harder than it fell.
+     *
+     * The sign follows from the fact that balancing works at all: the pitch
+     * PID sees error = (setpoint - theta), so a positive lean produces a
+     * negative duty, and that duty is what catches it. Motor and encoder
+     * polarity are already baked into pol_l/pol_r, so this needs no separate
+     * calibration: if the robot balances, this sign is right.
+     */
+    const float lean = state.theta - state.theta_offset;
+    const int want = asking ? ((lean > 0.0f) ? -1 : 1) : 0;
 
     if (want == 0)
     {
-        /* Released: re-arm the latch and forget the timer. */
+        /* Released: re-arm the latch, forget the timer, and hand the claw's
+         * current limit back to the balancing value if the kick raised it. */
+        if (kick_started_us != 0 && g_kick_amps > 0.0f)
+            motor_hal_set_current_limit(g_motor_config.max_amps);
         centred_since_last = 1;
         kick_started_us = 0;
+        g_kick_block = KICK_BLOCK_NONE;
+        logged = KICK_BLOCK_NONE;
         return 0;
     }
 
-    if (!g_kick_assist || !state.armed || g_imu_stale)
+    /* Somebody is asking. Work out whether it can happen, and if not, say so
+     * once -- per press, not per tick, or a held button writes 100 lines a
+     * second. */
+    kick_block_t block = KICK_BLOCK_NONE;
+    if (!g_kick_assist)
+        block = KICK_BLOCK_DISABLED;
+    else if (!state.armed)
+        block = KICK_BLOCK_DISARMED;
+    else if (g_imu_stale)
+        block = KICK_BLOCK_IMU;
+    else if (eff_angle <= g_oob_angle_deg)
+        /* Inside oob the balance loop owns the wheels. */
+        block = KICK_BLOCK_UPRIGHT;
+    else if (eff_angle > g_kick_max_deg)
+        /* Lying down: a kick from here only throws it. */
+        block = KICK_BLOCK_TOO_FAR;
+    else if (!centred_since_last)
+        block = KICK_BLOCK_RECENTRE;
+
+    g_kick_block = block;
+    if (block != KICK_BLOCK_NONE)
+    {
+        if (block != logged)
+        {
+            logged = block;
+            LOG_WARN("kick refused: %s (eff=%.1f deg, window %.1f..%.1f, "
+                     "armed=%d assist=%d)",
+                     kick_block_text(block), eff_angle,
+                     g_oob_angle_deg, g_kick_max_deg,
+                     state.armed, g_kick_assist);
+        }
         return 0;
-    /* Inside oob the balance loop owns the wheels; above kick_max_deg it is
-     * lying down and a kick only throws it. */
-    if (eff_angle <= g_oob_angle_deg || eff_angle > g_kick_max_deg)
-        return 0;
-    if (!centred_since_last)
-        return 0;   /* held over from a previous kick -- recentre first */
+    }
+    logged = KICK_BLOCK_NONE;
 
     if (kick_started_us == 0)
     {
         kick_started_us = now_us;
-        LOG_WARN("kick: standing up, dir=%+d eff=%.1f deg", want, eff_angle);
+        /* Optional current boost, at the press rather than per tick: two
+         * serial round trips, and only when asked for. The claw enforces the
+         * limit in hardware, so this is the only way a kick gets more torque
+         * than the balancing limit allows. Restored in the release path
+         * above, and on the timeout below — every exit from a kick goes
+         * through one of them. */
+        if (g_kick_amps > 0.0f)
+            motor_hal_set_current_limit(g_kick_amps);
+        LOG_WARN("kick: standing up, dir=%+d (lean %+.1f deg) eff=%.1f duty=%.2f%s",
+                 want, lean, eff_angle, g_kick_duty,
+                 g_kick_amps > 0.0f ? " (current boosted)" : "");
     }
     else if ((now_us - kick_started_us) > (uint64_t)g_kick_timeout_ms * 1000ULL)
     {
@@ -239,6 +390,8 @@ static int kick_direction(float eff_angle)
          * stop, and refuse to start again until it has been released. */
         centred_since_last = 0;
         kick_started_us = 0;
+        if (g_kick_amps > 0.0f)
+            motor_hal_set_current_limit(g_motor_config.max_amps);
         LOG_WARN("kick: timed out after %d ms, release and retry", g_kick_timeout_ms);
         return 0;
     }
@@ -289,9 +442,18 @@ static void imu_interrupt(void)
 
     if (g_controllers.pitch)
     {
-        balance_output = pid_update(&pitch_pid,
-                                    state.theta_ref + state.theta_offset,
-                                    state.theta);
+        /* D on the gyro rate by default (PITCH_D_SRC_DEFAULT): same damping
+         * as differencing the DMP angle below 10 Hz, a fifth of the noise
+         * above it. theta_dot already carries the pitch-axis sign (r=+0.88
+         * against the differenced angle, 2026-10-07 capture). */
+        if (g_pitch_d_src)
+            balance_output = pid_update_rate(&pitch_pid,
+                                             state.theta_ref + state.theta_offset,
+                                             state.theta, state.theta_dot);
+        else
+            balance_output = pid_update(&pitch_pid,
+                                        state.theta_ref + state.theta_offset,
+                                        state.theta);
     }
 
     if (g_controllers.yaw)
@@ -377,12 +539,45 @@ static void imu_interrupt(void)
     }
 
     float eff_angle = fabsf(state.theta - state.theta_offset);
-    if (!state.armed || !state.trying || g_imu_stale || eff_angle > g_oob_angle_deg)
+    if (!state.armed || !state.trying || g_imu_stale || eff_angle > g_oob_angle_deg || g_oob_cut)
     {
         pending_left_duty = 0.0f;
         pending_right_duty = 0.0f;
         motor_output_ready = 0;
         return;
+    }
+
+    /* Balance wins. Cap the differential, and shrink the cap as the balance
+     * command grows: a wheel at +1.0 cannot take any more, so a differential
+     * there is pure subtraction from the OTHER wheel. Linear from full cap at
+     * |balance| = taper_start to zero at |balance| = 1. See
+     * YAW_MAX_AUTHORITY_DEFAULT for the captures this answers. */
+    {
+        /* A commanded turn: stick or Pi x off centre this tick (g_log_in_turn
+         * is what the main loop actually used), or a dashboard nudge recently.
+         * Feed-forward first, then the cap that matches the situation. */
+        const float turn_in = g_log_in_turn;
+        const int turning = (turn_in != 0.0f) ||
+                            (rc_nanos_since_boot() / 1000ULL < g_turn_cmd_until_us);
+        yaw_output += turn_in * g_yaw_turn_ff;
+        float lim = turning ? g_yaw_max_authority_turn : g_yaw_max_authority;
+        const float bal = fabsf(balance_output);
+        const float ts = g_yaw_taper_start;
+        if (lim < 0.0f)
+            lim = 0.0f;
+        if (ts < 1.0f && bal > ts)
+        {
+            float k = (1.0f - bal) / (1.0f - ts);
+            if (k < 0.0f)
+                k = 0.0f;
+            lim *= k;
+        }
+        if (yaw_output > lim)
+            yaw_output = lim;
+        else if (yaw_output < -lim)
+            yaw_output = -lim;
+        g_log_yaw_lim = lim;
+        g_log_yaw_applied = yaw_output;
     }
 
     float left_duty = balance_output - yaw_output;
@@ -425,6 +620,25 @@ typedef struct
     float yaw_gyro_rate; /* gyro Z * yaw_gyro_scale, phi_diff deg/s */
     float yaw_enc_rate;  /* d(phi_diff)/dt differenced, phi_diff deg/s */
     float yaw_psi_dot;   /* RAW chassis yaw rate from gyro Z, deg/s */
+    /* ── appended 2026-09-28: per-wheel and wire-level evidence ──
+     * Everything below is either already computed by the loop or read by a
+     * serial call the loop makes anyway, except the status word and main
+     * battery voltage, which are polled once per 10 ticks each (robot_run). */
+    int32_t enc_l, enc_r;          /* per-wheel encoder counts */
+    motor_hal_diag_t mh;           /* what went to / came back from the claw.
+                                    * status is written in DECIMAL: the tools
+                                    * float() every field and drop rows that
+                                    * fail, so hex would lose every row. */
+    float board_batt_v;            /* batt_monitor (/run/batt_status.json) */
+    float claw_temp;
+    uint32_t tick_us;              /* previous tick's work time */
+    uint32_t imu_samples;          /* DMP sample counter, for per-row deltas */
+    int32_t armed, oob, kick, imu_stale;
+    float in_drive, in_turn;       /* drive/turn input used (SBUS or Pi) */
+    int32_t pi_state;
+    float theta_dot;               /* pitch rate, deg/s */
+    float yaw_applied, yaw_lim;    /* mixer: differential after the cap, and the cap */
+    int32_t pos_hold;              /* position loop held at zero (post-OOB window) */
 } looplog_row_t;
 
 /* One row of the 100 Hz log, from this tick's telemetry. Shared by the
@@ -482,14 +696,48 @@ static void looplog_fill_row(looplog_row_t *r, uint64_t now)
      * the scale can be fitted from any capture in which the robot was turned:
      * no special run, no temporary scale of 1. */
     r->yaw_psi_dot = state.psi_dot;
+
+    r->enc_l = state.enc_left;
+    r->enc_r = state.enc_right;
+    motor_hal_get_diag(&r->mh);
+    r->board_batt_v = g_telemetry_data.system.batt_voltage;
+    r->claw_temp = g_telemetry_data.system.claw_temp;
+    r->tick_us = g_log_tick_us;
+    r->imu_samples = g_imu_samples;
+    r->armed = state.armed;
+    r->oob = g_log_oob;
+    r->kick = g_log_kick;
+    r->imu_stale = g_imu_stale;
+    r->in_drive = g_log_in_drive;
+    r->in_turn = g_log_in_turn;
+    r->pi_state = g_log_pi_state;
+    r->theta_dot = state.theta_dot;
+    r->yaw_applied = g_log_yaw_applied;
+    r->yaw_lim = g_log_yaw_lim;
+    r->pos_hold = g_log_pos_hold;
 }
 
 
 /* Config block ("# ..." lines): the settings a run was recorded under. */
 static void looplog_write_config(FILE *f)
 {
+    fprintf(f, "# gain_sets: live=%s | vel pitch %g/%g/%g yaw %g/%g/%g | duty pitch %g/%g/%g yaw %g/%g/%g | friction_ff=%g\n",
+            g_motor_config.mode == MOTOR_HAL_MODE_DUTY ? "duty" : "velocity",
+            g_gains_pitch_vel.kp, g_gains_pitch_vel.ki, g_gains_pitch_vel.kd,
+            g_gains_yaw_vel.kp, g_gains_yaw_vel.ki, g_gains_yaw_vel.kd,
+            g_gains_pitch_duty.kp, g_gains_pitch_duty.ki, g_gains_pitch_duty.kd,
+            g_gains_yaw_duty.kp, g_gains_yaw_duty.ki, g_gains_yaw_duty.kd,
+            g_motor_config.friction_ff);
     fprintf(f, "# pit_gains: kp=%g ki=%g kd=%g\n",
             g_telemetry_data.pitch.kp, g_telemetry_data.pitch.ki, g_telemetry_data.pitch.kd);
+    /* The stand-up kick's fencing. Absent from every log until now, which is
+     * why a recording of a kick that did nothing could not say whether the
+     * angle was in the window, the assist was on, or the trim had moved the
+     * effective angle out of range. */
+    fprintf(f, "# kick: assist=%d max_deg=%g duty=%g timeout_ms=%d\n",
+            g_kick_assist, g_kick_max_deg, g_kick_duty, g_kick_timeout_ms);
+    fprintf(f, "# angles: oob_deg=%g theta_offset=%g\n",
+            g_oob_angle_deg, state.theta_offset);
     fprintf(f, "# yaw_gains: kp=%g ki=%g kd=%g\n",
             g_telemetry_data.yaw.kp, g_telemetry_data.yaw.ki, g_telemetry_data.yaw.kd);
     fprintf(f, "# pos_config: zone_a=%d zone_b=%d zone_c=%d\n",
@@ -514,11 +762,28 @@ static void looplog_write_config(FILE *f)
     fprintf(f, "#   lead_max=%d return_rate=%g return_accel=%g\n",
             g_pos_config.lead_max, g_pos_config.return_rate, g_pos_config.return_accel);
     fprintf(f, "# yaw_gyro_scale=%g (0 = D from encoders)\n", g_yaw_gyro_scale);
-    fprintf(f, "# theta_trim=%g oob_angle_deg=%g\n",
-            state.theta_offset, g_oob_angle_deg);
+    fprintf(f, "# yaw_mixer: max_authority=%g max_authority_turn=%g turn_ff=%g taper_start=%g\n",
+            g_yaw_max_authority, g_yaw_max_authority_turn, g_yaw_turn_ff, g_yaw_taper_start);
+    fprintf(f, "# pitch_d_src=%d (0 = differenced angle, 1 = gyro)  hold_after_oob_ms=%d\n",
+            g_pitch_d_src, g_pos_config.hold_after_oob_ms);
+    fprintf(f, "# push_yield: yield_ms=%d yield_damp_gain=%g yield_err_ticks=%d (pos_hold: 1=hold 2=ramp 3=yield)\n",
+            g_pos_config.yield_ms, g_pos_config.yield_damp_gain, g_pos_config.yield_err_ticks);
+    fprintf(f, "# theta_trim=%g oob_angle_deg=%g reengage_deg=%g reengage_rate=%g\n",
+            state.theta_offset, g_oob_angle_deg, g_reengage_deg, g_reengage_rate);
     fprintf(f, "# motor: mode=%d qpps_max=%d claw_kp=%g claw_ki=%g claw_kd=%g\n",
             g_motor_config.mode, g_motor_config.qpps_max,
             g_motor_config.claw_kp, g_motor_config.claw_ki, g_motor_config.claw_kd);
+    /* accel_qpps is the ramp MIXEDSPEEDACCEL (mode 2) uses; logged in every
+     * mode so a switch to mode 2 is never recorded without it. The rest are
+     * what the claw itself enforces -- a capture has to say what limits it
+     * ran under. Kept on a separate line so the line above stays unchanged
+     * for tools that parse it. */
+    fprintf(f, "# motor2: accel_qpps=%d max_amps=%g min_batt_v=%g max_batt_v=%g "
+               "pol_l=%g pol_r=%g enc_pol_l=%g enc_pol_r=%g\n",
+            g_motor_config.accel_qpps, g_motor_config.max_amps,
+            g_motor_config.min_batt_v, g_motor_config.max_batt_v,
+            g_motor_config.pol_l, g_motor_config.pol_r,
+            g_motor_config.enc_pol_l, g_motor_config.enc_pol_r);
 
 }
 
@@ -531,19 +796,45 @@ static void looplog_write_columns(FILE *f)
                "pos_activeScale,yaw_setpoint,yaw_measurement,yaw_error,yaw_pTerm,yaw_iTerm,"
                "yaw_dTerm,yaw_output,mot_leftDuty,mot_rightDuty,mot_dutyDiff,"
                "sys_loopHz,sys_linkDown,pos_carrotLead,pos_carrotVel,"
-               "yaw_gyroRate,yaw_encRate,yaw_psiDot\n");
+               "yaw_gyroRate,yaw_encRate,yaw_psiDot,"
+               /* appended 2026-09-28 -- see looplog_row_t */
+               "enc_l,enc_r,"
+               "cmd_seq,cmd_kind,cmd_wireL,cmd_wireR,cmd_ret,cmd_us,cmd_fails,gate_ok,"
+               "enc_ret,enc_us,enc_fails,"
+               "claw_spdL,claw_spdR,claw_spdAgeMs,"
+               "claw_ampsL,claw_ampsR,claw_ampsAgeMs,"
+               "claw_vbatt,claw_vbattAgeMs,"
+               "claw_status,claw_statusRet,claw_statusAgeMs,"
+               "board_battV,claw_tempC,"
+               "sys_tickUs,sys_imuNew,"
+               "st_armed,st_oob,st_kick,st_imuStale,"
+               "in_drive,in_turn,in_piState,"
+               "pit_rate,yaw_applied,yaw_lim,pos_hold\n");
 
+}
+
+/* Age of a diag sample in ms at row time; -1 when never sampled. */
+static long looplog_age_ms(uint64_t now_us, uint64_t t_us)
+{
+    if (t_us == 0 || t_us > now_us)
+        return -1;
+    return (long)((now_us - t_us) / 1000ULL);
 }
 
 /* One CSV row. t is written as given (seconds). */
 static int looplog_write_row(FILE *f, const looplog_row_t *r, double t)
 {
-    return fprintf(f,
+    static uint32_t prev_imu = 0;
+    const uint32_t imu_new = r->imu_samples - prev_imu;
+    prev_imu = r->imu_samples;
+    const motor_hal_diag_t *m = &r->mh;
+
+    int n1 = fprintf(f,
                    "%.4f,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,"
                    "%d,%d,%d,%.4f,%.4f,%.4f,%.4f,"
                    "%.4f,%.4f,%.4f,%.4f,%.4f,"
                    "%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,"
-                   "%.4f,%.4f,%.4f,%.1f,%d,%.2f,%.1f,%.3f,%.3f,%.3f\n",
+                   "%.4f,%.4f,%.4f,%.1f,%d,%.2f,%.1f,%.3f,%.3f,%.3f",
                    t, r->pit_sp, r->pit_meas, r->pit_err, r->pit_p, r->pit_i, r->pit_d, r->pit_out,
                    r->enc_target, r->enc_pos, r->enc_err,
                    r->enc_vel, r->enc_vel_raw, r->enc_vel_mid, r->enc_vel_long,
@@ -552,6 +843,37 @@ static int looplog_write_row(FILE *f, const looplog_row_t *r, double t)
                    r->left_duty, r->right_duty, r->right_duty - r->left_duty,
                    r->loop_hz, r->link_down, r->carrot_lead, r->carrot_vel,
                    r->yaw_gyro_rate, r->yaw_enc_rate, r->yaw_psi_dot);
+    if (n1 < 0)
+        return n1;
+    int n2 = fprintf(f,
+                     ",%d,%d,"
+                     "%u,%d,%d,%d,%d,%u,%u,%d,"
+                     "%d,%u,%u,"
+                     "%d,%d,%ld,"
+                     "%.2f,%.2f,%ld,"
+                     "%.1f,%ld,"
+                     "%u,%d,%ld,"
+                     "%.2f,%.1f,"
+                     "%u,%u,"
+                     "%d,%d,%d,%d,"
+                     "%.3f,%.3f,%d,"
+                     "%.1f,%.3f,%.3f,%d\n",
+                     r->enc_l, r->enc_r,
+                     m->cmd_seq, m->cmd_kind, m->cmd_wire_l, m->cmd_wire_r, m->cmd_ret,
+                     m->cmd_us, m->cmd_fails, m->gate_ok,
+                     m->enc_ret, m->enc_us, m->enc_fails,
+                     m->spd_l, m->spd_r, looplog_age_ms(r->t_us, m->spd_t_us),
+                     m->amps_l, m->amps_r, looplog_age_ms(r->t_us, m->amps_t_us),
+                     m->vbatt, looplog_age_ms(r->t_us, m->vbatt_t_us),
+                     m->status, m->status_ret, looplog_age_ms(r->t_us, m->status_t_us),
+                     r->board_batt_v, r->claw_temp,
+                     r->tick_us, imu_new,
+                     r->armed, r->oob, r->kick, r->imu_stale,
+                     r->in_drive, r->in_turn, r->pi_state,
+                     r->theta_dot, r->yaw_applied, r->yaw_lim, r->pos_hold);
+    if (n2 < 0)
+        return n2;
+    return n1 + n2;
 }
 
 /* ── Always-on 100 Hz ring ─────────────────────────────────────────────────
@@ -571,7 +893,10 @@ static int looplog_write_row(FILE *f, const looplog_row_t *r, double t)
  * Any config change is written in-stream as "# CHANGE t=..." followed by the
  * full config block, so a knob turned mid-run is visible where it happened. */
 #define RING_DIR "/dev/shm"
-#define RING_SEG_BYTES (5L * 1024 * 1024)
+/* 8 MB per segment. Rows grew from ~260 to ~470 bytes on 2026-09-28, which
+ * at 5 MB cut each segment to ~110 s. 8 MB keeps ~3 min per segment, 3-6 min
+ * of history, 16 MB of RAM in /dev/shm at most. */
+#define RING_SEG_BYTES (8L * 1024 * 1024)
 #define RING_FLUSH_ROWS 10
 
 typedef struct
@@ -693,6 +1018,10 @@ int robot_init(void)
     g_pos_config.max_correction = POS_MAX_CORRECTION_DEFAULT;
     g_pos_config.max_angle_rate = POS_MAX_ANGLE_RATE_DEFAULT;
     g_pos_config.back_to_spot = POS_BACK_TO_SPOT_DEFAULT;
+    g_pos_config.hold_after_oob_ms = POS_HOLD_AFTER_OOB_MS_DEFAULT;
+    g_pos_config.yield_ms = POS_YIELD_MS_DEFAULT;
+    g_pos_config.yield_damp_gain = POS_YIELD_DAMP_GAIN_DEFAULT;
+    g_pos_config.yield_err_ticks = POS_YIELD_ERR_TICKS_DEFAULT;
     g_pos_config.drive_mode = POS_DRIVE_MODE_DEFAULT;
     g_pos_config.drive_rate = POS_DRIVE_RATE_DEFAULT;
     g_pos_config.runaway_limit = POS_RUNAWAY_LIMIT_DEFAULT;
@@ -795,11 +1124,16 @@ static int robot_motion_gate(const char **why)
     if (g_imu_samples < 50u)     { *why = "IMU has not produced 50 samples"; return 0; }
     if (g_imu_stale)             { *why = "IMU stale"; return 0; }
     float eff = fabsf(state.theta - state.theta_offset);
-    if (!(eff <= g_oob_angle_deg)) /* also catches NaN */
+    /* The stand-up kick is the one motion that belongs outside the balance
+     * window, so while one is being written the ceiling is kick_max_deg.
+     * Everything above this line still applies to it. */
+    const float limit = g_kick_motion ? g_kick_max_deg : g_oob_angle_deg;
+    if (!(eff <= limit)) /* also catches NaN */
     {
-        static char buf[96];
-        snprintf(buf, sizeof buf, "out of bounds (theta=%.2f eff=%.2f limit=%.1f)",
-                 state.theta, eff, (double)g_oob_angle_deg);
+        static char buf[112];
+        snprintf(buf, sizeof buf, "out of bounds (theta=%.2f eff=%.2f limit=%.1f%s)",
+                 state.theta, eff, (double)limit,
+                 g_kick_motion ? ", kick" : "");
         *why = buf;
         return 0;
     }
@@ -1049,6 +1383,15 @@ void robot_run(void)
 
         // ── Encoder position + velocity ───────────────────────────────────
         state.enc_pos = left_ticks + right_ticks;
+
+        /* Ring-log diagnostics: one extra serial round trip on two ticks in
+         * ten, never on the same tick, each well under a millisecond at
+         * 460800 baud. Skipped automatically while the link is marked down
+         * (link_blocked), so a dead controller costs nothing here. */
+        if (loop_counter % 10 == 3)
+            motor_hal_poll_status();
+        else if (loop_counter % 10 == 8)
+            motor_hal_poll_vbatt();
         {
             /* Encoder velocity: least-squares slope of enc_pos over the last
              * POS_VEL_WINDOW control ticks, recomputed EVERY tick.
@@ -1176,8 +1519,8 @@ void robot_run(void)
          * Balancing never depends on any of this; it only moves the targets
          * the balance loop holds. One input per tick, by priority:
          *   1. the SBUS stick, when it is off centre -- the operator wins;
-         *   2. a fresh Pi command, when armed, the Pi-drive gate is open and
-         *      the RC kill switch (if a transmitter is on) is at RUN;
+         *   2. a fresh Pi command, when armed and the Pi-drive gate is open
+         *      (the transmitter is not needed, and its kill switch is ignored);
          *   3. a centred stick, when a transmitter is connected;
          *   4. nothing.
          * Both reach the controller through the same code below, so the Pi
@@ -1194,8 +1537,7 @@ void robot_run(void)
             if (!state.armed)
                 pi_drive_set_gate(0);     /* disarm, e-stop, boot: gate shuts */
             const pi_drive_state_t pi = pi_drive_decide(
-                state.armed, pi_drive_gate(), sbus_is_connected(),
-                sbus_get_kill(), s_drive, s_turn, pi_fresh);
+                state.armed, pi_drive_gate(), s_drive, s_turn, pi_fresh);
             pi_drive_set_state(pi);
 
             if (pi == PI_DRIVE_APPLYING)
@@ -1211,6 +1553,10 @@ void robot_run(void)
                 have_input = 1;
             }
         }
+
+        g_log_in_drive = in_drive;
+        g_log_in_turn = in_turn;
+        g_log_pi_state = (int)pi_drive_state();
 
         // ── SBUS drive commands (no arming via SBUS — IPC only) ───────────
         // stick_input tracks operator drive intent only — never touched by D2.
@@ -1350,27 +1696,66 @@ void robot_run(void)
         // each run once per excursion instead of every tick.
         static int was_oob = 0;
         float eff_angle = fabsf(state.theta - state.theta_offset);
+        /* Cut above oob_angle_deg. Once cut, stay cut until inside the
+         * re-engage window (angle AND rate) -- see REENGAGE_DEG_DEFAULT. The
+         * ISR reads g_oob_cut so it cannot hand the motor write a duty
+         * during the wait. */
         if (eff_angle > g_oob_angle_deg)
+            g_oob_cut = 1;
+        else if (g_oob_cut && g_reengage_deg > 0.0f &&
+                 (eff_angle > g_reengage_deg ||
+                  (g_reengage_rate > 0.0f && fabsf(state.theta_dot) > g_reengage_rate)))
+            g_oob_cut = 1; /* in range but not calm: keep waiting */
+        else
+            g_oob_cut = 0;
+        g_log_oob = g_oob_cut;
+        g_log_kick = 0;
+        if (g_oob_cut)
         {
+            /* Commanded position follows the wheels EVERY tick while out of
+             * bounds, not just on the edge. The bot keeps rolling after the
+             * cut (and while kicking or being carried), and with the target
+             * frozen at the edge value the D2 loop kept running on the growing
+             * error: 2026-09-28 bbot_ring_1790636827833 t=1587.3-1588.2, target
+             * -282 while the wheels rolled to -240, posCorr -0.93, pos_integ
+             * wound 0.004 -> 0.13, theta_ref 2.4 deg -- all with the motors cut.
+             * Pinning the target here keeps err at 0 for the whole excursion. */
+            state.enc_pos_target = state.enc_pos;
+            pos_integ = 0.0f;
+            carrot_valid = 0; carrot_v = 0.0f; carrot_arrived = 0;
+            pos_last_correction = 0.0f;
+            drive_accum = 0.0f;
+
             /* The one exception to the cutoff: a deliberate, bounded, operator
              * -held kick to stand the robot up off its kickstand. Everything
              * that makes it safe is inside kick_direction(); if it returns 0
              * -- which is the case on every tick nobody is asking -- this
              * falls straight through to the coast below, unchanged. */
             const int kick = kick_direction(eff_angle);
+            g_log_kick = (kick != 0);
 
             if (kick != 0)
             {
                 /* Both wheels the same sign: drive the contact patch back
                  * under the centre of mass. Through set_both, so the motion
                  * gate still gets its say. */
+                /* Raw PWM, not set_both: in velocity mode set_both turns
+                 * this into a SPEED target — 0.35 at qpps_max 500 asks for
+                 * 175 QPPS, a crawl — and leaves the torque to a velocity PID
+                 * tuned for balancing. Standing the machine up needs voltage,
+                 * with the claw's current limit as the only ceiling. */
                 const float duty = (float)kick * g_kick_duty;
-                motor_hal_set_both(duty, duty);
+                g_kick_motion = 1;
+                const int wrote = motor_hal_kick(duty);
+                g_kick_motion = 0;
                 /* Report what was actually written, same as the coast path
                  * below does, so the dashboard shows the kick instead of a
-                 * frozen pre-OOB value. */
-                last_left_duty = duty;
-                last_right_duty = duty;
+                 * frozen pre-OOB value. A refusal reports zero: recording the
+                 * commanded duty for a write the gate turned into a coast is
+                 * how a kick that never moved a wheel showed up in the log as
+                 * a clean 0.350 for 180 ms. */
+                last_left_duty = (wrote == 0) ? duty : 0.0f;
+                last_right_duty = last_left_duty;
             }
             else
             {
@@ -1471,12 +1856,24 @@ void robot_run(void)
             pid_reset(&pitch_pid);
             pid_reset(&yaw_pid);
 
+            /* Position loop stays out of it for hold_after_oob_ms: the body is
+             * still swinging through at 30-76 deg/s on this tick and the pitch
+             * loop has to catch it without a saturated lean command fighting
+             * the catch. See POS_HOLD_AFTER_OOB_MS_DEFAULT. */
+            pos_yield_active = 0;
+            pos_yield_sat_ticks = 0;
+            pos_yield_calm_ticks = 0;
+            if (g_pos_config.hold_after_oob_ms > 0)
+                pos_hold_until_us = rc_nanos_since_boot() / 1000ULL
+                                    + (uint64_t)g_pos_config.hold_after_oob_ms * 1000ULL;
+
             // NOW give the motors back.
             if (state.armed)
                 motor_hal_standby(0);
 
             rc_led_set(RC_LED_GREEN, state.armed ? 1 : 0);
-            LOG_INFO("IN RANGE — controls rebased, armed=%d", state.armed);
+            LOG_INFO("IN RANGE — re-engaged at %.1f deg, %.0f deg/s (pos hold %d ms), armed=%d",
+                     eff_angle, (double)state.theta_dot, g_pos_config.hold_after_oob_ms, state.armed);
         }
 
         // else if (was_oob)
@@ -1856,6 +2253,100 @@ void robot_run(void)
                     }
                     state.pos_i_term = -pos_integ; /* sign matches thetaAdj */
 
+                    /* Post-OOB hold: nothing from this loop until the window
+                     * closes. Target tracks the wheels so no error accumulates
+                     * to be paid back the instant the hold lifts, and
+                     * pos_last_correction stays 0 so the rate limiter below
+                     * eases the hold in from zero afterwards. */
+                    /* 2026-10-08 bbot_ring_1791432540143 t=360.82: the hold
+                     * lifted and velDamp went 0 -> -2.0 in 150 ms, setpoint 0
+                     * -> 3.0 deg (vel_damp is applied after the rate limiter,
+                     * so max_angle_rate never touched it). Ramp the whole
+                     * position contribution 0 -> 1 over a second window of the
+                     * same length instead of stepping it in. */
+                    g_log_pos_hold = 0;
+                    pos_hold_gain = 1.0f;
+                    if (pos_hold_until_us != 0)
+                    {
+                        const uint64_t now_us = rc_nanos_since_boot() / 1000ULL;
+                        if (now_us < pos_hold_until_us)
+                        {
+                            correction = 0.0f;
+                            vel_damp = 0.0f;
+                            vel_damp_filt = 0.0f;
+                            pos_integ = 0.0f;
+                            state.enc_pos_target = state.enc_pos;
+                            carrot_valid = 0; carrot_v = 0.0f; carrot_arrived = 0;
+                            state.pos_scale = 0.0f;
+                            g_log_pos_hold = 1;
+                            pos_hold_gain = 0.0f;
+                            pos_hold_ramp_end_us = pos_hold_until_us
+                                + (uint64_t)g_pos_config.hold_after_oob_ms * 1000ULL;
+                        }
+                        else if (now_us < pos_hold_ramp_end_us)
+                        {
+                            const uint64_t span = pos_hold_ramp_end_us - pos_hold_until_us;
+                            pos_hold_gain = span ? (float)(now_us - pos_hold_until_us) / (float)span : 1.0f;
+                            g_log_pos_hold = 2;
+                        }
+                        else
+                        {
+                            pos_hold_until_us = 0;
+                            pos_hold_ramp_end_us = 0;
+                        }
+                    }
+
+                    /* Push yield. See POS_YIELD_MS_DEFAULT. Only while not in the
+                     * post-OOB hold/ramp -- that path already has the loop off. */
+                    if (g_pos_config.yield_ms > 0 && pos_hold_until_us == 0)
+                    {
+                        const float vdmax = g_pos_config.vel_damp_max;
+                        const int32_t err_now = state.enc_pos_target - state.enc_pos;
+                        const int displaced = (g_pos_config.yield_err_ticks <= 0) ||
+                                              (err_now > g_pos_config.yield_err_ticks) ||
+                                              (err_now < -g_pos_config.yield_err_ticks);
+                        const int sat = (vdmax > 0.0f) && (fabsf(vel_damp) >= 0.97f * vdmax) && displaced;
+                        const int tick_ms = 1000 / SAMPLE_RATE_HZ;
+                        if (!pos_yield_active)
+                        {
+                            pos_yield_sat_ticks = sat ? pos_yield_sat_ticks + 1 : 0;
+                            if (pos_yield_sat_ticks * tick_ms >= g_pos_config.yield_ms)
+                            {
+                                pos_yield_active = 1;
+                                pos_yield_calm_ticks = 0;
+                                LOG_WARN("push yield: velDamp at cap for %d ms, giving up the spot",
+                                         pos_yield_sat_ticks * tick_ms);
+                            }
+                        }
+                        if (pos_yield_active)
+                        {
+                            state.enc_pos_target = state.enc_pos;
+                            pos_integ = 0.0f;
+                            carrot_valid = 0; carrot_v = 0.0f; carrot_arrived = 0;
+                            correction = 0.0f;
+                            pos_last_correction = 0.0f;
+                            state.pos_scale = 0.0f;
+                            vel_damp *= g_pos_config.yield_damp_gain;
+                            g_log_pos_hold = 3;
+                            if (fabsf((float)state.enc_velocity) < (float)g_pos_config.stopped_vel)
+                                pos_yield_calm_ticks++;
+                            else
+                                pos_yield_calm_ticks = 0;
+                            if (pos_yield_calm_ticks * tick_ms >= g_pos_config.yield_ms)
+                            {
+                                /* Stopped: wherever we are is home. Ramp the hold
+                                 * back in through the post-OOB ramp path. */
+                                const uint64_t now_us = rc_nanos_since_boot() / 1000ULL;
+                                pos_yield_active = 0;
+                                pos_yield_sat_ticks = 0;
+                                pos_hold_until_us = now_us;
+                                pos_hold_ramp_end_us = now_us
+                                    + (uint64_t)g_pos_config.hold_after_oob_ms * 1000ULL;
+                                LOG_WARN("push yield: stopped, hold ramping back in");
+                            }
+                        }
+                    }
+
                     // Rate-limit the position correction — prevents slamming theta_ref
                     float delta = correction - pos_last_correction;
                     if (delta > g_pos_config.max_angle_rate)
@@ -1864,6 +2355,11 @@ void robot_run(void)
                         delta = -g_pos_config.max_angle_rate;
                     correction = pos_last_correction + delta;
                     pos_last_correction = correction;
+                    /* Post-OOB ramp: scales the spring AND the damping below.
+                     * pos_last_correction keeps the unscaled value so the rate
+                     * limiter's state is continuous through the ramp. */
+                    correction *= pos_hold_gain;
+                    vel_damp *= pos_hold_gain;
 
                     // Apply vel_damp after rate limiter so decel/accel acts at full speed.
                     //
@@ -2167,6 +2663,7 @@ void robot_run(void)
         loop_counter++;
 
         uint64_t elapsed_us = rc_nanos_since_boot() / 1000 - now_us;
+        g_log_tick_us = (uint32_t)elapsed_us; /* logged on the next row */
         if (elapsed_us < 10000)
             rc_usleep(10000 - elapsed_us);
     }

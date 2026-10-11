@@ -114,6 +114,23 @@ int motor_hal_standby(int standby);
  * motor_hal_set_both() only when the intent is "drive at this value". */
 int motor_hal_coast(void);
 
+/**
+ * @brief Drive both wheels at a raw PWM duty, ignoring the configured mode.
+ *
+ * For the stand-up kick, and nothing else. In velocity mode set_both() turns
+ * its argument into a SPEED target — 0.35 with qpps_max 500 asks for 175
+ * QPPS, a crawl — and how much torque the controller then applies is up to
+ * its velocity PID, which is tuned for balancing a robot that is already
+ * upright. A kick needs the opposite: all the voltage there is, for a bounded
+ * moment, with the current limit as the only ceiling.
+ *
+ * Goes through the motion gate like every other motion command.
+ *
+ * @param duty -1.0..1.0, both wheels the same
+ * @return 0 if the command reached the controller, -1 otherwise
+ */
+int motor_hal_kick(float duty);
+
 /* ── encoder input ──────────────────────────────────────────────── */
 
 /**
@@ -228,10 +245,28 @@ typedef struct
     uint8_t enc_mode_m1;   /* GETENCODERMODE, raw */
     uint8_t enc_mode_m2;
     uint16_t config;       /* GETCONFIG, raw */
+    /* Health and limits, for the dashboard's Claw tab. */
+    float main_v, logic_v; /* GETMBATT / GETLBATT */
+    float temp_c;          /* GETTEMP */
+    uint32_t status;       /* GETERROR: error + warning bits */
+    float batt_min, batt_max;       /* GETMINMAXMAINVOLTAGES */
+    float max_amps_m1, max_amps_m2; /* GETM1/M2MAXCURRENT */
+    uint8_t pins[5];       /* GETPINFUNCTIONS: S3 S4 S5 CTRL1 CTRL2 */
     int valid;   /* int, not bool: motor_hal.h does not pull in stdbool */
 } claw_hw_settings_t;
 
 int motor_hal_read_hw_settings(claw_hw_settings_t *out);
+
+/* Main battery limits on the RoboClaw (cmd 57). vmin <= 0 leaves the
+ * controller alone; vmax <= 0 keeps the controller's current maximum. RAM only
+ * on firmware v4.2.8 -- WriteNVM resets it -- so it is re-applied at every
+ * start and after every e-stop reset. */
+int motor_hal_set_batt_limits(float vmin, float vmax);
+
+/* Push everything robot.conf owns back into the RoboClaw: current limit,
+ * velocity PID, battery limits. Used after WriteNVM (CLR ESTOP), which on this
+ * firmware resets the controller's configuration. */
+void motor_hal_apply_claw_settings(void);
 
 /* Non-zero when the RoboClaw has stopped answering and serial I/O is being
  * skipped to protect the control loop rate. Clears itself when it answers
@@ -250,5 +285,66 @@ int motor_hal_link_down(void);
  * @return 0 on success, -1 on error
  */
 int motor_hal_set_baud(int baud);
+
+/* ── Wire-level diagnostics for the 100 Hz ring ─────────────────────────
+ * What actually went to and came back from the RoboClaw, recorded as a side
+ * effect of calls the control loop already makes. Filling this costs no serial
+ * I/O. The two poll functions below are the only extra traffic, and robot.c
+ * runs each of them once every 10 control ticks on separate ticks.
+ *
+ * Wheel convention throughout: *_l = MOTOR_LEFT (RoboClaw M2), *_r =
+ * MOTOR_RIGHT (M1). Wire values are after pol_l/pol_r, speeds after
+ * enc_pol_l/enc_pol_r, i.e. the same sign convention as enc_left/enc_right. */
+enum
+{
+    MOTOR_CMD_NONE = 0,
+    MOTOR_CMD_SPEED = 1,       /* MIXEDSPEED (37), wire units QPPS          */
+    MOTOR_CMD_SPEED_ACCEL = 2, /* MIXEDSPEEDACCEL (40), wire units QPPS     */
+    MOTOR_CMD_DUTY = 3,        /* MIXEDDUTY (34) from set_both, +/-32767    */
+    MOTOR_CMD_COAST = 4,       /* MIXEDDUTY 0                               */
+    MOTOR_CMD_KICK = 5,        /* MIXEDDUTY from motor_hal_kick             */
+    MOTOR_CMD_LINK_SKIP = 6,   /* nothing sent: link marked down            */
+};
+
+typedef struct
+{
+    /* last motor command */
+    uint32_t cmd_seq;    /* +1 per command attempt; unchanged = nothing sent */
+    int32_t cmd_kind;    /* MOTOR_CMD_* */
+    int32_t cmd_wire_l;  /* value sent for the left motor (M2) */
+    int32_t cmd_wire_r;  /* value sent for the right motor (M1) */
+    int32_t cmd_ret;     /* roboclaw return code, 0 = OK */
+    uint32_t cmd_us;     /* serial round trip incl. mutex wait */
+    uint32_t cmd_fails;  /* cumulative */
+    int32_t gate_ok;     /* motion gate on the last drive request */
+    /* encoder position read (every tick) */
+    int32_t enc_ret;
+    uint32_t enc_us;
+    uint32_t enc_fails;
+    /* RoboClaw's own speed measurement (GETISPEEDS, polled by robot.c) */
+    int32_t spd_l, spd_r;
+    uint64_t spd_t_us;
+    /* currents (telemetry.c, 20 Hz) */
+    float amps_l, amps_r;
+    uint64_t amps_t_us;
+    /* main battery at the RoboClaw */
+    float vbatt;
+    uint64_t vbatt_t_us;
+    /* GETERROR status word */
+    uint32_t status;
+    int32_t status_ret;
+    uint64_t status_t_us;
+} motor_hal_diag_t;
+
+/** Copy of the current diagnostics. No I/O. */
+void motor_hal_get_diag(motor_hal_diag_t *out);
+
+/** Read the RoboClaw status/error word (GETERROR, cmd 90) into the diag
+ *  struct. One serial round trip. Does not touch the link watchdog. */
+int motor_hal_poll_status(void);
+
+/** Read main battery voltage (GETMBATT, cmd 24) into the diag struct. One
+ *  serial round trip. Does not touch the link watchdog. */
+int motor_hal_poll_vbatt(void);
 
 #endif /* MOTOR_HAL_H */

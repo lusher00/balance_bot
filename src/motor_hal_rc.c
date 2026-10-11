@@ -21,6 +21,7 @@
  */
 
 #include "motor_hal.h"
+#include <string.h>
 #include "balance_bot.h"   /* LOG_*, rc_motor, rc_encoder_eqep */
 
 #include <robotcontrol.h>
@@ -82,6 +83,14 @@ int motor_hal_set_both(float left, float right)
     int r = rc_motor_set(CH_L, POL_L * left);
     r    |= rc_motor_set(CH_R, POL_R * right);
     return r ? -1 : 0;
+}
+
+int motor_hal_kick(float duty)
+{
+    /* The librobotcontrol backend has no modes: rc_motor_set is already raw
+     * PWM, so a kick is an ordinary write here. It exists as its own call
+     * because the RoboClaw backend has to bypass velocity mode for it. */
+    return motor_hal_set_both(duty, duty);
 }
 
 int motor_hal_free_spin(void)
@@ -146,6 +155,19 @@ int motor_hal_read_currents(float *m1_amps, float *m2_amps)
     *m2_amps = 0.0f;
     return -1;
 }
+
+int motor_hal_set_batt_limits(float vmin, float vmax)
+{
+    (void)vmin; (void)vmax;
+    return 0; /* no RoboClaw on this backend */
+}
+
+void motor_hal_apply_claw_settings(void) {}
+
+/* No RoboClaw on this backend: diagnostics stay zero. */
+void motor_hal_get_diag(motor_hal_diag_t *out) { memset(out, 0, sizeof(*out)); }
+int motor_hal_poll_status(void) { return -1; }
+int motor_hal_poll_vbatt(void) { return -1; }
 
 int motor_hal_set_current_limit(float amps)
 {
